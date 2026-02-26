@@ -1,0 +1,4 @@
+pystray
+Pillow
+requests
+pyinstaller
