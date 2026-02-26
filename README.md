@@ -80,7 +80,7 @@ Each bar in the detail popup has up to three visual elements:
 ### Setup
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/jens-duttke/usage-monitor-for-claude.git
 cd usage-monitor-for-claude
 python -m venv .venv
 .venv\Scripts\activate
