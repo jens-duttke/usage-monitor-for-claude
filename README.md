@@ -101,6 +101,19 @@ python build.py
 
 Produces `dist/UsageMonitorForClaude.exe` (~20 MB), a single-file executable that bundles Python and all dependencies.
 
+### Create a Release
+
+1. Update the version in [`version_info.py`](version_info.py) (`filevers`, `prodvers`, `FileVersion`, `ProductVersion`)
+2. Build the EXE with `python build.py`
+3. Commit, tag, push, and publish:
+
+   ```bash
+   git add -A && git commit -m "Release v1.x.x"
+   git tag v1.x.x
+   git push origin main v1.x.x
+   gh release create v1.x.x dist/UsageMonitorForClaude.exe --title "v1.x.x" --notes "Release notes here"
+   ```
+
 </details>
 
 ---
