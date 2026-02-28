@@ -382,7 +382,7 @@ class UsagePopup:
     """Dark-themed popup window showing account info and usage bars."""
 
     WIDTH = 340
-    REFRESH_MS = 60_000
+    _CHECK_MS = 2000
 
     def __init__(self, app: UsageMonitorForClaude) -> None:
         """Create and display a popup window with usage details.
@@ -407,11 +407,12 @@ class UsagePopup:
         self._main_frame: tk.Frame | None = None
         self._usage_frame: tk.Frame | None = None
         self._usage_bars: list[dict[str, Any]] = []
+        self._last_version = self.app._data_version
         self._build_content()
 
         self.win.update_idletasks()
         self._position_near_tray()
-        self._schedule_refresh()
+        self._schedule_check()
 
         self.win.bind('<Escape>', lambda e: self._close())
         self.win.bind('<FocusOut>', lambda e: self._close())
@@ -425,16 +426,18 @@ class UsagePopup:
         except tk.TclError:
             pass
 
-    def _schedule_refresh(self) -> None:
+    def _schedule_check(self) -> None:
         try:
-            self.root.after(self.REFRESH_MS, self._on_refresh)
+            self.root.after(self._CHECK_MS, self._check_for_update)
         except tk.TclError:
             pass
 
-    def _on_refresh(self) -> None:
+    def _check_for_update(self) -> None:
         try:
-            self._update_usage_section()
-            self._schedule_refresh()
+            if self.app._data_version != self._last_version:
+                self._last_version = self.app._data_version
+                self._update_usage_section()
+            self._schedule_check()
         except tk.TclError:
             pass
 
@@ -698,6 +701,7 @@ class UsageMonitorForClaude:
         self._prev_7d = None
         self._fast_polls_remaining = 0
         self._popup_open = False
+        self._data_version = 0
         self._light_taskbar = taskbar_uses_light_theme()
         self.icon = pystray.Icon(
             'usage_monitor',
@@ -733,7 +737,7 @@ class UsageMonitorForClaude:
     def _open_popup(self) -> None:
         self._popup_open = True
         try:
-            self.usage_data = fetch_usage()
+            self.update()
             if not self.profile_data:
                 self.profile_data = fetch_profile()
             UsagePopup(self)
@@ -765,6 +769,7 @@ class UsageMonitorForClaude:
         if 'error' in self.usage_data:
             self.icon.icon = create_status_image('C!' if self.usage_data.get('auth_error') else '!', self._light_taskbar)
             self.icon.title = format_tooltip(self.usage_data)
+            self._data_version += 1
             return
 
         pct_5h = self.usage_data.get('five_hour', {}).get('utilization', 0) or 0
@@ -786,6 +791,7 @@ class UsageMonitorForClaude:
 
         self.icon.icon = create_icon_image(pct_5h, pct_7d, self._light_taskbar)
         self.icon.title = format_tooltip(self.usage_data)
+        self._data_version += 1
 
     def _seconds_until_next_reset(self) -> float | None:
         """Return seconds until the earliest upcoming quota reset, or None."""
