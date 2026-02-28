@@ -23,7 +23,7 @@ import traceback
 import winreg
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pystray  # type: ignore[import-untyped]  # no type stubs available
 import requests
@@ -37,6 +37,9 @@ POLL_ERROR = 30  # Polling interval after a failed request
 
 AUTOSTART_REG_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 AUTOSTART_REG_NAME = 'UsageMonitorForClaude'
+THEME_REG_KEY = r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
+THEME_REG_VALUE = 'SystemUsesLightTheme'
+REG_NOTIFY_CHANGE_LAST_SET = 0x00000004
 
 API_URL_USAGE = 'https://api.anthropic.com/api/oauth/usage'
 API_URL_PROFILE = 'https://api.anthropic.com/api/oauth/profile'
@@ -256,14 +259,21 @@ def format_tooltip(data: dict[str, Any]) -> str:
 
 
 # ── Icon creation ──────────────────────────────────────────────
-# Monochrome white-on-transparent icon for the Windows system tray.
+# Monochrome icon for the Windows system tray (adapts to taskbar theme).
 # Layout (64x64): "C" at the top, two thin progress bars at the bottom
 # (session / weekly) with proportional fill.
 
-WHITE = (255, 255, 255, 255)
+ICON_LIGHT = {  # Light icons for dark taskbar (default)
+    'fg': (255, 255, 255, 255),
+    'fg_half': (255, 255, 255, 80),
+    'fg_dim': (255, 255, 255, 140),
+}
+ICON_DARK = {  # Dark icons for light taskbar
+    'fg': (0, 0, 0, 255),
+    'fg_half': (0, 0, 0, 80),
+    'fg_dim': (0, 0, 0, 140),
+}
 TRANSPARENT = (0, 0, 0, 0)
-HALF_WHITE = (255, 255, 255, 80)
-DIM_WHITE = (255, 255, 255, 140)
 
 
 @functools.lru_cache(maxsize=None)
@@ -283,8 +293,38 @@ def load_font(size: int, symbol: bool = False) -> ImageFont.FreeTypeFont | Image
     return ImageFont.load_default()
 
 
-def create_icon_image(pct_5h: float, pct_7d: float) -> Image.Image:
+def taskbar_uses_light_theme() -> bool:
+    """Return True if the Windows taskbar uses the light theme.
+
+    Reads ``SystemUsesLightTheme`` from the Personalize registry key.
+    Returns False (dark) if the value cannot be read.
+    """
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, THEME_REG_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, THEME_REG_VALUE)
+            return bool(value)
+    except OSError:
+        return False
+
+
+def watch_theme_change(callback: Callable[[], None]) -> None:
+    """Block the current thread and call *callback* whenever the taskbar theme changes.
+
+    Uses ``RegNotifyChangeKeyValue`` to sleep until the registry key
+    is modified, avoiding any polling.  Designed to run in a daemon thread.
+    """
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, THEME_REG_KEY, 0, winreg.KEY_READ) as key:
+        while True:
+            if ctypes.windll.advapi32.RegNotifyChangeKeyValue(int(key), False, REG_NOTIFY_CHANGE_LAST_SET, None, False) != 0:
+                return
+            callback()
+
+
+def create_icon_image(pct_5h: float, pct_7d: float, light_taskbar: bool = False) -> Image.Image:
     """Create monochrome tray icon: 'C' letter + two usage bars."""
+    colors = ICON_DARK if light_taskbar else ICON_LIGHT
+    fg, fg_half = colors['fg'], colors['fg_half']
+
     S = 64
     img = Image.new('RGBA', (S, S), TRANSPARENT)
     draw = ImageDraw.Draw(img)
@@ -301,7 +341,7 @@ def create_icon_image(pct_5h: float, pct_7d: float) -> Image.Image:
 
     bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
     tw = bbox[2] - bbox[0]
-    draw.text(((S - tw) / 2 - bbox[0], -bbox[1]), text, fill=WHITE, font=font, stroke_width=stroke_width, stroke_fill=WHITE)
+    draw.text(((S - tw) / 2 - bbox[0], -bbox[1]), text, fill=fg, font=font, stroke_width=stroke_width, stroke_fill=fg)
 
     # ── Progress bars – full width, flush to bottom ──
     bar_h = 9
@@ -310,23 +350,25 @@ def create_icon_image(pct_5h: float, pct_7d: float) -> Image.Image:
     bar1_y = bar2_y - gap - bar_h
 
     for y, pct in ((bar1_y, pct_5h), (bar2_y, pct_7d)):
-        draw.rectangle([0, y, S - 1, y + bar_h - 1], fill=HALF_WHITE)
+        draw.rectangle([0, y, S - 1, y + bar_h - 1], fill=fg_half)
         fill_w = max(0, min(S, int(S * pct / 100)))
         if fill_w > 0:
-            draw.rectangle([0, y, fill_w - 1, y + bar_h - 1], fill=WHITE)
+            draw.rectangle([0, y, fill_w - 1, y + bar_h - 1], fill=fg)
 
     return img
 
 
-def create_status_image(text: str) -> Image.Image:
+def create_status_image(text: str, light_taskbar: bool = False) -> Image.Image:
     """Create monochrome centered-text icon for error/status states."""
+    fg_dim = (ICON_DARK if light_taskbar else ICON_LIGHT)['fg_dim']
+
     S = 64
     img = Image.new('RGBA', (S, S), TRANSPARENT)
     draw = ImageDraw.Draw(img)
     font = load_font(46)
     bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), text, fill=DIM_WHITE, font=font)
+    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), text, fill=fg_dim, font=font)
 
     return img
 
@@ -650,9 +692,10 @@ class UsageMonitorForClaude:
         self._prev_7d = None
         self._fast_polls_remaining = 0
         self._popup_open = False
+        self._light_taskbar = taskbar_uses_light_theme()
         self.icon = pystray.Icon(
             'usage_monitor',
-            icon=create_icon_image(0, 0),
+            icon=create_icon_image(0, 0, self._light_taskbar),
             title=T['loading'],
             menu=pystray.Menu(
                 pystray.MenuItem(T['title'].replace('&', '&&'), self.on_show_popup, default=True),
@@ -691,6 +734,20 @@ class UsageMonitorForClaude:
         finally:
             self._popup_open = False
 
+    def _on_theme_changed(self) -> None:
+        """Re-render the tray icon when the Windows theme changes."""
+        light = taskbar_uses_light_theme()
+        if light == self._light_taskbar:
+            return
+
+        self._light_taskbar = light
+        if 'error' in self.usage_data:
+            self.icon.icon = create_status_image('C!' if self.usage_data.get('auth_error') else '!', light)
+        else:
+            pct_5h = self.usage_data.get('five_hour', {}).get('utilization', 0) or 0
+            pct_7d = self.usage_data.get('seven_day', {}).get('utilization', 0) or 0
+            self.icon.icon = create_icon_image(pct_5h, pct_7d, light)
+
     def update(self) -> None:
         """Fetch current usage and update the tray icon and tooltip.
 
@@ -700,7 +757,7 @@ class UsageMonitorForClaude:
         self.usage_data = fetch_usage()
 
         if 'error' in self.usage_data:
-            self.icon.icon = create_status_image('C!' if self.usage_data.get('auth_error') else '!')
+            self.icon.icon = create_status_image('C!' if self.usage_data.get('auth_error') else '!', self._light_taskbar)
             self.icon.title = format_tooltip(self.usage_data)
             return
 
@@ -721,7 +778,7 @@ class UsageMonitorForClaude:
         self._prev_5h = pct_5h
         self._prev_7d = pct_7d
 
-        self.icon.icon = create_icon_image(pct_5h, pct_7d)
+        self.icon.icon = create_icon_image(pct_5h, pct_7d, self._light_taskbar)
         self.icon.title = format_tooltip(self.usage_data)
 
     def _seconds_until_next_reset(self) -> float | None:
@@ -783,6 +840,7 @@ class UsageMonitorForClaude:
                 sync_autostart_path()
             if not api_headers():
                 icon.notify(f"{T['warn_no_token']}\n{T['warn_login']}", T['title'])
+            threading.Thread(target=watch_theme_change, args=(self._on_theme_changed,), daemon=True).start()
             self.poll_loop()
         except Exception:
             crash_log(traceback.format_exc())
