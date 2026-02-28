@@ -65,6 +65,14 @@ Prioritize readability and auditability — users handle credentials and must be
 - Never exclude standard library modules that are transitive dependencies (e.g., `email` is needed by `urllib3`/`requests`)
 - After any dependency change, verify the `excludes` list doesn't break transitive imports
 
+## Changelog
+- Update `CHANGELOG.md` for every user-facing change (new features, bug fixes, behavior changes, UI changes)
+- Do not add changelog entries for internal refactors, code style changes, or documentation-only changes unless they affect the user
+- Changes to `CLAUDE.md` are invisible to users — never mention them in changelog entries or commit messages
+- Add entries under the `## [Unreleased]` section, grouped by: Added, Changed, Fixed, Removed
+- Write entries from the user's perspective — describe what changed, not how the code changed
+- One bullet point per logical change; keep it concise (one sentence)
+
 ## Execution
 - Always activate virtual environment before running Python code
 - Research current recommendations before changes if needed

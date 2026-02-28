@@ -105,8 +105,9 @@ Produces `dist/UsageMonitorForClaude.exe` (~20 MB), a single-file executable tha
 ### Create a Release
 
 1. Update the version in [`version_info.py`](version_info.py) (`filevers`, `prodvers`, `FileVersion`, `ProductVersion`)
-2. Build the EXE with `python build.py`
-3. Commit, tag, push, and publish:
+2. In [`CHANGELOG.md`](CHANGELOG.md), rename `## [Unreleased]` to `## [1.x.x] - YYYY-MM-DD` and add a fresh empty `## [Unreleased]` section above it
+3. Build the EXE with `python build.py`
+4. Commit, tag, push, and publish:
 
    ```bash
    git add -A && git commit -m "Release v1.x.x"
