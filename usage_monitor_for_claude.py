@@ -647,6 +647,7 @@ class UsageMonitorForClaude:
         self.usage_data = {}
         self.profile_data = None
         self._prev_5h = None
+        self._prev_7d = None
         self._fast_polls_remaining = 0
         self._popup_open = False
         self.icon = pystray.Icon(
@@ -706,12 +707,19 @@ class UsageMonitorForClaude:
         pct_5h = self.usage_data.get('five_hour', {}).get('utilization', 0) or 0
         pct_7d = self.usage_data.get('seven_day', {}).get('utilization', 0) or 0
 
+        # Notify when quota resets after being nearly exhausted, but only if the other quota isn't blocking usage
+        if self._prev_5h is not None and self._prev_5h > 95 and pct_5h < self._prev_5h and pct_7d < 99:
+            self.icon.notify(T['notify_reset'], T['notify_reset_title'])
+        if self._prev_7d is not None and self._prev_7d > 98 and pct_7d < self._prev_7d and pct_5h < 99:
+            self.icon.notify(T['notify_reset'], T['notify_reset_title'])
+
         # Adaptive polling: speed up when session usage is increasing
         if self._prev_5h is not None and pct_5h > self._prev_5h:
             self._fast_polls_remaining = POLL_FAST_EXTRA + 1
         elif self._fast_polls_remaining > 0:
             self._fast_polls_remaining -= 1
         self._prev_5h = pct_5h
+        self._prev_7d = pct_7d
 
         self.icon.icon = create_icon_image(pct_5h, pct_7d)
         self.icon.title = format_tooltip(self.usage_data)

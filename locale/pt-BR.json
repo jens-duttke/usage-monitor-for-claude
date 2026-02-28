@@ -26,5 +26,7 @@
     "auth_expired_short": "Por favor, abra o Claude Code para renovar a sessão.",
     "no_token": "Nenhum token OAuth. Faça login no Claude Code primeiro.",
     "warn_no_token": "AVISO: Nenhum token OAuth do Claude Code encontrado!",
-    "warn_login": "Instale e faça login no Claude Code primeiro:"
+    "warn_login": "Instale e faça login no Claude Code primeiro:",
+    "notify_reset_title": "Cota redefinida",
+    "notify_reset": "Sua cota foi redefinida. O Claude está pronto para uso novamente."
 }

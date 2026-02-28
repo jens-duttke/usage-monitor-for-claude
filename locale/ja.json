@@ -26,5 +26,7 @@
     "auth_expired_short": "Claude Codeを開いてセッションを更新してください。",
     "no_token": "OAuthトークンがありません。先にClaude Codeにログインしてください。",
     "warn_no_token": "警告: Claude Code OAuthトークンが見つかりません！",
-    "warn_login": "Claude Codeをインストールしてログインしてください："
+    "warn_login": "Claude Codeをインストールしてログインしてください：",
+    "notify_reset_title": "クォータリセット",
+    "notify_reset": "クォータがリセットされました。Claudeが再び利用可能です。"
 }

@@ -26,5 +26,7 @@
     "auth_expired_short": "Veuillez ouvrir Claude Code pour renouveler votre session.",
     "no_token": "Aucun jeton OAuth. Connectez-vous d'abord à Claude Code.",
     "warn_no_token": "ATTENTION : Aucun jeton OAuth Claude Code trouvé !",
-    "warn_login": "Veuillez installer et vous connecter à Claude Code :"
+    "warn_login": "Veuillez installer et vous connecter à Claude Code :",
+    "notify_reset_title": "Quota réinitialisé",
+    "notify_reset": "Votre quota a été réinitialisé. Claude est de nouveau disponible."
 }

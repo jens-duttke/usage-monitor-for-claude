@@ -16,6 +16,7 @@ Usage Monitor for Claude is a lightweight Windows desktop tool that shows your c
 - **Detail popup** (left-click) - dark-themed window showing your account info (email, plan) and separate usage bars for Session, Weekly, Weekly Sonnet, and Weekly Opus limits
 - **Time marker** - a white vertical line on each bar shows how much time has passed in the current period, so you can tell whether usage is ahead of or behind the clock
 - **Color warning** - bars turn red once usage reaches 80%
+- **Reset notification** - get a Windows notification when your session (>95%) or weekly (>98%) quota resets after being nearly exhausted
 - **Reset countdown** below each bar, e.g. "Resets in 2h 20m (14:30)"
 - **Smart refresh** - updates every 2 minutes by default; automatically speeds up to 1-minute intervals while you are actively using Claude, then slows back down
 - **Manual refresh** via right-click menu at any time

@@ -26,5 +26,7 @@
     "auth_expired_short": "Bitte Claude Code öffnen, um die Sitzung zu erneuern.",
     "no_token": "Kein OAuth-Token. Bitte zuerst bei Claude Code anmelden.",
     "warn_no_token": "WARNUNG: Kein Claude Code OAuth-Token gefunden!",
-    "warn_login": "Bitte Claude Code installieren und anmelden:"
+    "warn_login": "Bitte Claude Code installieren und anmelden:",
+    "notify_reset_title": "Kontingent zurückgesetzt",
+    "notify_reset": "Ihr Kontingent wurde zurückgesetzt. Claude ist wieder einsatzbereit."
 }

@@ -26,5 +26,7 @@
     "auth_expired_short": "कृपया Claude Code खोलकर सत्र नवीनीकृत करें।",
     "no_token": "कोई OAuth टोकन नहीं। पहले Claude Code में लॉग इन करें।",
     "warn_no_token": "चेतावनी: कोई Claude Code OAuth टोकन नहीं मिला!",
-    "warn_login": "कृपया पहले Claude Code इंस्टॉल करें और लॉग इन करें:"
+    "warn_login": "कृपया पहले Claude Code इंस्टॉल करें और लॉग इन करें:",
+    "notify_reset_title": "कोटा रीसेट",
+    "notify_reset": "आपका कोटा रीसेट हो गया है। Claude फिर से उपयोग के लिए तैयार है।"
 }

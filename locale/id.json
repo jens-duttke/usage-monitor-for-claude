@@ -26,5 +26,7 @@
     "auth_expired_short": "Silakan buka Claude Code untuk memperbarui sesi.",
     "no_token": "Tidak ada token OAuth. Masuk ke Claude Code terlebih dahulu.",
     "warn_no_token": "PERINGATAN: Token OAuth Claude Code tidak ditemukan!",
-    "warn_login": "Silakan instal dan masuk ke Claude Code terlebih dahulu:"
+    "warn_login": "Silakan instal dan masuk ke Claude Code terlebih dahulu:",
+    "notify_reset_title": "Kuota Direset",
+    "notify_reset": "Kuota Anda telah direset. Claude siap digunakan kembali."
 }
