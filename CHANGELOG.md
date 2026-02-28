@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.1.0...HEAD)
+
+## [1.1.0] - 2026-02-28
+
 ### Added
 
 - Tray icon supports the Windows light theme
@@ -23,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated repository URL in setup instructions
 
-[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.0.0...HEAD)
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.0.0...v1.1.0)
 
 ## [1.0.0] - 2026-02-26
 
