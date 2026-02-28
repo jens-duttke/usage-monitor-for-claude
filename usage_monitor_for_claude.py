@@ -13,6 +13,7 @@ from __future__ import annotations
 __version__ = '1.0.0'
 
 import ctypes
+import ctypes.wintypes
 import functools
 import json
 import locale
@@ -442,10 +443,13 @@ class UsagePopup:
         w = self.win.winfo_width()
         h = self.win.winfo_height()
         sx = self.win.winfo_screenwidth()
-        sy = self.win.winfo_screenheight()
-        # Bottom-right, above the Windows taskbar
+
+        # Use the taskbar-aware work area so the popup clears the taskbar regardless of its size or DPI
+        work_area = ctypes.wintypes.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0)
+
         x = sx - w - 12
-        y = sy - h - 60
+        y = work_area.bottom - h - 12
         self.win.geometry(f'+{x}+{y}')
 
     def _build_content(self) -> None:
