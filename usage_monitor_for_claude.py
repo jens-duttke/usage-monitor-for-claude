@@ -466,7 +466,7 @@ class UsagePopup:
             self._section_heading(self._main_frame, T['account'])
             account = profile.get('account', {})
             org = profile.get('organization', {})
-            plan = org.get('organization_type', '').replace('claude_', 'Claude ').title()
+            plan = org.get('organization_type', '').replace('_', ' ').title()
             email = account.get('email', '')
             if email:
                 self._info_row(self._main_frame, T['email'], email)
