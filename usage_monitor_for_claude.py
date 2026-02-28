@@ -267,10 +267,14 @@ DIM_WHITE = (255, 255, 255, 140)
 
 
 @functools.lru_cache(maxsize=None)
-def load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Load Arial Bold font at given size, with fallback to default."""
+def load_font(size: int, symbol: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load font at given size. Use symbol=True for Unicode glyphs not in Arial."""
     windir = os.environ.get('WINDIR', 'C:\\Windows')
-    for name in (f'{windir}\\Fonts\\arialbd.ttf', 'arialbd.ttf', f'{windir}\\Fonts\\arial.ttf', 'arial.ttf'):
+    if symbol:
+        names = (f'{windir}\\Fonts\\seguisym.ttf', 'seguisym.ttf')
+    else:
+        names = (f'{windir}\\Fonts\\arialbd.ttf', 'arialbd.ttf', f'{windir}\\Fonts\\arial.ttf', 'arial.ttf')
+    for name in names:
         try:
             return ImageFont.truetype(name, size)
         except OSError:
@@ -285,17 +289,19 @@ def create_icon_image(pct_5h: float, pct_7d: float) -> Image.Image:
     img = Image.new('RGBA', (S, S), TRANSPARENT)
     draw = ImageDraw.Draw(img)
 
-    # ── Top text: "C" or percentage when usage > 50% ──
+    # ── Top text: "C", percentage when usage > 50%, or "✕" at 100% ──
+    stroke_width = 0
     if pct_5h >= 100:
-        text, font = '!', load_font(42)
+        text, font = '\u2715', load_font(36, symbol=True)
+        stroke_width = 2
     elif pct_5h > 50:
         text, font = f'{pct_5h:.0f}', load_font(40)
     else:
         text, font = 'C', load_font(42)
 
-    bbox = draw.textbbox((0, 0), text, font=font)
+    bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
     tw = bbox[2] - bbox[0]
-    draw.text(((S - tw) / 2 - bbox[0], -bbox[1]), text, fill=WHITE, font=font)
+    draw.text(((S - tw) / 2 - bbox[0], -bbox[1]), text, fill=WHITE, font=font, stroke_width=stroke_width, stroke_fill=WHITE)
 
     # ── Progress bars – full width, flush to bottom ──
     bar_h = 9
@@ -312,28 +318,15 @@ def create_icon_image(pct_5h: float, pct_7d: float) -> Image.Image:
     return img
 
 
-def create_error_image() -> Image.Image:
-    """Create monochrome '?' icon for error/loading state."""
-    S = 64
-    img = Image.new('RGBA', (S, S), TRANSPARENT)
-    draw = ImageDraw.Draw(img)
-    font = load_font(40)
-    bbox = draw.textbbox((0, 0), '?', font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), '?', fill=DIM_WHITE, font=font)
-
-    return img
-
-
-def create_auth_error_image() -> Image.Image:
-    """Create 'C!' icon for authentication/session expired state."""
+def create_status_image(text: str) -> Image.Image:
+    """Create monochrome centered-text icon for error/status states."""
     S = 64
     img = Image.new('RGBA', (S, S), TRANSPARENT)
     draw = ImageDraw.Draw(img)
     font = load_font(46)
-    bbox = draw.textbbox((0, 0), 'C!', font=font)
+    bbox = draw.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), 'C!', fill=DIM_WHITE, font=font)
+    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), text, fill=DIM_WHITE, font=font)
 
     return img
 
@@ -706,7 +699,7 @@ class UsageMonitorForClaude:
         self.usage_data = fetch_usage()
 
         if 'error' in self.usage_data:
-            self.icon.icon = create_auth_error_image() if self.usage_data.get('auth_error') else create_error_image()
+            self.icon.icon = create_status_image('C!' if self.usage_data.get('auth_error') else '!')
             self.icon.title = format_tooltip(self.usage_data)
             return
 

@@ -10,7 +10,7 @@ Usage Monitor for Claude is a lightweight Windows desktop tool that shows your c
 
 - **Portable** - single EXE, no installation required. Just download, place anywhere, and run
 - **Autostart** - optional "Start with Windows" toggle in the right-click menu
-- **Live tray icon** - displays a "C" during normal use, switches to the current percentage when session usage exceeds 50%, and shows "!" when you hit the rate limit
+- **Live tray icon** - displays a "C" during normal use, switches to the current percentage when session usage exceeds 50%, and shows "✕" when you hit the rate limit
 - **Two progress bars** in the icon: top bar = 5-hour session limit, bottom bar = 7-day weekly limit
 - **Hover tooltip** with a quick summary of your 5-hour and 7-day usage, including reset times
 - **Detail popup** (left-click) - dark-themed window showing your account info (email, plan) and separate usage bars for Session, Weekly, Weekly Sonnet, and Weekly Opus limits
@@ -30,7 +30,7 @@ Usage Monitor for Claude is a lightweight Windows desktop tool that shows your c
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and logged in (CLI, VS Code extension, or JetBrains plugin - any variant works). The app reads the OAuth token that Claude Code stores locally (`~/.claude/.credentials.json`). No API key, no manual token entry.
 
 > [!TIP]
-> If the token is missing or expired, the app shows a notification and a "?" icon. Simply log in to Claude Code again and the monitor picks it up automatically.
+> If the token is missing or expired, the app shows a notification and a "!" icon. Simply log in to Claude Code again and the monitor picks it up automatically.
 
 ---
 
