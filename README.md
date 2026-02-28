@@ -113,7 +113,7 @@ Produces `dist/UsageMonitorForClaude.exe` (~20 MB), a single-file executable tha
    git add -A && git commit -m "Release v1.x.x"
    git tag v1.x.x
    git push origin main v1.x.x
-   gh release create v1.x.x dist/UsageMonitorForClaude.exe --title "v1.x.x" --notes "Release notes here"
+   gh release create v1.x.x dist/UsageMonitorForClaude.exe --title "v1.x.x" --notes "<release notes from CHANGELOG.md>"
    ```
 
 </details>

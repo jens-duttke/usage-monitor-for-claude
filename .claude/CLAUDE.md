@@ -76,6 +76,11 @@ Prioritize readability and auditability — users handle credentials and must be
 - Write entries from the user's perspective — describe what changed, not how the code changed
 - One bullet point per logical change; keep it concise (one sentence)
 
+## Releasing
+- Update `__version__` in `usage_monitor_for_claude.py` and all four version fields in `version_info.py` (`filevers`, `prodvers`, `FileVersion`, `ProductVersion`)
+- In `CHANGELOG.md`: rename `## [Unreleased]` to `## [x.y.z] - YYYY-MM-DD`, add a fresh empty `## [Unreleased]` section above it, and update the compare links
+- GitHub release notes (`gh release create --notes`) must use the exact content from the version's `CHANGELOG.md` section (the `### Added` / `### Changed` / `### Fixed` / `### Removed` blocks), followed by a `[Full changelog](compare-url)` link
+
 ## Execution
 - Always activate virtual environment before running Python code
 - Research current recommendations before changes if needed
