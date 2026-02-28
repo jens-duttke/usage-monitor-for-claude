@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session expiry detection with distinct "C!" tray icon when the Anthropic API returns HTTP 401, instead of showing a generic error
 - Windows toast notification when quota resets after near-exhaustion (session >95% or weekly >98%), so users know Claude is available again without manually checking
 - Adaptive polling that aligns to imminent quota resets for near-immediate feedback when quota refreshes
+- Simplified Chinese (zh-CN) and Traditional Chinese (zh-TW) translations
 
 ### Changed
 

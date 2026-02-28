@@ -65,6 +65,9 @@ Prioritize readability and auditability — users handle credentials and must be
 - Never exclude standard library modules that are transitive dependencies (e.g., `email` is needed by `urllib3`/`requests`)
 - After any dependency change, verify the `excludes` list doesn't break transitive imports
 
+## README
+- Keep the feature list and descriptions in `README.md` in sync when adding, changing, or removing user-facing features
+
 ## Changelog
 - Update `CHANGELOG.md` for every user-facing change (new features, bug fixes, behavior changes, UI changes)
 - Do not add changelog entries for internal refactors, code style changes, or documentation-only changes unless they affect the user

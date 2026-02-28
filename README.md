@@ -20,7 +20,7 @@ Usage Monitor for Claude is a lightweight Windows desktop tool that shows your c
 - **Reset countdown** below each bar, e.g. "Resets in 2h 20m (14:30)"
 - **Smart refresh** - updates every 2 minutes by default; automatically speeds up to 1-minute intervals while you are actively using Claude, then slows back down
 - **Manual refresh** via right-click menu at any time
-- **Multilingual UI** (English, German, French, Spanish, Portuguese, Italian, Japanese, Korean, Hindi, Indonesian) - automatically selected based on your Windows display language
+- **Multilingual UI** (English, German, French, Spanish, Portuguese, Italian, Japanese, Korean, Hindi, Indonesian, Chinese Simplified, Chinese Traditional) - automatically selected based on your Windows display language
 - **Zero configuration** - authenticates through your existing Claude Code login
 
 ---
