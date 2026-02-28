@@ -724,12 +724,32 @@ class UsageMonitorForClaude:
         self.icon.icon = create_icon_image(pct_5h, pct_7d)
         self.icon.title = format_tooltip(self.usage_data)
 
+    def _seconds_until_next_reset(self) -> float | None:
+        """Return seconds until the earliest upcoming quota reset, or None."""
+        now = datetime.now(timezone.utc)
+        earliest = None
+        for key in ('five_hour', 'seven_day', 'seven_day_sonnet', 'seven_day_opus'):
+            entry = self.usage_data.get(key)
+            if not entry or not entry.get('resets_at'):
+                continue
+            try:
+                reset_time = datetime.fromisoformat(entry['resets_at'])
+                seconds = (reset_time - now).total_seconds()
+                if seconds > 0 and (earliest is None or seconds < earliest):
+                    earliest = seconds
+            except Exception:
+                continue
+
+        return earliest
+
     def poll_loop(self) -> None:
         """Poll the API in a loop with adaptive intervals.
 
         Uses faster polling (``POLL_FAST``) when session usage is increasing,
         slower polling (``POLL_INTERVAL``) when idle, and error-rate polling
-        (``POLL_ERROR``) after failed requests.
+        (``POLL_ERROR``) after failed requests.  When a quota reset is
+        imminent (within ``interval * 1.5``), the next poll is aligned to
+        the reset time for immediate post-reset feedback.
         """
         self.profile_data = fetch_profile()
         while self.running:
@@ -740,6 +760,16 @@ class UsageMonitorForClaude:
                 interval = POLL_FAST
             else:
                 interval = POLL_INTERVAL
+
+            # Align next poll to an imminent reset for faster feedback.
+            # The +5s buffer guards against minor timing differences
+            # (clocks, caches, processing delays). Follow-up uses POLL_FAST
+            # regardless of user activity (quota was likely exhausted).
+            next_reset = self._seconds_until_next_reset()
+            if next_reset is not None and next_reset + 5 <= interval * 1.5:
+                interval = max(int(next_reset) + 5, POLL_FAST)
+                self._fast_polls_remaining = max(self._fast_polls_remaining, 2)
+
             for _ in range(interval):
                 if not self.running:
                     break
