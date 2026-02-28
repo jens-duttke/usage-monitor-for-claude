@@ -21,6 +21,9 @@
     "error_label": "Usage Monitor: Error",
     "connection_error": "Tidak dapat terhubung ke API Anthropic.",
     "http_error": "Permintaan API gagal (HTTP {code}).",
+    "auth_expired": "Sesi berakhir – silakan buka Claude Code untuk login kembali, kecuali akun atau langganan Anda telah berubah.",
+    "auth_expired_label": "Claude Sesi Berakhir",
+    "auth_expired_short": "Silakan buka Claude Code untuk memperbarui sesi.",
     "no_token": "Tidak ada token OAuth. Masuk ke Claude Code terlebih dahulu.",
     "warn_no_token": "PERINGATAN: Token OAuth Claude Code tidak ditemukan!",
     "warn_login": "Silakan instal dan masuk ke Claude Code terlebih dahulu:"

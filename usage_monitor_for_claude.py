@@ -137,7 +137,10 @@ def fetch_usage() -> dict[str, Any]:
     except requests.ConnectionError:
         return {'error': T['connection_error']}
     except requests.HTTPError as e:
-        return {'error': T['http_error'].format(code=e.response.status_code if e.response is not None else '?')}
+        code = e.response.status_code if e.response is not None else 0
+        if code == 401:
+            return {'error': T['auth_expired'], 'auth_error': True}
+        return {'error': T['http_error'].format(code=code or '?')}
     except Exception:
         return {'error': T['connection_error']}
 
@@ -234,6 +237,8 @@ def time_until(iso_str: str) -> str:
 def format_tooltip(data: dict[str, Any]) -> str:
     """Format usage data as short tooltip text."""
     if 'error' in data:
+        if data.get('auth_error'):
+            return f"{T['auth_expired_label']}\n{T['auth_expired_short']}"
         return f"{T['error_label']}\n{data['error'][:80]}"
 
     lines = [T['title']]
@@ -258,6 +263,7 @@ def format_tooltip(data: dict[str, Any]) -> str:
 WHITE = (255, 255, 255, 255)
 TRANSPARENT = (0, 0, 0, 0)
 HALF_WHITE = (255, 255, 255, 80)
+DIM_WHITE = (255, 255, 255, 140)
 
 
 @functools.lru_cache(maxsize=None)
@@ -314,7 +320,20 @@ def create_error_image() -> Image.Image:
     font = load_font(40)
     bbox = draw.textbbox((0, 0), '?', font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), '?', fill=HALF_WHITE, font=font)
+    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), '?', fill=DIM_WHITE, font=font)
+
+    return img
+
+
+def create_auth_error_image() -> Image.Image:
+    """Create 'C!' icon for authentication/session expired state."""
+    S = 64
+    img = Image.new('RGBA', (S, S), TRANSPARENT)
+    draw = ImageDraw.Draw(img)
+    font = load_font(46)
+    bbox = draw.textbbox((0, 0), 'C!', font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), 'C!', fill=DIM_WHITE, font=font)
 
     return img
 
@@ -453,7 +472,7 @@ class UsagePopup:
         if 'error' in usage:
             tk.Label(
                 self._usage_frame, text=usage['error'][:120], fg='#e05050', bg=BG,
-                font=('Segoe UI', 9), wraplength=self.WIDTH - 32,
+                font=('Segoe UI', 9), wraplength=self.WIDTH - 32, justify='left',
             ).pack(anchor='w', pady=4)
             return
 
@@ -687,7 +706,7 @@ class UsageMonitorForClaude:
         self.usage_data = fetch_usage()
 
         if 'error' in self.usage_data:
-            self.icon.icon = create_error_image()
+            self.icon.icon = create_auth_error_image() if self.usage_data.get('auth_error') else create_error_image()
             self.icon.title = format_tooltip(self.usage_data)
             return
 

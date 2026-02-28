@@ -21,6 +21,9 @@
     "error_label": "Usage Monitor: त्रुटि",
     "connection_error": "Anthropic API से कनेक्ट नहीं हो सका।",
     "http_error": "API अनुरोध विफल (HTTP {code})।",
+    "auth_expired": "सत्र समाप्त – कृपया Claude Code खोलकर फिर से लॉग इन करें, जब तक कि आपके खाते या सदस्यता में कोई बदलाव न हुआ हो।",
+    "auth_expired_label": "Claude सत्र समाप्त",
+    "auth_expired_short": "कृपया Claude Code खोलकर सत्र नवीनीकृत करें।",
     "no_token": "कोई OAuth टोकन नहीं। पहले Claude Code में लॉग इन करें।",
     "warn_no_token": "चेतावनी: कोई Claude Code OAuth टोकन नहीं मिला!",
     "warn_login": "कृपया पहले Claude Code इंस्टॉल करें और लॉग इन करें:"

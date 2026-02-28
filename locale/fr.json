@@ -21,6 +21,9 @@
     "error_label": "Usage Monitor : Erreur",
     "connection_error": "Impossible de se connecter à l'API Anthropic.",
     "http_error": "Échec de la requête API (HTTP {code}).",
+    "auth_expired": "Session expirée – veuillez ouvrir Claude Code pour vous reconnecter, sauf si votre compte ou abonnement a changé.",
+    "auth_expired_label": "Claude Session expirée",
+    "auth_expired_short": "Veuillez ouvrir Claude Code pour renouveler votre session.",
     "no_token": "Aucun jeton OAuth. Connectez-vous d'abord à Claude Code.",
     "warn_no_token": "ATTENTION : Aucun jeton OAuth Claude Code trouvé !",
     "warn_login": "Veuillez installer et vous connecter à Claude Code :"

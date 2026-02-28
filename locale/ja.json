@@ -21,6 +21,9 @@
     "error_label": "Usage Monitor: エラー",
     "connection_error": "Anthropic APIに接続できません。",
     "http_error": "APIリクエスト失敗 (HTTP {code})。",
+    "auth_expired": "セッション期限切れ – Claude Codeを開いて再ログインしてください（アカウントやサブスクリプションに変更がない場合）。",
+    "auth_expired_label": "Claude セッション期限切れ",
+    "auth_expired_short": "Claude Codeを開いてセッションを更新してください。",
     "no_token": "OAuthトークンがありません。先にClaude Codeにログインしてください。",
     "warn_no_token": "警告: Claude Code OAuthトークンが見つかりません！",
     "warn_login": "Claude Codeをインストールしてログインしてください："
