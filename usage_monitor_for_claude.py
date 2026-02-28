@@ -10,6 +10,8 @@ Authenticates via Claude Code OAuth token from
 """
 from __future__ import annotations
 
+__version__ = '1.0.0'
+
 import ctypes
 import functools
 import json
@@ -120,7 +122,7 @@ def api_headers() -> dict[str, str] | None:
         return {
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json',
-            'User-Agent': 'usage-monitor-for-claude/1.0',
+            'User-Agent': f'usage-monitor-for-claude/{__version__}',
             'anthropic-beta': 'oauth-2025-04-20',
         }
     except (json.JSONDecodeError, KeyError):
