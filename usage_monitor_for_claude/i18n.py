@@ -49,10 +49,38 @@ def detect_lang_code(lang: str) -> str:
     return 'en'
 
 
+def _read_language_override() -> str:
+    """Read the ``language`` key from ``usage-monitor-settings.json``, if present."""
+    import sys
+
+    settings_filename = 'usage-monitor-settings.json'
+
+    if getattr(sys, 'frozen', False):
+        app_dir = Path(sys.executable).parent
+    else:
+        app_dir = Path(__file__).resolve().parent.parent
+
+    for path in (app_dir / settings_filename, Path.home() / '.claude' / settings_filename):
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding='utf-8').strip())
+                if isinstance(data, dict) and 'language' in data:
+                    return str(data['language'])
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    return ''
+
+
 def load_translations() -> dict[str, Any]:
     """Load translations for the detected system language, fallback to English."""
-    lang = locale.getlocale()[0] or ''
-    lang_code = detect_lang_code(lang)
+    override = _read_language_override()
+
+    if override:
+        lang_code = override if (LOCALE_DIR / f'{override}.json').exists() else 'en'
+    else:
+        lang = locale.getlocale()[0] or ''
+        lang_code = detect_lang_code(lang)
 
     return json.loads((LOCALE_DIR / f'{lang_code}.json').read_text(encoding='utf-8'))
 
