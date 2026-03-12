@@ -1,4 +1,4 @@
-🇺🇦 [Українською](README.uk.md) | 🇬🇧 [English](README.md)
+🇬🇧 [English](README.md) | 🇺🇦 [Українською](README.uk.md)
 
 # Usage Monitor for Claude
 
