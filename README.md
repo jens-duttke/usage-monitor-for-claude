@@ -1,5 +1,3 @@
-🇬🇧 [English](README.md) | 🇺🇦 [Українською](README.uk.md)
-
 # Usage Monitor for Claude
 
 **Monitor your Claude rate limits in real time - right from your Windows system tray.**
@@ -19,7 +17,7 @@ A native Windows tray app that shows your Claude usage at a glance - lightweight
 - **Automatic token refresh** - when the OAuth session expires, runs `claude update` in the background to renew the token without user intervention. If a CLI update is installed, shows a notification
 - **Claude Code versions** - the popup shows installed Claude Code versions (native CLI, VS Code, Cursor, Windsurf) so you always know which version each environment uses
 - **Adaptive polling** - speeds up during active usage, pauses when the computer is idle or locked, aligns to imminent quota resets, and backs off on rate-limit errors
-- **Multi-language support**: auto-detects system language or overrides via `language` setting. Available in 13 languages (English, German, Spanish, French, Hindi, Indonesian, Italian, Japanese, Korean, Portuguese, Ukrainian, and Chinese Simplified/Traditional)
+- **12 languages** (English, German, French, Spanish, Portuguese, Italian, Japanese, Korean, Hindi, Indonesian, Chinese Simplified, Chinese Traditional) - auto-detected from your Windows display language, with optional manual override via the `language` setting
 - **Customizable** - optionally override polling intervals, colors, alert thresholds, and more via a [JSON settings file](#configuration)
 
 ---
