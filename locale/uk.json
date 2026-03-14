@@ -1,4 +1,4 @@
-{
+﻿{
     "title": "Акаунт і використання",
     "account": "АКАУНТ",
     "usage": "ВИКОРИСТАННЯ",
@@ -28,7 +28,7 @@
     "error_label": "Usage Monitor: Помилка",
     "connection_error": "Не вдалося підключитися до Anthropic API.",
     "http_error": "Запит до API не вдався (HTTP {code}).",
-    "auth_expired": "Сесія завершилася. Будь ласка, відкрийте Claude Code, щоб увійти знову, якщо Ваш акаунт або підписка змінилися.",
+    "auth_expired": "Сесія завершилася - будь ласка, відкрийте Claude Code, щоб увійти знову.",
     "auth_expired_label": "Сесія Claude завершилася",
     "auth_expired_short": "Будь ласка, відкрийте Claude Code, щоб оновити сесію.",
     "no_token": "Немає токена OAuth. Увійдіть у Claude Code спочатку.",
@@ -51,4 +51,4 @@
     "status_updated": "Оновлено {duration} тому",
     "status_updated_now": "Щойно оновлено",
     "status_refreshing": "Оновлення..."
-}
+}
