@@ -193,6 +193,7 @@ class UsagePopup:
         self.app = app
         self._running = True
         self._closed = threading.Event()
+        self._popup_hwnd = 0
         initial_height = 400
         self._last_height = initial_height
         snap = app.cache.snapshot
@@ -223,6 +224,7 @@ class UsagePopup:
         config = _init_config(self.app.cache.snapshot)
         self._window.evaluate_js(f'init({json.dumps(config)})')
         self._window.show()
+        self._popup_hwnd = self._window.native.Handle.ToInt32()
         self._shown = True
         threading.Thread(target=self._update_loop, daemon=True).start()
 
@@ -256,10 +258,13 @@ class UsagePopup:
         @ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
         def mouse_proc(code, wparam, lparam):
             if code >= 0 and wparam == 0x0201:  # WM_LBUTTONDOWN
-                info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-                x, y = self._tray_position(self._last_height)
-                if not (x <= info.pt.x <= x + self.WIDTH and y <= info.pt.y <= y + self._last_height):
-                    _post_quit()
+                popup_hwnd = self._popup_hwnd
+                if popup_hwnd:
+                    rect = ctypes.wintypes.RECT()
+                    ctypes.windll.user32.GetWindowRect(popup_hwnd, ctypes.byref(rect))
+                    info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                    if not (rect.left <= info.pt.x <= rect.right and rect.top <= info.pt.y <= rect.bottom):
+                        _post_quit()
             return _call_next(None, code, wparam, lparam)
 
         # -- Keyboard hook: Escape key --
@@ -282,9 +287,18 @@ class UsagePopup:
             ctypes.wintypes.LONG, ctypes.wintypes.LONG, ctypes.wintypes.DWORD, ctypes.wintypes.DWORD,
         )
 
+        own_pid = ctypes.windll.kernel32.GetCurrentProcessId()
+
         @WINEVENT_CALLBACK
-        def fg_proc(_hook, _event, _hwnd, _id_obj, _id_child, _thread, _time):
-            _post_quit()
+        def fg_proc(_hook, _event, hwnd, _id_obj, _id_child, _thread, _time):
+            # Walk to the root ancestor: WebView2 hosts content in a
+            # separate browser process whose windows are children of
+            # our popup, so WINEVENT_SKIPOWNPROCESS alone misses them.
+            root = ctypes.windll.user32.GetAncestor(hwnd, 2) or hwnd  # GA_ROOT
+            pid = ctypes.wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(root, ctypes.byref(pid))
+            if pid.value != own_pid:
+                _post_quit()
 
         mouse_hook = ctypes.windll.user32.SetWindowsHookExW(14, mouse_proc, None, 0)  # WH_MOUSE_LL
         kb_hook = ctypes.windll.user32.SetWindowsHookExW(13, kb_proc, None, 0)  # WH_KEYBOARD_LL
