@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.cache import CacheSnapshot
-from usage_monitor_for_claude.popup import _init_config, _snapshot_to_dict, _usage_entries
+from usage_monitor_for_claude.popup import UsagePopup, _BASELINE_DPI, _init_config, _snapshot_to_dict, _usage_entries
 
 
 def _snap(
@@ -360,6 +360,160 @@ class TestInitConfig(unittest.TestCase):
         config = _init_config(snap)
         self.assertEqual(config['data']['profile']['email'], 'a@b.com')
         self.assertEqual(set(config['data'].keys()), {'profile', 'usage', 'extra', 'installations', 'status'})
+
+
+# ---------------------------------------------------------------------------
+# _tray_position
+# ---------------------------------------------------------------------------
+
+class TestTrayPosition(unittest.TestCase):
+    """Tests for UsagePopup._tray_position - popup placement near the tray.
+
+    _tray_position receives a physical-pixel height (the actual window
+    height after DPI scaling) and work-area bounds in physical pixels.
+    It returns logical coordinates suitable for pywebview's move().
+    """
+
+    def _call(self, work_left, work_top, work_right, work_bottom, dpi, physical_width, physical_height):
+        """Call _tray_position without constructing a full UsagePopup."""
+        popup = object.__new__(UsagePopup)
+
+        def set_rect(_code, _size, rect_ptr, _flags):
+            import ctypes
+            import ctypes.wintypes
+            rect = ctypes.cast(rect_ptr, ctypes.POINTER(ctypes.wintypes.RECT)).contents
+            rect.left = work_left
+            rect.top = work_top
+            rect.right = work_right
+            rect.bottom = work_bottom
+            return 1
+
+        with patch('ctypes.windll.user32.SystemParametersInfoW', side_effect=set_rect), \
+             patch('ctypes.windll.user32.GetDpiForSystem', return_value=dpi):
+            return popup._tray_position(physical_width, physical_height)
+
+    def test_bottom_right_at_100_percent_scaling(self):
+        """At 100% DPI, popup aligns to bottom-right of work area."""
+        x, y = self._call(0, 0, 1920, 1040, _BASELINE_DPI, 340, 400)
+        self.assertEqual(x, 1920 - 340 - 12)
+        self.assertEqual(y, 1040 - 400 - 12)
+
+    def test_bottom_right_at_125_percent_scaling(self):
+        """At 125% DPI, logical coordinates place the popup within the work area."""
+        scale = 120 / _BASELINE_DPI  # 1.25
+        pw = int(340 * scale)
+        ph = int(400 * scale)
+        x, y = self._call(0, 0, 2400, 1300, 120, pw, ph)
+        expected_x = int((2400 - pw - 12) / scale)
+        expected_y = int((1300 - ph - 12) / scale)
+        self.assertEqual(x, expected_x)
+        self.assertEqual(y, expected_y)
+
+    def test_bottom_right_at_150_percent_scaling(self):
+        """At 150% DPI, logical coordinates place the popup within the work area."""
+        scale = 144 / _BASELINE_DPI  # 1.5
+        pw = int(340 * scale)
+        ph = int(400 * scale)
+        x, y = self._call(0, 0, 2880, 1560, 144, pw, ph)
+        expected_x = int((2880 - pw - 12) / scale)
+        expected_y = int((1560 - ph - 12) / scale)
+        self.assertEqual(x, expected_x)
+        self.assertEqual(y, expected_y)
+
+    def test_taskbar_on_left(self):
+        """When taskbar is on the left (work_area.left > 0), popup goes to the left edge."""
+        x, y = self._call(60, 0, 1920, 1080, _BASELINE_DPI, 340, 400)
+        self.assertEqual(x, 60 + 12)
+        self.assertEqual(y, 1080 - 400 - 12)
+
+    def test_taskbar_on_top(self):
+        """When taskbar is on top (work_area.top > 0), popup goes to the top edge."""
+        x, y = self._call(0, 40, 1920, 1080, _BASELINE_DPI, 340, 400)
+        self.assertEqual(x, 1920 - 340 - 12)
+        self.assertEqual(y, 40 + 12)
+
+    def test_popup_fits_within_work_area_at_125_percent(self):
+        """The popup's physical extent must not exceed the work area at 125% scaling."""
+        dpi = 120
+        scale = dpi / _BASELINE_DPI
+        pw = int(340 * scale)
+        ph = int(400 * scale)
+        work_right = 2400
+        work_bottom = 1300
+        x, y = self._call(0, 0, work_right, work_bottom, dpi, pw, ph)
+        # move() scales logical coords back to physical
+        physical_x = x * scale
+        physical_y = y * scale
+        self.assertLessEqual(physical_x + pw, work_right)
+        self.assertLessEqual(physical_y + ph, work_bottom)
+
+
+# ---------------------------------------------------------------------------
+# _resize_and_position
+# ---------------------------------------------------------------------------
+
+class TestResizeAndPosition(unittest.TestCase):
+    """Tests for UsagePopup._resize_and_position - DPI-aware resize."""
+
+    def _call(self, css_height, dpi):
+        """Call _resize_and_position and capture the resize/move arguments."""
+        popup = object.__new__(UsagePopup)
+        popup.WIDTH = UsagePopup.WIDTH
+
+        mock_window = MagicMock()
+        popup._window = mock_window
+
+        def set_rect(_code, _size, rect_ptr, _flags):
+            import ctypes
+            import ctypes.wintypes
+            rect = ctypes.cast(rect_ptr, ctypes.POINTER(ctypes.wintypes.RECT)).contents
+            rect.left = 0
+            rect.top = 0
+            rect.right = 1920
+            rect.bottom = 1040
+            return 1
+
+        with patch('ctypes.windll.user32.GetDpiForSystem', return_value=dpi), \
+             patch('ctypes.windll.user32.SystemParametersInfoW', side_effect=set_rect):
+            popup._resize_and_position(css_height)
+
+        return mock_window
+
+    def test_resize_at_100_percent(self):
+        """At 100% DPI, resize uses CSS pixels directly (scale=1)."""
+        mock = self._call(500, 96)
+        mock.resize.assert_called_once_with(340, 500)
+
+    def test_resize_at_125_percent(self):
+        """At 125% DPI, resize multiplies by scale factor for physical pixels."""
+        mock = self._call(500, 120)
+        mock.resize.assert_called_once_with(int(340 * 1.25), int(500 * 1.25))
+
+    def test_resize_at_150_percent(self):
+        """At 150% DPI, resize multiplies by scale factor for physical pixels."""
+        mock = self._call(500, 144)
+        mock.resize.assert_called_once_with(int(340 * 1.5), int(500 * 1.5))
+
+    def test_move_receives_logical_coordinates(self):
+        """move() receives logical coordinates regardless of DPI."""
+        mock = self._call(500, 120)
+        x, y = mock.move.call_args[0]
+        # Logical coordinates must be smaller than physical work area
+        self.assertLess(x, 1920)
+        self.assertLess(y, 1040)
+
+    def test_window_fits_within_work_area_at_125_percent(self):
+        """After resize + move at 125% DPI, the window stays within the work area."""
+        dpi = 120
+        scale = dpi / _BASELINE_DPI
+        mock = self._call(500, dpi)
+        resize_w, resize_h = mock.resize.call_args[0]
+        move_x, move_y = mock.move.call_args[0]
+        # move() scales logical to physical internally
+        physical_x = move_x * scale
+        physical_y = move_y * scale
+        self.assertLessEqual(physical_x + resize_w, 1920)
+        self.assertLessEqual(physical_y + resize_h, 1040)
 
 
 if __name__ == '__main__':

@@ -25,6 +25,7 @@ from .i18n import T
 from .settings import BAR_BG, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, FG, FG_DIM, FG_HEADING, FG_LINK
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
+_BASELINE_DPI = 96
 
 __all__ = ['UsagePopup']
 
@@ -201,7 +202,12 @@ class UsagePopup:
 
         api = _PopupApi(self)
 
-        x, y = self._tray_position(initial_height)
+        # create_window uses logical pixels (WinForms auto-scales via
+        # AutoScaleMode.Dpi), but _tray_position needs the resulting
+        # physical size to compute the correct screen position.
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        scale = dpi / _BASELINE_DPI
+        x, y = self._tray_position(int(self.WIDTH * scale), int(initial_height * scale))
 
         self._window = webview.create_window(
             '', url=str(_POPUP_DIR / 'popup.html'),
@@ -373,37 +379,55 @@ class UsagePopup:
             except Exception:
                 break
 
-    def _tray_position(self, height: int) -> tuple[int, int]:
+    def _tray_position(self, physical_width: int, physical_height: int) -> tuple[int, int]:
         """Calculate popup position near the system tray.
 
-        Detects the taskbar position from the work area and returns
-        coordinates so the popup grows away from the taskbar edge.
-        pywebview scales coordinates by the system DPI factor, so the
-        values from SystemParametersInfoW are divided by that factor
-        to compensate.
+        Parameters
+        ----------
+        physical_width : int
+            Actual window width in physical pixels.
+        physical_height : int
+            Actual window height in physical pixels.
+
+        Returns
+        -------
+        tuple[int, int]
+            Logical (x, y) coordinates for pywebview's ``move()``, which
+            scales them back to physical internally.
         """
         work_area = ctypes.wintypes.RECT()
         ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0)
 
         dpi = ctypes.windll.user32.GetDpiForSystem()
-        scale = dpi / 96
+        scale = dpi / _BASELINE_DPI
 
         margin = 12
 
         if work_area.left > 0:
             x = work_area.left + margin
         else:
-            x = work_area.right - self.WIDTH - margin
+            x = work_area.right - physical_width - margin
 
         if work_area.top > 0:
             y = work_area.top + margin
         else:
-            y = work_area.bottom - height - margin
+            y = work_area.bottom - physical_height - margin
 
         return int(x / scale), int(y / scale)
 
     def _resize_and_position(self, height: int) -> None:
-        """Resize the window and reposition it near the system tray."""
-        self._window.resize(self.WIDTH, height)
-        x, y = self._tray_position(height)
+        """Resize the window and reposition it near the system tray.
+
+        pywebview's ``resize()`` calls ``SetWindowPos`` directly without
+        DPI scaling, so it expects physical pixels.  The *height* from JS
+        ``ResizeObserver`` is in CSS pixels, so we multiply by the system
+        DPI factor.  ``move()`` scales internally, and ``_tray_position``
+        already accounts for that.
+        """
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        scale = dpi / _BASELINE_DPI
+        physical_width = int(self.WIDTH * scale)
+        physical_height = int(height * scale)
+        self._window.resize(physical_width, physical_height)
+        x, y = self._tray_position(physical_width, physical_height)
         self._window.move(x, y)
