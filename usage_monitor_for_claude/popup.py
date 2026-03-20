@@ -236,6 +236,10 @@ class UsagePopup:
         * ``WH_MOUSE_LL`` - catches clicks outside the popup bounds
         * ``WH_KEYBOARD_LL`` - catches Escape even without focus
         * ``EVENT_SYSTEM_FOREGROUND`` - catches Alt-Tab, browser open, etc.
+
+        The foreground hook uses a short delay to ride out the brief
+        focus bounce that WebView2 causes between its host and renderer
+        process on every click inside the content area.
         """
         this_thread = ctypes.windll.kernel32.GetCurrentThreadId()
         WM_QUIT = 0x0012
@@ -281,24 +285,46 @@ class UsagePopup:
                     _post_quit()
             return _call_next(None, code, wparam, lparam)
 
-        # -- Foreground event: another window activated --
+        # -- Foreground event with delayed check --
         WINEVENT_CALLBACK = ctypes.WINFUNCTYPE(
             None, ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD, ctypes.wintypes.HWND,
             ctypes.wintypes.LONG, ctypes.wintypes.LONG, ctypes.wintypes.DWORD, ctypes.wintypes.DWORD,
         )
 
-        own_pid = ctypes.windll.kernel32.GetCurrentProcessId()
+        _fg_timer: threading.Timer | None = None
+
+        def _delayed_fg_check() -> None:
+            """Check if focus is still outside the popup after the delay."""
+            popup_hwnd = self._popup_hwnd
+            if not popup_hwnd or not self._shown:
+                return
+            fg = ctypes.windll.user32.GetForegroundWindow()
+            if fg == popup_hwnd:
+                return
+            if ctypes.windll.user32.IsChild(popup_hwnd, fg):
+                return
+            if ctypes.windll.user32.GetAncestor(fg, 3) == popup_hwnd:  # GA_ROOTOWNER
+                return
+            _post_quit()
 
         @WINEVENT_CALLBACK
         def fg_proc(_hook, _event, hwnd, _id_obj, _id_child, _thread, _time):
-            # Walk to the root ancestor: WebView2 hosts content in a
-            # separate browser process whose windows are children of
-            # our popup, so WINEVENT_SKIPOWNPROCESS alone misses them.
-            root = ctypes.windll.user32.GetAncestor(hwnd, 2) or hwnd  # GA_ROOT
-            pid = ctypes.wintypes.DWORD()
-            ctypes.windll.user32.GetWindowThreadProcessId(root, ctypes.byref(pid))
-            if pid.value != own_pid:
-                _post_quit()
+            nonlocal _fg_timer
+            popup_hwnd = self._popup_hwnd
+            if not popup_hwnd:
+                return
+            # Quick accept: focus moved to a child/owned window of our popup
+            if ctypes.windll.user32.IsChild(popup_hwnd, hwnd):
+                return
+            if ctypes.windll.user32.GetAncestor(hwnd, 3) == popup_hwnd:  # GA_ROOTOWNER
+                return
+            # Delay the dismiss to ride out WebView2's focus bounce
+            # between host and renderer process on content clicks.
+            if _fg_timer is not None:
+                _fg_timer.cancel()
+            _fg_timer = threading.Timer(0.2, _delayed_fg_check)
+            _fg_timer.daemon = True
+            _fg_timer.start()
 
         mouse_hook = ctypes.windll.user32.SetWindowsHookExW(14, mouse_proc, None, 0)  # WH_MOUSE_LL
         kb_hook = ctypes.windll.user32.SetWindowsHookExW(13, kb_proc, None, 0)  # WH_KEYBOARD_LL
@@ -310,6 +336,8 @@ class UsagePopup:
             while self._running and ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
                 pass
         finally:
+            if _fg_timer is not None:
+                _fg_timer.cancel()
             ctypes.windll.user32.UnhookWindowsHookEx(mouse_hook)
             ctypes.windll.user32.UnhookWindowsHookEx(kb_hook)
             ctypes.windll.user32.UnhookWinEvent(fg_hook)
@@ -350,9 +378,15 @@ class UsagePopup:
 
         Detects the taskbar position from the work area and returns
         coordinates so the popup grows away from the taskbar edge.
+        pywebview scales coordinates by the system DPI factor, so the
+        values from SystemParametersInfoW are divided by that factor
+        to compensate.
         """
         work_area = ctypes.wintypes.RECT()
         ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0)
+
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        scale = dpi / 96
 
         margin = 12
 
@@ -366,7 +400,7 @@ class UsagePopup:
         else:
             y = work_area.bottom - height - margin
 
-        return x, y
+        return int(x / scale), int(y / scale)
 
     def _resize_and_position(self, height: int) -> None:
         """Resize the window and reposition it near the system tray."""
