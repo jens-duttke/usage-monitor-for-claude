@@ -1532,6 +1532,56 @@ class TestResetCommand(unittest.TestCase):
         self.app.icon.notify.assert_not_called()
 
 
+    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', {'five_hour': ['echo ping']})
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_dict_command_fires_for_matching_variant(self, _icon, _tooltip, mock_cmd):
+        """Per-variant dict: command fires when the dropping variant is in the dict."""
+        self.app._prev_utilization = {'five_hour': 95.0, 'seven_day': 10.0}
+        data = {'five_hour': {'utilization': 5.0}, 'seven_day': {'utilization': 10.0}}
+        self.app.cache = MagicMock()
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        mock_cmd.assert_called_once()
+        self.assertEqual(mock_cmd.call_args[0][0], ['echo ping'])
+        self.assertEqual(mock_cmd.call_args[0][1]['USAGE_MONITOR_VARIANT'], 'five_hour')
+
+    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', {'five_hour': ['echo ping']})
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_dict_command_silent_for_unmatched_variant(self, _icon, _tooltip, mock_cmd):
+        """Per-variant dict: no command fires when the dropping variant is not in the dict."""
+        self.app._prev_utilization = {'five_hour': 10.0, 'seven_day': 90.0}
+        data = {'five_hour': {'utilization': 10.0}, 'seven_day': {'utilization': 5.0}}
+        self.app.cache = MagicMock()
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        mock_cmd.assert_not_called()
+
+    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', {'five_hour': ['echo 5h'], 'seven_day': ['echo 7d']})
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_dict_command_fires_per_variant_when_both_drop(self, _icon, _tooltip, mock_cmd):
+        """Per-variant dict: each dropping variant fires its own command independently."""
+        self.app._prev_utilization = {'five_hour': 95.0, 'seven_day': 90.0}
+        data = {'five_hour': {'utilization': 5.0}, 'seven_day': {'utilization': 5.0}}
+        self.app.cache = MagicMock()
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        self.assertEqual(mock_cmd.call_count, 2)
+        executed_commands = {call[0][0][0] for call in mock_cmd.call_args_list}
+        self.assertEqual(executed_commands, {'echo 5h', 'echo 7d'})
+
+
 class TestThresholdCommand(unittest.TestCase):
     """Tests for on_threshold_command execution during threshold alerts."""
 

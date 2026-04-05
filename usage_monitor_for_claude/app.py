@@ -36,6 +36,28 @@ from .tray_icon import create_icon_image, create_status_image, taskbar_uses_ligh
 __all__ = ['UsageMonitorForClaude', 'crash_log']
 
 
+def _resolve_commands(setting: list[str] | dict[str, list[str]], variant: str) -> list[str]:
+    """Return the command list for *variant* from *setting*.
+
+    Parameters
+    ----------
+    setting : list[str] | dict[str, list[str]]
+        Flat list of commands (fires for every variant) or a per-variant
+        mapping (fires only for matching variants).
+    variant : str
+        The quota variant key to look up (e.g. ``'five_hour'``).
+
+    Returns
+    -------
+    list[str]
+        Commands to run, or an empty list when no command is configured
+        for this variant.
+    """
+    if isinstance(setting, dict):
+        return setting.get(variant, [])
+    return setting
+
+
 def _future_iso(**kwargs: float) -> str:
     """Return an ISO 8601 timestamp offset from now by the given timedelta kwargs."""
     return (datetime.now(timezone.utc) + timedelta(**kwargs)).isoformat()
@@ -122,7 +144,7 @@ class UsageMonitorForClaude:
         webbrowser.open(PROJECT_URL)
 
     def on_test_reset_5h(self, icon: Any = None, item: Any = None) -> None:
-        run_event_command(ON_RESET_COMMAND, {
+        run_event_command(_resolve_commands(ON_RESET_COMMAND, 'five_hour'), {
             'USAGE_MONITOR_EVENT': 'reset',
             'USAGE_MONITOR_VARIANT': 'five_hour',
             'USAGE_MONITOR_UTILIZATION': '0',
@@ -135,7 +157,7 @@ class UsageMonitorForClaude:
         })
 
     def on_test_reset_7d(self, icon: Any = None, item: Any = None) -> None:
-        run_event_command(ON_RESET_COMMAND, {
+        run_event_command(_resolve_commands(ON_RESET_COMMAND, 'seven_day'), {
             'USAGE_MONITOR_EVENT': 'reset',
             'USAGE_MONITOR_VARIANT': 'seven_day',
             'USAGE_MONITOR_UTILIZATION': '0',
@@ -148,7 +170,7 @@ class UsageMonitorForClaude:
         })
 
     def on_test_threshold_5h(self, icon: Any = None, item: Any = None) -> None:
-        run_event_command(ON_THRESHOLD_COMMAND, {
+        run_event_command(_resolve_commands(ON_THRESHOLD_COMMAND, 'five_hour'), {
             'USAGE_MONITOR_EVENT': 'threshold',
             'USAGE_MONITOR_VARIANT': 'five_hour',
             'USAGE_MONITOR_UTILIZATION': '82',
@@ -159,7 +181,7 @@ class UsageMonitorForClaude:
         })
 
     def on_test_threshold_7d(self, icon: Any = None, item: Any = None) -> None:
-        run_event_command(ON_THRESHOLD_COMMAND, {
+        run_event_command(_resolve_commands(ON_THRESHOLD_COMMAND, 'seven_day'), {
             'USAGE_MONITOR_EVENT': 'threshold',
             'USAGE_MONITOR_VARIANT': 'seven_day',
             'USAGE_MONITOR_UTILIZATION': '81',
@@ -431,12 +453,13 @@ class UsageMonitorForClaude:
         self, variant: str, pct: float, prev_pct: float, *, data: dict[str, Any], entry: dict[str, Any],
     ) -> None:
         """Run the user-configured reset command if set."""
-        if not ON_RESET_COMMAND:
+        commands = _resolve_commands(ON_RESET_COMMAND, variant)
+        if not commands:
             return
 
         pct_5h = (data.get('five_hour') or {}).get('utilization', 0) or 0
         pct_7d = (data.get('seven_day') or {}).get('utilization', 0) or 0
-        run_event_command(ON_RESET_COMMAND, {
+        run_event_command(commands, {
             'USAGE_MONITOR_EVENT': 'reset',
             'USAGE_MONITOR_VARIANT': variant,
             'USAGE_MONITOR_UTILIZATION': str(round(pct)),
@@ -460,7 +483,10 @@ class UsageMonitorForClaude:
         commands.  Notifications still fire - commands react to *events*,
         not *state*.
         """
-        if not ON_THRESHOLD_COMMAND or not self._first_update_done:
+        if not self._first_update_done:
+            return
+        commands = _resolve_commands(ON_THRESHOLD_COMMAND, variant)
+        if not commands:
             return
 
         env_vars = {
@@ -477,7 +503,7 @@ class UsageMonitorForClaude:
         if extra_limit:
             env_vars['USAGE_MONITOR_EXTRA_LIMIT'] = extra_limit
 
-        run_event_command(ON_THRESHOLD_COMMAND, env_vars)
+        run_event_command(commands, env_vars)
 
     # Polling
 

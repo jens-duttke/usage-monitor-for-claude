@@ -603,6 +603,50 @@ class TestSettingsValidation(unittest.TestCase):
         self.assertNotIn('on_threshold_command', result)
         mock.windll.user32.MessageBoxW.assert_called_once()
 
+    # Per-variant dict form
+
+    def test_on_reset_command_dict_string_values_normalized(self):
+        """Dict with string values is normalized to lists per variant."""
+        result, mock = self._run_validate({'on_reset_command': {'five_hour': 'echo ping', 'seven_day': 'echo weekly'}})
+        self.assertEqual(result['on_reset_command'], {'five_hour': ['echo ping'], 'seven_day': ['echo weekly']})
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_on_reset_command_dict_list_values_pass_through(self):
+        """Dict with list values passes through unchanged."""
+        result, mock = self._run_validate({'on_reset_command': {'five_hour': ['cmd1', 'cmd2']}})
+        self.assertEqual(result['on_reset_command'], {'five_hour': ['cmd1', 'cmd2']})
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_on_reset_command_dict_mixed_string_and_list_values(self):
+        """Dict mixing string and list values is normalized correctly."""
+        result, mock = self._run_validate({'on_reset_command': {'five_hour': 'echo ping', 'seven_day': ['cmd1', 'cmd2']}})
+        self.assertEqual(result['on_reset_command'], {'five_hour': ['echo ping'], 'seven_day': ['cmd1', 'cmd2']})
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_on_reset_command_empty_dict_valid(self):
+        """Empty dict is valid (no variant has a command configured)."""
+        result, mock = self._run_validate({'on_reset_command': {}})
+        self.assertEqual(result['on_reset_command'], {})
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_on_reset_command_dict_non_string_value_dropped(self):
+        """Dict with a non-string, non-list variant value is dropped."""
+        result, mock = self._run_validate({'on_reset_command': {'five_hour': 42}})
+        self.assertNotIn('on_reset_command', result)
+        mock.windll.user32.MessageBoxW.assert_called_once()
+
+    def test_on_reset_command_dict_list_with_non_string_item_dropped(self):
+        """Dict with a list containing a non-string item is dropped."""
+        result, mock = self._run_validate({'on_reset_command': {'five_hour': ['echo', 99]}})
+        self.assertNotIn('on_reset_command', result)
+        mock.windll.user32.MessageBoxW.assert_called_once()
+
+    def test_on_threshold_command_dict_string_values_normalized(self):
+        """Dict form also works for on_threshold_command."""
+        result, mock = self._run_validate({'on_threshold_command': {'five_hour': 'echo threshold', 'seven_day': ['cmd1']}})
+        self.assertEqual(result['on_threshold_command'], {'five_hour': ['echo threshold'], 'seven_day': ['cmd1']})
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
     def _run_validate(self, data: dict) -> tuple[dict, MagicMock]:
         """Run _validate with mocked ctypes and return (result, mock_ctypes)."""
         mock_ctypes = MagicMock()

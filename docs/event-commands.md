@@ -15,6 +15,19 @@ Commands run with the same privileges as the app and **without a visible window*
 
 Both settings accept a single command string or an array of strings to run multiple commands per event. When an array is provided, all commands are launched independently (fire-and-forget) - if one fails, the others still run.
 
+Both settings also accept an **object keyed by quota variant** to run different commands per quota type, or to target only specific variants:
+
+```json
+{
+  "on_reset_command": {
+    "five_hour": "claude -p \"ok\" --tools \"\" --no-session-persistence --system-prompt \"Reply with only: ok\" --output-format text",
+    "seven_day": "echo weekly reset"
+  }
+}
+```
+
+With a variant object, a command only fires when the matching quota variant resets or crosses a threshold. Variants not listed in the object are silently ignored. Each variant's value can be a string or an array of strings.
+
 Commands only fire on **state changes** detected while the app is running. On app startup, already-exceeded thresholds trigger a desktop notification but do not run `on_threshold_command` - this prevents duplicate commands after a restart or reboot.
 
 When `on_reset_command` is configured, the app briefly wakes from idle/lock pause to poll at the expected reset time so the command fires promptly - even if the computer is unattended. If the API has not applied the reset yet (server-side delay) or the network is temporarily unavailable, the app retries at regular intervals until the reset is confirmed. `on_threshold_command` does not wake from idle - thresholds are driven by active usage, so they are checked when polling resumes after the user returns. Desktop notifications that occur during idle are deferred and shown when the user returns.
@@ -29,6 +42,25 @@ When `on_reset_command` is configured, the app briefly wakes from idle/lock paus
 > Use the **Test event commands** submenu in the tray context menu to fire your configured commands with sample data. This lets you verify your command and script setup without waiting for a real event.
 
 ## Examples
+
+### Quota trigger - ping Claude the moment the 5h session resets
+
+Send a minimal Claude Code request the instant the 5-hour quota resets so the
+next cooldown window starts immediately, without waiting for you to send your
+first real message. Using the variant object ensures the ping only fires on
+session resets - not on weekly or Sonnet quota resets.
+
+```json
+{
+  "on_reset_command": {
+    "five_hour": "claude -p \"ok\" --tools \"\" --no-session-persistence --system-prompt \"Reply with only: ok\" --output-format text"
+  }
+}
+```
+
+The app is already idle-aware and aligns its polling to imminent reset times,
+so the trigger fires within seconds of the actual reset even when the computer
+has been idle.
 
 ### Resume a Claude Code session when the quota resets
 

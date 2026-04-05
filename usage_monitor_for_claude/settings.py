@@ -155,8 +155,33 @@ def _validate(data: dict, path: Path) -> dict:
                 if any(not isinstance(item, str) for item in value):
                     errors.append(f'  {key}: all items must be strings')
                     drop.append(key)
+            elif isinstance(value, dict):
+                normalized: dict[str, list[str]] = {}
+                valid = True
+                for variant_key, variant_cmds in value.items():
+                    if not isinstance(variant_key, str) or not variant_key:
+                        errors.append(f'  {key}: variant keys must be non-empty strings')
+                        drop.append(key)
+                        valid = False
+                        break
+                    if isinstance(variant_cmds, str):
+                        normalized[variant_key] = [variant_cmds]
+                    elif isinstance(variant_cmds, list):
+                        if any(not isinstance(item, str) for item in variant_cmds):
+                            errors.append(f'  {key}.{variant_key}: all items must be strings')
+                            drop.append(key)
+                            valid = False
+                            break
+                        normalized[variant_key] = variant_cmds
+                    else:
+                        errors.append(f'  {key}.{variant_key}: expected a string or array of strings, got {type(variant_cmds).__name__}')
+                        drop.append(key)
+                        valid = False
+                        break
+                if valid:
+                    data[key] = normalized
             else:
-                errors.append(f'  {key}: expected a string or array of strings, got {type(value).__name__}')
+                errors.append(f'  {key}: expected a string, array of strings, or object, got {type(value).__name__}')
                 drop.append(key)
 
         elif key in _BOOL_KEYS:
@@ -314,8 +339,8 @@ CURRENCY_SYMBOL: str = _S.get('currency_symbol', _SYSTEM_CURRENCY_SYMBOL)
 LANGUAGE: str = _S.get('language', '')
 
 # Event commands
-ON_RESET_COMMAND: list[str] = _S.get('on_reset_command', [])
-ON_THRESHOLD_COMMAND: list[str] = _S.get('on_threshold_command', [])
+ON_RESET_COMMAND: list[str] | dict[str, list[str]] = _S.get('on_reset_command', [])
+ON_THRESHOLD_COMMAND: list[str] | dict[str, list[str]] = _S.get('on_threshold_command', [])
 
 _ALERT_THRESHOLDS: dict[str, list[float]] = {
     'five_hour': [50, 80, 95],
