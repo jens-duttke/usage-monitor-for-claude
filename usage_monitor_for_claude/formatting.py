@@ -170,6 +170,7 @@ def expand_popup_fields(popup_fields: list[str], usage_data: dict[str, Any]) -> 
         key for key, value in usage_data.items()
         if isinstance(value, dict) and 'utilization' in value and 'resets_at' in value
         and value.get('utilization') is not None
+        and value.get('resets_at') is not None
     }
 
     result: list[str] = []

@@ -223,6 +223,12 @@ class TestExpandPopupFields(unittest.TestCase):
         result = expand_popup_fields(['*'], usage)
         self.assertEqual(result, ['five_hour'])
 
+    def test_null_resets_at_skipped(self):
+        """Fields with None resets_at are skipped even when utilization is present."""
+        usage = {'five_hour': {'utilization': 10, 'resets_at': ''}, 'seven_day_omelette': {'utilization': 0.0, 'resets_at': None}}
+        result = expand_popup_fields(['*'], usage)
+        self.assertEqual(result, ['five_hour'])
+
     def test_missing_fields_skipped(self):
         """Explicitly listed fields missing from API are skipped."""
         usage = self._usage(five_hour=10)

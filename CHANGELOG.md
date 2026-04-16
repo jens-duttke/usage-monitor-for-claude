@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Quota fields with a `null` reset time (e.g. `seven_day_omelette`) introduced by a recent API change are no longer shown in the popup
 - Usage bars are now always shown in red when they reach 100%, regardless of the time marker position
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.14.0...HEAD)
