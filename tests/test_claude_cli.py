@@ -2,10 +2,12 @@
 Claude CLI Tests
 ==================
 
-Unit tests for find_installations(), refresh_token(), and cli_version().
+Unit tests for _discover_cli_path(), find_installations(), refresh_token(),
+and cli_version().
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -20,6 +22,104 @@ from usage_monitor_for_claude.claude_cli import (
     find_installations,
     refresh_token,
 )
+
+
+# ---------------------------------------------------------------------------
+# _discover_cli_path
+# ---------------------------------------------------------------------------
+
+class TestDiscoverCliPath(unittest.TestCase):
+    """Tests for _discover_cli_path()."""
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which')
+    def test_uses_which_when_found(self, mock_which):
+        """shutil.which hit returns the discovered path directly."""
+        with TemporaryDirectory() as tmp:
+            fake = Path(tmp) / 'claude.cmd'
+            fake.touch()
+            mock_which.return_value = str(fake)
+            self.assertEqual(claude_cli._discover_cli_path(), fake)
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which')
+    def test_substitutes_cmd_for_ps1(self, mock_which):
+        """When which returns a .ps1 shim, sibling .cmd is preferred."""
+        with TemporaryDirectory() as tmp:
+            ps1 = Path(tmp) / 'claude.ps1'
+            cmd = Path(tmp) / 'claude.cmd'
+            ps1.touch()
+            cmd.touch()
+            mock_which.return_value = str(ps1)
+            self.assertEqual(claude_cli._discover_cli_path(), cmd)
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which')
+    def test_substitutes_exe_for_ps1_when_no_cmd(self, mock_which):
+        """When which returns .ps1 with no .cmd sibling, .exe is preferred."""
+        with TemporaryDirectory() as tmp:
+            ps1 = Path(tmp) / 'claude.ps1'
+            exe = Path(tmp) / 'claude.exe'
+            ps1.touch()
+            exe.touch()
+            mock_which.return_value = str(ps1)
+            self.assertEqual(claude_cli._discover_cli_path(), exe)
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which')
+    def test_returns_ps1_if_no_sibling_exists(self, mock_which):
+        """Without a .cmd/.exe sibling, the .ps1 is returned (caller's is_file check handles it)."""
+        with TemporaryDirectory() as tmp:
+            ps1 = Path(tmp) / 'claude.ps1'
+            ps1.touch()
+            mock_which.return_value = str(ps1)
+            self.assertEqual(claude_cli._discover_cli_path(), ps1)
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
+    def test_falls_back_to_appdata_npm_on_windows(self, _mock_which):
+        """When which finds nothing on Windows, use the standard npm location."""
+        with TemporaryDirectory() as tmp:
+            npm_dir = Path(tmp) / 'npm'
+            npm_dir.mkdir()
+            cmd = npm_dir / 'claude.cmd'
+            cmd.touch()
+            with patch('usage_monitor_for_claude.claude_cli.os.name', 'nt'), \
+                 patch.dict(os.environ, {'APPDATA': str(tmp)}, clear=False):
+                self.assertEqual(claude_cli._discover_cli_path(), cmd)
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
+    def test_appdata_npm_prefers_cmd_over_exe(self, _mock_which):
+        """When both .cmd and .exe exist in npm dir, .cmd is preferred (typical npm shim)."""
+        with TemporaryDirectory() as tmp:
+            npm_dir = Path(tmp) / 'npm'
+            npm_dir.mkdir()
+            cmd = npm_dir / 'claude.cmd'
+            exe = npm_dir / 'claude.exe'
+            cmd.touch()
+            exe.touch()
+            with patch('usage_monitor_for_claude.claude_cli.os.name', 'nt'), \
+                 patch.dict(os.environ, {'APPDATA': str(tmp)}, clear=False):
+                self.assertEqual(claude_cli._discover_cli_path(), cmd)
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
+    def test_falls_back_to_local_bin_on_posix(self, _mock_which):
+        """On POSIX without which, ~/.local/bin/claude is the fallback."""
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local_bin = home / '.local' / 'bin'
+            local_bin.mkdir(parents=True)
+            binary = local_bin / 'claude'
+            binary.touch()
+            with patch('usage_monitor_for_claude.claude_cli.os.name', 'posix'), \
+                 patch('usage_monitor_for_claude.claude_cli.Path.home', return_value=home):
+                self.assertEqual(claude_cli._discover_cli_path(), binary)
+
+    @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
+    def test_last_resort_returns_default_when_nothing_found(self, _mock_which):
+        """No CLI anywhere -> return the default path so callers fail gracefully."""
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            with patch('usage_monitor_for_claude.claude_cli.os.name', 'posix'), \
+                 patch('usage_monitor_for_claude.claude_cli.Path.home', return_value=home):
+                result = claude_cli._discover_cli_path()
+            self.assertEqual(result, home / '.local' / 'bin' / 'claude.exe')
+            self.assertFalse(result.is_file())
 
 
 # ---------------------------------------------------------------------------
