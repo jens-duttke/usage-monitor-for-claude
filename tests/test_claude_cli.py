@@ -72,15 +72,14 @@ class TestDiscoverCliPath(unittest.TestCase):
             self.assertEqual(claude_cli._discover_cli_path(), ps1)
 
     @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
-    def test_falls_back_to_appdata_npm_on_windows(self, _mock_which):
-        """When which finds nothing on Windows, use the standard npm location."""
+    def test_falls_back_to_appdata_npm(self, _mock_which):
+        """When which finds nothing, use the standard npm location."""
         with TemporaryDirectory() as tmp:
             npm_dir = Path(tmp) / 'npm'
             npm_dir.mkdir()
             cmd = npm_dir / 'claude.cmd'
             cmd.touch()
-            with patch('usage_monitor_for_claude.claude_cli.os.name', 'nt'), \
-                 patch.dict(os.environ, {'APPDATA': str(tmp)}, clear=False):
+            with patch.dict(os.environ, {'APPDATA': str(tmp)}, clear=False):
                 self.assertEqual(claude_cli._discover_cli_path(), cmd)
 
     @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
@@ -93,30 +92,16 @@ class TestDiscoverCliPath(unittest.TestCase):
             exe = npm_dir / 'claude.exe'
             cmd.touch()
             exe.touch()
-            with patch('usage_monitor_for_claude.claude_cli.os.name', 'nt'), \
-                 patch.dict(os.environ, {'APPDATA': str(tmp)}, clear=False):
+            with patch.dict(os.environ, {'APPDATA': str(tmp)}, clear=False):
                 self.assertEqual(claude_cli._discover_cli_path(), cmd)
-
-    @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
-    def test_falls_back_to_local_bin_on_posix(self, _mock_which):
-        """On POSIX without which, ~/.local/bin/claude is the fallback."""
-        with TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            local_bin = home / '.local' / 'bin'
-            local_bin.mkdir(parents=True)
-            binary = local_bin / 'claude'
-            binary.touch()
-            with patch('usage_monitor_for_claude.claude_cli.os.name', 'posix'), \
-                 patch('usage_monitor_for_claude.claude_cli.Path.home', return_value=home):
-                self.assertEqual(claude_cli._discover_cli_path(), binary)
 
     @patch('usage_monitor_for_claude.claude_cli.shutil.which', return_value=None)
     def test_last_resort_returns_default_when_nothing_found(self, _mock_which):
         """No CLI anywhere -> return the default path so callers fail gracefully."""
         with TemporaryDirectory() as tmp:
             home = Path(tmp)
-            with patch('usage_monitor_for_claude.claude_cli.os.name', 'posix'), \
-                 patch('usage_monitor_for_claude.claude_cli.Path.home', return_value=home):
+            with patch('usage_monitor_for_claude.claude_cli.Path.home', return_value=home), \
+                 patch.dict(os.environ, {'APPDATA': str(tmp)}, clear=False):
                 result = claude_cli._discover_cli_path()
             self.assertEqual(result, home / '.local' / 'bin' / 'claude.exe')
             self.assertFalse(result.is_file())

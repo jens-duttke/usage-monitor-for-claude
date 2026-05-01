@@ -19,15 +19,16 @@ from pathlib import Path
 def _discover_cli_path() -> Path:
     """Discover the Claude Code CLI binary path.
 
-    Strategy:
-    1. ``shutil.which('claude')`` - works on POSIX and Windows, respects PATH
-       and PATHEXT. On a typical Windows npm install this finds ``claude.cmd``
-       in ``%APPDATA%\\npm`` because ``.CMD`` is in the default PATHEXT.
-    2. If the result is a ``.ps1`` (uncommon - happens when the user has added
-       ``.PS1`` to PATHEXT), substitute the sibling ``.cmd``/``.exe``;
-       subprocess cannot directly execute PowerShell scripts.
-    3. Fall back to known platform-specific install locations.
-    4. Last resort: return the original Linux/WSL default so callers'
+    Strategy
+    --------
+    1. ``shutil.which('claude')`` - respects PATH and PATHEXT.  A typical
+       npm install resolves to ``claude.cmd`` in ``%APPDATA%\\npm`` because
+       ``.CMD`` is in the default PATHEXT.
+    2. If the result is a ``.ps1`` shim (uncommon - happens when the user
+       has added ``.PS1`` to PATHEXT), substitute the sibling ``.cmd`` or
+       ``.exe``; subprocess cannot directly execute PowerShell scripts.
+    3. Fall back to the standard npm location at ``%APPDATA%\\npm``.
+    4. Last resort: return the native Windows installer path so callers'
        ``is_file()`` checks fail gracefully and produce sensible logs.
     """
     found = shutil.which('claude')
@@ -40,19 +41,12 @@ def _discover_cli_path() -> Path:
                     return alt
         return path
 
-    candidates: list[Path] = []
-    if os.name == 'nt':
-        appdata = os.environ.get('APPDATA')
-        if appdata:
-            npm_dir = Path(appdata) / 'npm'
-            candidates += [npm_dir / 'claude.cmd', npm_dir / 'claude.exe']
-    candidates += [
-        Path.home() / '.local' / 'bin' / 'claude',
-        Path.home() / '.local' / 'bin' / 'claude.exe',
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
+    appdata = os.environ.get('APPDATA')
+    if appdata:
+        for name in ('claude.cmd', 'claude.exe'):
+            candidate = Path(appdata) / 'npm' / name
+            if candidate.is_file():
+                return candidate
 
     return Path.home() / '.local' / 'bin' / 'claude.exe'
 
