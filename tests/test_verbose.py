@@ -7,7 +7,6 @@ Unit tests for the --verbose diagnostic helpers.
 from __future__ import annotations
 
 import io
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 

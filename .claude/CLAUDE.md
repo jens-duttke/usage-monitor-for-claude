@@ -9,11 +9,10 @@ Prioritize readability and auditability - users handle credentials and must be a
 
 ## Popup Window & DPI
 - The popup uses pywebview with a WinForms host window and Edge WebView2
-- pywebview's `resize()` expects **physical pixels** (it calls `SetWindowPos` directly without DPI scaling)
-- pywebview's `move()` expects **logical pixels** (it scales to physical internally)
-- `SystemParametersInfoW(SPI_GETWORKAREA)` returns **physical pixels** (process is Per-Monitor DPI Aware V2)
-- `_tray_position()` returns **logical coordinates** - never change this to physical
-- Never replace `resize()`/`move()` with direct `SetWindowPos` calls - the mixed coordinate spaces (physical size, logical position) make this error-prone
+- pywebview 6.x `resize()` **and** `move()` both expect **logical pixels** (pywebview applies DPI scaling internally for both)
+- `_tray_position()` still receives physical pixel dimensions (needed to calculate position against Win32 physical coordinates) and returns **logical coordinates** for `move()` - never change this to physical
+- `_tray_position()` uses `Shell_TrayWnd` + `MonitorFromWindow` + `GetMonitorInfoW` to find the monitor that owns the taskbar, then compares `work.left > mon.left` (not `> 0`) to detect a left-side taskbar - this correctly handles multi-monitor layouts where the primary monitor is not at virtual x=0
+- Never replace `resize()`/`move()` with direct `SetWindowPos` calls - pywebview's internal scaling means raw Win32 calls would fight with pywebview's coordinate handling
 - The taskbar icon is hidden via Win32 extended styles (`WS_EX_TOOLWINDOW` + remove `WS_EX_APPWINDOW`). Do **not** use WinForms `ShowInTaskbar = False` - it recreates the native window handle, which crashes WebView2 from background threads
 
 ## Quota Fields

@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from usage_monitor_for_claude.api import API_URL_USAGE, CLAUDE_CONFIG_DIR, CLAUDE_CREDENTIALS, _extract_server_message, _parse_retry_after, fetch_usage, read_access_token
+from usage_monitor_for_claude.api import API_URL_USAGE, _extract_server_message, _parse_retry_after, fetch_usage, read_access_token
 from usage_monitor_for_claude.i18n import LOCALE_DIR
 
 EN = json.loads((LOCALE_DIR / 'en.json').read_text(encoding='utf-8'))
