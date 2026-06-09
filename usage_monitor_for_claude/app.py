@@ -7,6 +7,7 @@ System tray application class with adaptive polling and event handling.
 from __future__ import annotations
 
 import ctypes
+import logging
 import math
 import sys
 import threading
@@ -19,22 +20,26 @@ from typing import Any
 import pystray  # type: ignore[import-untyped]  # no type stubs available
 
 from .api import api_headers
+from .settings_window import open_settings_window
 from .autostart import is_autostart_enabled, set_autostart, sync_autostart_path
 from .cache import UsageCache
 from .claude_cli import PROJECT_URL
 from .command import run_event_command
 from .idle import get_idle_seconds, is_workstation_locked
 from .settings import (
-    ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_PAUSE,
+    ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ERROR_TOLERANCE, FORECAST_ALERTS,
+    ICON_FIELDS, IDLE_PAUSE,
     ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND,
     POLL_ERROR, POLL_FAST, POLL_FAST_EXTRA, POLL_INTERVAL, get_alert_thresholds,
 )
-from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, parse_field_name, popup_label
+from .formatting import elapsed_pct, field_period, forecast_eta, format_clock, format_credits, format_tooltip, parse_field_name, popup_label
 from .i18n import T
 from .popup import UsagePopup
 from .tray_icon import create_icon_image, create_status_image, taskbar_uses_light_theme, watch_theme_change
 
 __all__ = ['UsageMonitorForClaude', 'crash_log']
+
+log = logging.getLogger(__name__)
 
 
 def _future_iso(**kwargs: float) -> str:
@@ -58,11 +63,19 @@ class UsageMonitorForClaude:
         self._prev_account_uuid: str | None = None
         self._first_update_done = False
         self._notified_thresholds: dict[str, float] = {}
+        # Forecast alerts: maps quota key -> (resets_at, last_notified_rate)
+        # so the "running out before reset" notice fires on the first
+        # over-pace detection and re-fires whenever the burn rate increases.
+        self._notified_forecast: dict[str, tuple[str, float]] = {}
 
         # Adaptive polling state
         self._fast_polls_remaining = 0
         self._idle_reset_pending = False
         self._deferred_notifications: dict[str, tuple[str, str]] = {}
+
+        # Settings window lock (prevent multiple instances)
+        self._settings_open = False
+        self._settings_lock = threading.Lock()
 
         # Popup state
         self._popup_lock = threading.Lock()
@@ -96,6 +109,8 @@ class UsageMonitorForClaude:
                 ), enabled=bool(ON_RESET_COMMAND or ON_STARTUP_COMMAND or ON_THRESHOLD_COMMAND)),
                 pystray.MenuItem(T['restart'], self.on_restart),
                 pystray.Menu.SEPARATOR,
+                pystray.MenuItem(T['menu_settings'], self.on_open_settings),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem(T['menu_project'], self.on_open_project),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(T['quit'], self.on_quit),
@@ -122,6 +137,20 @@ class UsageMonitorForClaude:
 
     def on_open_project(self, icon: Any = None, item: Any = None) -> None:
         webbrowser.open(PROJECT_URL)
+
+    def on_open_settings(self, icon: Any = None, item: Any = None) -> None:
+        with self._settings_lock:
+            if self._settings_open:
+                return
+            self._settings_open = True
+
+        def _open() -> None:
+            try:
+                open_settings_window(self)
+            finally:
+                self._settings_open = False
+
+        threading.Thread(target=_open, daemon=True).start()
 
     def on_test_reset_5h(self, icon: Any = None, item: Any = None) -> None:
         run_event_command(ON_RESET_COMMAND, {
@@ -212,7 +241,20 @@ class UsageMonitorForClaude:
     # Tray rendering
 
     def _render_tray(self) -> None:
-        """Re-render tray icon and tooltip from current state."""
+        """Re-render the tray icon, swallowing transient rendering errors.
+
+        Runs inside the poll loop and the theme-watch thread.  An unexpected
+        error here (font/Pillow glitch, malformed API field) used to
+        propagate and tear down the poll loop, freezing the icon.  Errors are
+        now logged and ignored so the icon keeps its last good image.
+        """
+        try:
+            self._render_tray_impl()
+        except Exception:
+            log.warning('tray render failed:\n%s', traceback.format_exc())
+
+    def _render_tray_impl(self) -> None:
+        """Build the tray icon and tooltip from current state."""
         data = self._last_response
         if 'error' in data:
             self.icon.icon = create_status_image('C!' if data.get('auth_error') else '!', self._light_taskbar)
@@ -257,7 +299,20 @@ class UsageMonitorForClaude:
         if result.data is None:
             return
 
-        self._last_response = result.data
+        data = result.data
+
+        # Transient-failure tolerance: a single connection/timeout/5xx blip
+        # must not flip the tray into the error state.  While we still have
+        # recent known-good data and the consecutive-failure streak is within
+        # ERROR_TOLERANCE, keep showing the last good values instead of "!".
+        # Auth errors and rate-limits are never hidden - they need attention.
+        if 'error' in data:
+            transient = not (data.get('auth_error') or data.get('rate_limited'))
+            have_good = bool(self._last_response) and 'error' not in self._last_response
+            if transient and have_good and self.cache.consecutive_errors <= ERROR_TOLERANCE:
+                return
+
+        self._last_response = data
         self._render_tray()
 
         # Handle CLI update notification from token refresh
@@ -267,7 +322,7 @@ class UsageMonitorForClaude:
                 T['notify_update_title'],
             )
 
-        if 'error' in result.data:
+        if 'error' in data:
             return
 
         # Detect account switch: re-fetch profile if the access token changed, then compare UUIDs.
@@ -282,6 +337,7 @@ class UsageMonitorForClaude:
             self._notify_or_defer('account_switched', message, T['notify_account_switched_title'])
             self._prev_utilization = {}
             self._notified_thresholds = {}
+            self._notified_forecast = {}
             self._prev_account_uuid = current_account_uuid
             return
         self._prev_account_uuid = current_account_uuid
@@ -319,7 +375,8 @@ class UsageMonitorForClaude:
                 self._run_reset_command(key, pct, prev, data=result.data, entry=result.data.get(key, {}))
                 self._idle_reset_pending = False
 
-        self._check_threshold_alerts(result.data)
+        forecast_keys = self._check_forecast_alerts(result.data)
+        self._check_threshold_alerts(result.data, suppress=forecast_keys)
 
         # Adaptive polling: speed up when icon top field usage is increasing
         icon_top_key = ICON_FIELDS[0].split(':', 1)[0]
@@ -364,7 +421,7 @@ class UsageMonitorForClaude:
             self.icon.notify(message, title)
         self._deferred_notifications.clear()
 
-    def _check_threshold_alerts(self, data: dict[str, Any]) -> None:
+    def _check_threshold_alerts(self, data: dict[str, Any], suppress: frozenset[str] = frozenset()) -> None:
         """Show a notification when usage crosses a configured threshold.
 
         Dynamically detects all quota fields in the API response.  For
@@ -401,7 +458,11 @@ class UsageMonitorForClaude:
                 title = T['notify_threshold_title']
                 label = popup_label(variant_key)
                 message = T['notify_threshold_generic'].format(label=label, pct=f'{pct:.0f}')
-                self._notify_or_defer(f'threshold_{variant_key}', message, title)
+                # Skip the toast when a forecast alert already covers this quota
+                # (the forecast message includes the percentage), so the user
+                # gets one combined notification instead of two.
+                if variant_key not in suppress:
+                    self._notify_or_defer(f'threshold_{variant_key}', message, title)
                 self._run_threshold_command(variant_key, pct, highest_exceeded, entry, title, message)
                 self._notified_thresholds[variant_key] = highest_exceeded
             elif highest_exceeded < last_notified:
@@ -448,6 +509,64 @@ class UsageMonitorForClaude:
             self._notified_thresholds['extra_usage'] = highest_exceeded
         elif highest_exceeded < last_notified:
             self._notified_thresholds['extra_usage'] = highest_exceeded
+
+    def _check_forecast_alerts(self, data: dict[str, Any]) -> None:
+        """Warn when a quota is on track to run out before it resets.
+
+        The burn rate since the last reset is compared against elapsed time.
+        When usage is ahead of the elapsed-time marker, a notification reports
+        the projected run-out time and how much to cut usage to last until the
+        reset.  It re-fires whenever the burn rate increases (the situation
+        got worse) and re-arms after the quota resets.
+        """
+        notified: set[str] = set()
+        if not FORECAST_ALERTS:
+            return notified
+
+        for key, entry in data.items():
+            if key == 'extra_usage' or not isinstance(entry, dict):
+                continue
+            pct = entry.get('utilization')
+            if pct is None:
+                continue
+
+            period = field_period(key)
+            resets_at = entry.get('resets_at', '')
+            if not period or not resets_at:
+                continue
+
+            time_pct = elapsed_pct(resets_at, period)
+            if time_pct is None:
+                continue
+
+            elapsed_frac = time_pct / 100.0
+            # On track / exhausted / no elapsed time: nothing to warn about.
+            # Forget any previous note so the alert can re-arm next period.
+            if pct <= time_pct or pct >= 100 or elapsed_frac <= 0 or elapsed_frac >= 1:
+                self._notified_forecast.pop(key, None)
+                continue
+
+            current_rate = pct / elapsed_frac
+            sustainable_rate = (100.0 - pct) / (1.0 - elapsed_frac)
+            if current_rate <= 0:
+                continue
+            reduce_pct = max(0.0, min(99.0, (1.0 - sustainable_rate / current_rate) * 100.0))
+
+            # Notify on the first over-pace detection for this period, then
+            # again only when the burn rate has risen since the last alert.
+            prev = self._notified_forecast.get(key)
+            if prev is not None and prev[0] == resets_at and current_rate <= prev[1] + 1e-9:
+                continue
+
+            eta = forecast_eta(pct, time_pct, period)
+            reset = format_clock(resets_at)
+            label = popup_label(key)
+            message = T['notify_forecast'].format(label=label, pct=f'{pct:.0f}', eta=eta or '?', reset=reset or '?', reduce=f'{reduce_pct:.0f}')
+            self._notify_or_defer(f'forecast_{key}', message, T['notify_forecast_title'])
+            self._notified_forecast[key] = (resets_at, current_rate)
+            notified.add(key)
+
+        return notified
 
     # Event commands
 
@@ -570,6 +689,11 @@ class UsageMonitorForClaude:
         else:
             interval = POLL_INTERVAL
 
+        # During an error streak (even one still hidden by error_tolerance),
+        # poll at the faster error cadence so recovery is detected quickly.
+        if not data.get('rate_limited') and self.cache.consecutive_errors > 0:
+            interval = min(interval, POLL_ERROR)
+
         # Align next poll to an imminent reset for faster feedback.
         # The +5s buffer guards against minor timing differences
         # (clocks, caches, processing delays). Follow-up uses POLL_FAST
@@ -609,10 +733,22 @@ class UsageMonitorForClaude:
         locked.  On resume, polls immediately if the regular interval
         has elapsed since the last successful fetch.
         """
-        self.cache.ensure_profile()
+        try:
+            self.cache.ensure_profile()
+        except Exception:
+            log.warning('initial ensure_profile failed:\n%s', traceback.format_exc())
+
         while self.running:
-            self.update()
-            interval = self._calculate_poll_interval()
+            try:
+                self.update()
+                interval = self._calculate_poll_interval()
+            except Exception:
+                # Never let an unexpected error tear down the poll loop - that
+                # would leave the app frozen until a manual restart.  Log and
+                # keep polling so it recovers on its own when the network
+                # (or API) comes back.
+                log.warning('poll cycle failed, continuing:\n%s', traceback.format_exc())
+                interval = POLL_ERROR
 
             target = time.time() + interval
             self._next_poll_time = target

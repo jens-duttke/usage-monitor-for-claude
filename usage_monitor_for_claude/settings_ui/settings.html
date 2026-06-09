@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+<div id="app">
+
+  <h3 id="h-thresholds">Alert Thresholds</h3>
+  <table class="thresh-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th id="h-alert1" class="col-head">1st alert</th>
+        <th id="h-alert2" class="col-head">2nd alert</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="quota-label" id="l-five-hour">Hourly (5h)</td>
+        <td><input type="number" id="t5-1" min="1" max="99"><span class="pct">%</span></td>
+        <td><input type="number" id="t5-2" min="1" max="99"><span class="pct">%</span></td>
+      </tr>
+      <tr>
+        <td class="quota-label" id="l-seven-day">Weekly (7d)</td>
+        <td><input type="number" id="t7-1" min="1" max="99"><span class="pct">%</span></td>
+        <td><input type="number" id="t7-2" min="1" max="99"><span class="pct">%</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="hint" id="hint-thresh">Leave a field empty to use only one threshold.</div>
+
+  <div class="error" id="error"></div>
+
+  <div class="buttons">
+    <button class="btn-cancel" id="btn-cancel">Cancel</button>
+    <button class="btn-save" id="btn-save">Save</button>
+  </div>
+</div>
+<script src="settings.js"></script>
+</body>
+</html>

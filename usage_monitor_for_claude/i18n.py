@@ -55,19 +55,39 @@ def detect_lang_code(lang: str) -> str:
     return 'en'
 
 
+def _load_locale(code: str) -> dict[str, Any]:
+    """Load a single locale file as a dict (empty dict if missing/invalid)."""
+    path = LOCALE_DIR / f'{code}.json'
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def load_translations() -> dict[str, Any]:
-    """Load translations for the configured or detected system language, fallback to English."""
+    """Load translations for the configured or detected system language.
+
+    English (``en.json``) is always loaded first as a base, then the selected
+    language is overlaid on top.  This guarantees a per-key fallback to
+    English: any key missing from a translation file (e.g. a newly added
+    string) resolves to the English text instead of raising ``KeyError``.
+    """
     from .settings import LANGUAGE
+
+    translations = _load_locale('en')
 
     if LANGUAGE:
         lang_file = LOCALE_DIR / f'{LANGUAGE}.json'
         if lang_file.exists():
-            return json.loads(lang_file.read_text(encoding='utf-8'))
+            translations.update(_load_locale(LANGUAGE))
+            return translations
 
     lang = locale.getlocale()[0] or ''
     lang_code = detect_lang_code(lang)
+    if lang_code != 'en':
+        translations.update(_load_locale(lang_code))
 
-    return json.loads((LOCALE_DIR / f'{lang_code}.json').read_text(encoding='utf-8'))
+    return translations
 
 
 T: dict[str, Any] = load_translations()

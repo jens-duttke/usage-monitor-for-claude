@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,36 @@ API_URL_PROFILE = 'https://api.anthropic.com/api/oauth/profile'
 CLAUDE_CONFIG_DIR = Path(os.environ.get('CLAUDE_CONFIG_DIR', '')) if os.environ.get('CLAUDE_CONFIG_DIR') else Path.home() / '.claude'
 CLAUDE_CREDENTIALS = CLAUDE_CONFIG_DIR / '.credentials.json'
 _FALLBACK_USER_AGENT = 'claude-code/2.1.85'
+
+# Network resilience: a few retries for transient failures (DNS hiccups,
+# dropped connections, slow responses, laptop sleep/wake) so a single blip
+# does not flip the tray into the error state.  Only connection/timeout
+# errors are retried here; HTTP status errors (401/429/5xx) are handled by
+# the caller.
+_TIMEOUT = 10
+_MAX_RETRIES = 2
+_RETRY_BACKOFF = 1.0
+
+
+def _get_with_retry(url: str, headers: dict[str, str]) -> requests.Response:
+    """GET *url*, retrying transient connection/timeout errors.
+
+    Retries only ``ConnectionError`` / ``Timeout``; ``HTTPError`` propagates
+    immediately so the caller can map status codes (401/429/5xx) to states.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, headers=headers, timeout=_TIMEOUT)
+            resp.raise_for_status()
+            return resp
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                time.sleep(_RETRY_BACKOFF * (attempt + 1))
+                continue
+            raise
+    raise last_exc if last_exc is not None else requests.ConnectionError(url)
 
 
 def read_access_token() -> str | None:
@@ -62,10 +93,9 @@ def fetch_usage() -> dict[str, Any]:
         return {'error': T['no_token']}
 
     try:
-        resp = requests.get(API_URL_USAGE, headers=headers, timeout=10)
-        resp.raise_for_status()
+        resp = _get_with_retry(API_URL_USAGE, headers)
         return resp.json()
-    except requests.ConnectionError:
+    except (requests.ConnectionError, requests.Timeout):
         return {'error': T['connection_error']}
     except requests.HTTPError as e:
         code = e.response.status_code if e.response is not None else 0
@@ -95,8 +125,7 @@ def fetch_profile() -> dict[str, Any] | None:
         return None
 
     try:
-        resp = requests.get(API_URL_PROFILE, headers=headers, timeout=10)
-        resp.raise_for_status()
+        resp = _get_with_retry(API_URL_PROFILE, headers)
         return resp.json()
     except Exception:
         return None

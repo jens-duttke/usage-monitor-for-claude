@@ -241,6 +241,7 @@ function createBarElement(entry) {
     container.className = 'bar-container';
     const fill = document.createElement('div');
     fill.className = 'bar-fill';
+    fill.classList.toggle('ok', !!entry.ok);
     fill.classList.toggle('warn', entry.warn);
     fill.style.width = '0%';
     container.appendChild(fill);
@@ -268,6 +269,13 @@ function createBarElement(entry) {
         div.appendChild(reset);
     }
 
+    if (entry.forecast_text) {
+        const forecast = document.createElement('div');
+        forecast.className = 'forecast-text';
+        forecast.textContent = entry.forecast_text;
+        div.appendChild(forecast);
+    }
+
     return div;
 }
 
@@ -276,6 +284,7 @@ function updateBarElement(div, entry) {
 
     const fill = div.querySelector('.bar-fill');
     fill.style.width = `${entry.fill_pct * 100}%`;
+    fill.classList.toggle('ok', !!entry.ok);
     fill.classList.toggle('warn', entry.warn);
 
     const container = div.querySelector('.bar-container');
@@ -311,6 +320,20 @@ function updateBarElement(div, entry) {
         }
     } else if (resetEl) {
         resetEl.remove();
+    }
+
+    let forecastEl = div.querySelector('.forecast-text');
+    if (entry.forecast_text) {
+        if (forecastEl) {
+            forecastEl.textContent = entry.forecast_text;
+        } else {
+            forecastEl = document.createElement('div');
+            forecastEl.className = 'forecast-text';
+            forecastEl.textContent = entry.forecast_text;
+            div.appendChild(forecastEl);
+        }
+    } else if (forecastEl) {
+        forecastEl.remove();
     }
 }
 

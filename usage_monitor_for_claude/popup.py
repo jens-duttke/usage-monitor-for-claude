@@ -21,9 +21,12 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
-from .formatting import elapsed_pct, expand_popup_fields, field_period, format_credits, midnight_positions, popup_label, time_until
+from .formatting import elapsed_pct, expand_popup_fields, field_period, forecast_eta, format_credits, midnight_positions, popup_label, time_until
 from .i18n import T
-from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
+from .settings import (
+    BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_OK, BAR_FG_WARN, BAR_MARKER, BG,
+    FG, FG_DIM, FG_HEADING, FG_LINK, FORECAST_COLORS, POPUP_FIELDS,
+)
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 _BASELINE_DPI = 96
@@ -96,12 +99,19 @@ def _snapshot_to_dict(
             time_pct = elapsed_pct(resets_at, period) if period else None
             warn = pct >= 100 or (time_pct is not None and pct > time_pct)
             marker_rel = max(0.0, min(1.0, time_pct / 100)) if time_pct is not None else None
+            # Forecast "on track" (green) - only when forecast_colors is enabled.
+            ok = bool(FORECAST_COLORS and time_pct is not None and not warn)
+            # Projected run-out time, shown only when usage is ahead of pace.
+            eta = forecast_eta(pct, time_pct, period) if period else ''
+            forecast_text = T['popup_forecast'].format(eta=eta) if eta else ''
 
             usage.append({
                 'label': label,
                 'pct_text': f'{pct:.0f}%',
                 'fill_pct': max(0.0, min(1.0, pct / 100)),
                 'warn': warn,
+                'ok': ok,
+                'forecast_text': forecast_text,
                 'reset_text': time_until(resets_at) if resets_at else '',
                 'midnights': midnight_positions(resets_at, period) if period else [],
                 'marker_rel': marker_rel,
@@ -156,7 +166,7 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
     return {
         'colors': {
             'bg': BG, 'fg': FG, 'fg_dim': FG_DIM, 'fg_heading': FG_HEADING, 'fg_link': FG_LINK,
-            'bar_bg': BAR_BG, 'bar_fg': BAR_FG, 'bar_fg_warn': BAR_FG_WARN, 'bar_divider': BAR_DIVIDER, 'bar_marker': BAR_MARKER,
+            'bar_bg': BAR_BG, 'bar_fg': BAR_FG, 'bar_fg_ok': BAR_FG_OK, 'bar_fg_warn': BAR_FG_WARN, 'bar_divider': BAR_DIVIDER, 'bar_marker': BAR_MARKER,
         },
         't': {
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],

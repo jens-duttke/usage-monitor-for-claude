@@ -15,8 +15,9 @@ from .i18n import T
 from .settings import CURRENCY_SYMBOL, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL
 
 __all__ = [
-    'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits', 'format_tooltip',
-    'midnight_positions', 'parse_field_name', 'popup_label', 'time_until', 'tooltip_label',
+    'elapsed_pct', 'expand_popup_fields', 'field_period', 'forecast_eta', 'format_clock', 'format_credits',
+    'format_eta', 'format_tooltip', 'midnight_positions', 'parse_field_name', 'popup_label',
+    'time_until', 'tooltip_label',
 ]
 
 PERIOD_5H = 5 * 3600
@@ -300,6 +301,73 @@ def time_until(iso_str: str) -> str:
         return T['resets_weekday'].format(day=wd, clock=time_str)
     except Exception:
         return ''
+
+
+def format_eta(iso_str: str) -> str:
+    """Return a ``"2h 20m (14:30)"`` style ETA for a future timestamp, or ''.
+
+    Unlike :func:`time_until`, no "Resets..." wording is added, so it can be
+    embedded in arbitrary sentences (e.g. a projected run-out time).
+    """
+    try:
+        target = datetime.fromisoformat(iso_str)
+        now = datetime.now(timezone.utc)
+        total_min = max(0, int((target - now).total_seconds() / 60))
+        if total_min == 0:
+            return ''
+
+        local = target.astimezone()
+        if local.second >= 30:
+            local = local.replace(second=0) + timedelta(minutes=1)
+        else:
+            local = local.replace(second=0)
+        clock = local.strftime('%H:%M')
+
+        if total_min >= 60:
+            duration = T['duration_hm'].format(h=total_min // 60, m=total_min % 60)
+        else:
+            duration = T['duration_m'].format(m=total_min)
+        return f'{duration} ({clock})'
+    except Exception:
+        return ''
+
+
+def format_clock(iso_str: str) -> str:
+    """Return the local wall-clock time ``"HH:MM"`` for an ISO timestamp, or ''."""
+    try:
+        target = datetime.fromisoformat(iso_str).astimezone()
+        if target.second >= 30:
+            target = target.replace(second=0) + timedelta(minutes=1)
+        else:
+            target = target.replace(second=0)
+        return target.strftime('%H:%M')
+    except Exception:
+        return ''
+
+
+def forecast_eta(pct: float, time_pct: float | None, period_seconds: int | None) -> str:
+    """Formatted ETA until a quota would hit 100% at the current burn rate.
+
+    Returns ``''`` unless usage is *ahead* of elapsed time (so the quota is
+    projected to run out before it resets).  Burn rate is measured since the
+    period start: ``rate = pct / elapsed_seconds``; the run-out moment is
+    ``(100 - pct) / rate`` seconds from now.
+    """
+    if time_pct is None or not period_seconds or period_seconds <= 0:
+        return ''
+    if not (0 < pct < 100) or not (0 < time_pct < 100) or pct <= time_pct:
+        return ''
+
+    elapsed_seconds = period_seconds * (time_pct / 100.0)
+    if elapsed_seconds <= 0:
+        return ''
+    rate_per_second = pct / elapsed_seconds
+    if rate_per_second <= 0:
+        return ''
+
+    seconds_to_exhaust = (100.0 - pct) / rate_per_second
+    runout_iso = (datetime.now(timezone.utc) + timedelta(seconds=seconds_to_exhaust)).isoformat()
+    return format_eta(runout_iso)
 
 
 def format_credits(cents: float) -> str:

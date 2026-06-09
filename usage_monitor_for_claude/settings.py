@@ -12,7 +12,7 @@ any constant.  Search order:
 2. ``$CLAUDE_CONFIG_DIR/usage-monitor-settings.json`` (if set and different from ``~/.claude/``)
 3. ``~/.claude/usage-monitor-settings.json``
 
-The app never creates this file - users place it manually.
+The app creates/updates this file when the user saves settings via the UI.
 """
 from __future__ import annotations
 
@@ -25,18 +25,54 @@ from pathlib import Path
 
 __all__ = [
     'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
-    'BAR_BG', 'BAR_FG', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
+    'BAR_BG', 'BAR_FG', 'BAR_FG_OK', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
     'CURRENCY_SYMBOL',
+    'ERROR_TOLERANCE',
     'FG', 'FG_DIM', 'FG_HEADING', 'FG_LINK',
+    'FORECAST_ALERTS', 'FORECAST_COLORS',
     'ICON_DARK', 'ICON_FIELDS', 'ICON_LIGHT', 'IDLE_PAUSE',
     'LANGUAGE', 'MAX_BACKOFF',
     'ON_RESET_COMMAND', 'ON_STARTUP_COMMAND', 'ON_THRESHOLD_COMMAND',
     'POLL_ERROR', 'POLL_FAST', 'POLL_FAST_EXTRA', 'POLL_INTERVAL',
     'POPUP_FIELDS', 'SETTINGS_FILENAME', 'TOOLTIP_FIELDS',
-    'get_alert_thresholds',
+    'get_alert_thresholds', 'save_user_setting',
 ]
 
 SETTINGS_FILENAME = 'usage-monitor-settings.json'
+
+
+def _user_settings_path() -> Path:
+    """Return the writable settings file path (always in ~/.claude/)."""
+    config_env = os.environ.get('CLAUDE_CONFIG_DIR')
+    if config_env:
+        return Path(config_env) / SETTINGS_FILENAME
+    return Path.home() / '.claude' / SETTINGS_FILENAME
+
+
+def save_user_setting(key: str, value: object) -> None:
+    """Write/update a single key in the user settings JSON file.
+
+    Also updates the in-memory ``_S`` dict so the change takes effect
+    immediately without restarting.
+    """
+    path = _user_settings_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if path.is_file():
+            try:
+                text = path.read_text(encoding='utf-8').strip()
+                if text:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, dict):
+                        data = parsed
+            except (json.JSONDecodeError, OSError):
+                pass
+        data[key] = value
+        path.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding='utf-8')
+        _S[key] = value
+    except OSError:
+        pass
 
 _NUMERIC_BOUNDS: dict[str, int] = {
     'poll_interval': 1,
@@ -45,14 +81,15 @@ _NUMERIC_BOUNDS: dict[str, int] = {
     'poll_error': 1,
     'max_backoff': 1,
     'idle_pause': 0,
+    'error_tolerance': 0,
 }
-_COLOR_KEYS = frozenset({'bg', 'fg', 'fg_dim', 'fg_heading', 'fg_link', 'bar_bg', 'bar_fg', 'bar_fg_warn', 'bar_divider', 'bar_marker'})
+_COLOR_KEYS = frozenset({'bg', 'fg', 'fg_dim', 'fg_heading', 'fg_link', 'bar_bg', 'bar_fg', 'bar_fg_ok', 'bar_fg_warn', 'bar_divider', 'bar_marker'})
 _ICON_KEYS = frozenset({'icon_light', 'icon_dark'})
 _THRESHOLD_KEY_PREFIX = 'alert_thresholds_'
 _PERCENT_KEYS = frozenset({'alert_time_aware_below'})
 _STRING_KEYS = frozenset({'currency_symbol', 'language'})
 _COMMAND_KEYS = frozenset({'on_reset_command', 'on_startup_command', 'on_threshold_command'})
-_BOOL_KEYS = frozenset({'alert_time_aware'})
+_BOOL_KEYS = frozenset({'alert_time_aware', 'forecast_colors', 'forecast_alerts'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields'})
 _WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
@@ -259,6 +296,12 @@ POLL_ERROR = _S.get('poll_error', 30)
 MAX_BACKOFF = _S.get('max_backoff', 900)
 IDLE_PAUSE = _S.get('idle_pause', 300)
 
+# Consecutive transient failures (connection/timeout/5xx) tolerated before the
+# tray switches to the error state.  Below this count the last known-good data
+# keeps being shown, so a single network blip no longer flips the icon to "!".
+# Set to 0 to show errors immediately (original behavior).
+ERROR_TOLERANCE = _S.get('error_tolerance', 2)
+
 # Popup theme
 BG = _S.get('bg', '#1e1e1e')
 FG = _S.get('fg', '#cccccc')
@@ -268,6 +311,8 @@ FG_LINK = _S.get('fg_link', '#4a9eff')
 BAR_BG = _S.get('bar_bg', '#333333')
 BAR_FG = _S.get('bar_fg', '#4a9eff')
 BAR_FG_WARN = _S.get('bar_fg_warn', '#e05050')
+# Forecast "on track" color (used only when forecast_colors is enabled).
+BAR_FG_OK = _S.get('bar_fg_ok', '#33b864')
 BAR_DIVIDER = _S.get('bar_divider', '#000c')
 BAR_MARKER = _S.get('bar_marker', '#fffc')
 
@@ -291,6 +336,15 @@ TOOLTIP_FIELDS: list[str] = _S.get('tooltip_fields', ['five_hour', 'seven_day'])
 
 # Popup fields
 POPUP_FIELDS: list[str] = _S.get('popup_fields', ['*'])
+
+# Forecast feature
+# FORECAST_COLORS: when True, paint time-based popup bars green while on track
+#   (usage at/below the elapsed-time marker).  Off by default to keep the
+#   original blue/red look; opt in via the settings file.
+# FORECAST_ALERTS: notify (with projected run-out time and a recommended usage
+#   cut) when a quota is on track to run out before it resets.
+FORECAST_COLORS: bool = _S.get('forecast_colors', False)
+FORECAST_ALERTS: bool = _S.get('forecast_alerts', True)
 
 # Alert thresholds
 ALERT_TIME_AWARE: bool = _S.get('alert_time_aware', True)
@@ -319,9 +373,9 @@ ON_STARTUP_COMMAND: list[str] = _S.get('on_startup_command', [])
 ON_THRESHOLD_COMMAND: list[str] = _S.get('on_threshold_command', [])
 
 _ALERT_THRESHOLDS: dict[str, list[float]] = {
-    'five_hour': [50, 80, 95],
-    'seven_day': [95],
-    'extra_usage': [50, 80, 95],
+    'five_hour': [80, 95],
+    'seven_day': [90, 95],
+    'extra_usage': [80, 95],
 }
 
 
