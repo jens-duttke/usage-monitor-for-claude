@@ -63,10 +63,10 @@ class UsageMonitorForClaude:
         self._prev_account_uuid: str | None = None
         self._first_update_done = False
         self._notified_thresholds: dict[str, float] = {}
-        # Forecast alerts: maps quota key -> (resets_at, last_notified_rate)
-        # so the "running out before reset" notice fires on the first
-        # over-pace detection and re-fires whenever the burn rate increases.
-        self._notified_forecast: dict[str, tuple[str, float]] = {}
+        # Forecast alerts: maps quota key -> (resets_at, last_notified_rate, eta_seconds)
+        # Fires on first over-pace detection, then only when ETA shrinks by
+        # at least FORECAST_RENOTIFY_HOURS hours (not on every tiny rate bump).
+        self._notified_forecast: dict[str, tuple[str, float, float]] = {}
 
         # Adaptive polling state
         self._fast_polls_remaining = 0
@@ -553,17 +553,21 @@ class UsageMonitorForClaude:
             reduce_pct = max(0.0, min(99.0, (1.0 - sustainable_rate / current_rate) * 100.0))
 
             # Notify on the first over-pace detection for this period, then
-            # again only when the burn rate has risen since the last alert.
+            # only when ETA shrinks by ≥2 hours (ignore tiny rate fluctuations
+            # caused by sending individual messages).
+            eta_seconds = (100.0 - pct) / (current_rate / period) if current_rate > 0 else 0
             prev = self._notified_forecast.get(key)
-            if prev is not None and prev[0] == resets_at and current_rate <= prev[1] + 1e-9:
-                continue
+            if prev is not None and prev[0] == resets_at:
+                prev_eta_seconds = prev[2]
+                if eta_seconds >= prev_eta_seconds - 2 * 3600:
+                    continue
 
             eta = forecast_eta(pct, time_pct, period)
             reset = format_clock(resets_at)
             label = popup_label(key)
             message = T['notify_forecast'].format(label=label, pct=f'{pct:.0f}', eta=eta or '?', reset=reset or '?', reduce=f'{reduce_pct:.0f}')
             self._notify_or_defer(f'forecast_{key}', message, T['notify_forecast_title'])
-            self._notified_forecast[key] = (resets_at, current_rate)
+            self._notified_forecast[key] = (resets_at, current_rate, eta_seconds)
             notified.add(key)
 
         return notified
