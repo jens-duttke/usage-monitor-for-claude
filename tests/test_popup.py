@@ -193,8 +193,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='5h 0m')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_usage_bar_fields(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_usage_bar_fields(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Each usage bar dict has all required fields with correct types."""
         usage = {'five_hour': {'utilization': 42, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -206,12 +206,12 @@ class TestSnapshotToDict(unittest.TestCase):
         self.assertFalse(bar['warn'])
         self.assertIsNone(bar['marker_rel'])
         self.assertEqual(bar['reset_text'], '5h 0m')
-        self.assertEqual(bar['midnights'], [])
+        self.assertEqual(bar['dividers'], [])
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=30.0)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='3h 30m')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[0.5])
-    def test_warn_when_usage_ahead_of_time(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[0.5])
+    def test_warn_when_usage_ahead_of_time(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Bar is marked warn when utilization exceeds elapsed percentage."""
         usage = {'five_hour': {'utilization': 60, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -222,8 +222,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=80.0)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='1h 0m')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_no_warn_when_usage_behind_time(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_no_warn_when_usage_behind_time(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Bar is not warn when utilization is below elapsed percentage."""
         usage = {'five_hour': {'utilization': 40, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -233,8 +233,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=50.0)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='2h 30m')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_no_warn_when_equal(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_no_warn_when_equal(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Exactly equal usage and elapsed is not a warning (strictly greater)."""
         usage = {'five_hour': {'utilization': 50, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -242,8 +242,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_warn_at_100_without_time_period(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_warn_at_100_without_time_period(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Bar at 100% is warn even when no time period (time_pct is None)."""
         usage = {'five_hour': {'utilization': 100, 'resets_at': ''}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -251,8 +251,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=100.0)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_warn_at_100_when_time_also_100(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_warn_at_100_when_time_also_100(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Bar at 100% is warn even when elapsed time is also 100% (strict > would miss this)."""
         usage = {'five_hour': {'utilization': 100, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -260,8 +260,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_fill_pct_clamped_to_0_1(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_fill_pct_clamped_to_0_1(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Fill percentage is clamped between 0.0 and 1.0, and over-quota is always warn."""
         usage = {'five_hour': {'utilization': 150, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -270,8 +270,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_zero_utilization(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_zero_utilization(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Zero utilization produces 0% text and 0.0 fill."""
         usage = {'five_hour': {'utilization': 0, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
@@ -282,8 +282,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_multiple_usage_entries(self, _mock_midnights, _mock_time_until, _mock_elapsed):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_multiple_usage_entries(self, _mock_dividers, _mock_time_until, _mock_elapsed):
         """Multiple usage types each produce a bar entry."""
         usage = {
             'five_hour': {'utilization': 10, 'resets_at': '2026-01-01T05:00:00Z'},
@@ -298,8 +298,8 @@ class TestSnapshotToDict(unittest.TestCase):
     @patch('usage_monitor_for_claude.popup.POPUP_FIELDS', ['typo_field', 'seven_day'])
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_misspelled_popup_field_skipped_in_dict(self, _mock_mid, _mock_tu, _mock_ep):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_misspelled_popup_field_skipped_in_dict(self, _mock_div, _mock_tu, _mock_ep):
         """Misspelled popup_fields entry produces no bar, valid one shown."""
         usage = {
             'five_hour': {'utilization': 42, 'resets_at': '2026-01-01T05:00:00Z'},
@@ -317,8 +317,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_non_dict_values_in_response_ignored(self, _mock_mid, _mock_tu, _mock_ep):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_non_dict_values_in_response_ignored(self, _mock_div, _mock_tu, _mock_ep):
         """Non-dict values in the API response are not shown as bars."""
         usage = {
             'error': 'temporary',
@@ -412,8 +412,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_status_live_mode_keys(self, _mock_mid, _mock_tu, _mock_ep):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_status_live_mode_keys(self, _mock_div, _mock_tu, _mock_ep):
         """Live mode status contains all required keys for the JS timer."""
         usage = {'five_hour': {'utilization': 50, 'resets_at': '2026-01-01T05:00:00Z'}}
         result = _snapshot_to_dict(
@@ -424,8 +424,8 @@ class TestSnapshotToDict(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
-    @patch('usage_monitor_for_claude.popup.midnight_positions', return_value=[])
-    def test_status_error_truncated_in_live_mode(self, _mock_mid, _mock_tu, _mock_ep):
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_status_error_truncated_in_live_mode(self, _mock_div, _mock_tu, _mock_ep):
         """Error messages are truncated to 120 characters in live mode."""
         usage = {'five_hour': {'utilization': 50, 'resets_at': '2026-01-01T05:00:00Z'}}
         long_error = 'x' * 200

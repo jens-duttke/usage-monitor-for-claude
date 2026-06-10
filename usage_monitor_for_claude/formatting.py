@@ -15,8 +15,8 @@ from .i18n import T
 from .settings import CURRENCY_SYMBOL, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL
 
 __all__ = [
-    'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits', 'format_tooltip',
-    'midnight_positions', 'parse_field_name', 'popup_label', 'time_until', 'tooltip_label',
+    'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits',
+    'format_tooltip', 'parse_field_name', 'popup_label', 'time_until', 'tooltip_label',
 ]
 
 PERIOD_5H = 5 * 3600
@@ -218,8 +218,14 @@ def elapsed_pct(resets_at: str, period_seconds: int) -> float | None:
         return None
 
 
-def midnight_positions(resets_at: str, period_seconds: int) -> list[float]:
-    """Return relative positions (0.0-1.0) of local midnight boundaries within a usage period.
+def divider_positions(resets_at: str, period_seconds: int) -> list[float]:
+    """Return relative positions (0.0-1.0) of divider marks within a usage period.
+
+    Five-hour periods are split into five equal hour sections, independent
+    of clock alignment.  Periods of a day or longer are subdivided at local
+    midnight boundaries (e.g. seven day marks on a weekly bar).  Other
+    sub-day periods have no dividers - their subdivision is a deliberate
+    design decision for if and when such quota types exist.
 
     Parameters
     ----------
@@ -231,15 +237,21 @@ def midnight_positions(resets_at: str, period_seconds: int) -> list[float]:
     Returns
     -------
     list[float]
-        Positions where local midnights fall within the period, each in the
-        range (0.0, 1.0) exclusive.  Positions that would round to 0px at
-        typical bar widths are omitted.
+        Divider positions within the period, each in the range (0.0, 1.0)
+        exclusive.  Positions that would round to 0px at typical bar
+        widths are omitted.
     """
     if not resets_at or period_seconds <= 0:
         return []
 
     try:
         reset_utc = datetime.fromisoformat(resets_at)
+
+        if period_seconds < 24 * 3600:
+            if period_seconds != PERIOD_5H:
+                return []
+            return [i / 5 for i in range(1, 5)]
+
         start_utc = reset_utc - timedelta(seconds=period_seconds)
 
         start_local = start_utc.astimezone()

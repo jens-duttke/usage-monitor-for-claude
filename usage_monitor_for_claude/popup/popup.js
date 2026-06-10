@@ -245,7 +245,7 @@ function createBarElement(entry) {
     fill.style.width = '0%';
     container.appendChild(fill);
 
-    for (const pos of entry.midnights) {
+    for (const pos of entry.dividers) {
         const d = document.createElement('div');
         d.className = 'bar-divider';
         d.style.left = `calc(${pos * 100}% - 1px)`;
@@ -292,7 +292,7 @@ function updateBarElement(div, entry) {
     }
 
     for (const d of container.querySelectorAll('.bar-divider')) d.remove();
-    for (const pos of entry.midnights) {
+    for (const pos of entry.dividers) {
         const d = document.createElement('div');
         d.className = 'bar-divider';
         d.style.left = `${pos * 100}%`;

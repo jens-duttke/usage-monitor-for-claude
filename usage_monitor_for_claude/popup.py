@@ -21,7 +21,7 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
-from .formatting import elapsed_pct, expand_popup_fields, field_period, format_credits, midnight_positions, popup_label, time_until
+from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
 from .i18n import T
 from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
 
@@ -103,7 +103,7 @@ def _snapshot_to_dict(
                 'fill_pct': max(0.0, min(1.0, pct / 100)),
                 'warn': warn,
                 'reset_text': time_until(resets_at) if resets_at else '',
-                'midnights': midnight_positions(resets_at, period) if period else [],
+                'dividers': divider_positions(resets_at, period) if period else [],
                 'marker_rel': marker_rel,
             })
 

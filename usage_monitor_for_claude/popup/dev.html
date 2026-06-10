@@ -81,13 +81,13 @@ const PRESETS = {
         profile: { email: 'user@example.com', plan: 'Max (Team)' },
         usage: [
             { label: 'Session (5hr)', pct_text: '42%', fill_pct: 0.42, warn: false,
-              reset_text: 'Resets in 2h 30m (14:30)', midnights: [], marker_rel: 0.35 },
+              reset_text: 'Resets in 2h 30m (14:30)', dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.35 },
             { label: 'Weekly (7 day)', pct_text: '65%', fill_pct: 0.65, warn: true,
-              reset_text: 'Resets on Sat, 12:00', midnights: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
+              reset_text: 'Resets on Sat, 12:00', dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
             { label: 'Weekly (Sonnet)', pct_text: '30%', fill_pct: 0.30, warn: false,
-              reset_text: 'Resets on Sat, 12:00', midnights: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
+              reset_text: 'Resets on Sat, 12:00', dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
             { label: 'Weekly (Opus)', pct_text: '12%', fill_pct: 0.12, warn: false,
-              reset_text: 'Resets on Sat, 12:00', midnights: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
+              reset_text: 'Resets on Sat, 12:00', dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
         ],
         extra: { pct_text: '23%', fill_pct: 0.23, spent_text: '$4.60 / $20.00 spent' },
         installations: [
@@ -101,7 +101,7 @@ const PRESETS = {
         profile: null,
         usage: [
             { label: 'Session (5hr)', pct_text: '10%', fill_pct: 0.10, warn: false,
-              reset_text: 'Resets in 4h 50m (17:00)', midnights: [], marker_rel: 0.03 },
+              reset_text: 'Resets in 4h 50m (17:00)', dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.03 },
         ],
         extra: null,
         installations: [],
@@ -111,9 +111,9 @@ const PRESETS = {
         profile: { email: 'user@example.com', plan: 'Max' },
         usage: [
             { label: 'Session (5hr)', pct_text: '95%', fill_pct: 0.95, warn: true,
-              reset_text: 'Resets in 12m (12:12)', midnights: [], marker_rel: 0.96 },
+              reset_text: 'Resets in 12m (12:12)', dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.96 },
             { label: 'Weekly (7 day)', pct_text: '88%', fill_pct: 0.88, warn: true,
-              reset_text: 'Resets tomorrow, 08:00', midnights: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.80 },
+              reset_text: 'Resets tomorrow, 08:00', dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.80 },
         ],
         extra: null,
         installations: [{ name: 'CLI', version: '2.1.69' }],
@@ -123,7 +123,7 @@ const PRESETS = {
         profile: { email: 'user@example.com', plan: 'Max (Team)' },
         usage: [
             { label: 'Session (5hr)', pct_text: '42%', fill_pct: 0.42, warn: false,
-              reset_text: 'Resets in 2h 30m (14:30)', midnights: [], marker_rel: 0.35 },
+              reset_text: 'Resets in 2h 30m (14:30)', dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.35 },
         ],
         extra: null,
         installations: [{ name: 'CLI', version: '2.1.69' }],

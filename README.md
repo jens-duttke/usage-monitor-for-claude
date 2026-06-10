@@ -78,7 +78,7 @@ Windows may hide new tray icons by default. To keep the icon always visible:
 Each bar in the detail popup has up to four visual elements:
 
 1. **Blue fill** - how much of the limit you have used
-2. **Day dividers** - subtle gaps at local midnight boundaries, visually grouping usage into day segments (visible on the weekly bar)
+2. **Time dividers** - subtle gaps splitting the session bar into equal hour sections and marking local midnights on the weekly bars, visually grouping usage into hour and day segments
 3. **White vertical line** - how much *time* has passed in the current period. The fill turns **red** when it passes this marker, warning that you may hit the limit before the period resets.
 4. **Reset text** - when the limit resets, shown as a countdown with clock time
 
