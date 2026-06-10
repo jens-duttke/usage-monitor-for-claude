@@ -225,8 +225,8 @@ class UsageMonitorForClaude:
             pct_bottom = bottom_entry.get('utilization', 0) or 0
             top_period = field_period(top_field)
             bottom_period = field_period(bottom_field)
-            time_pct_top = elapsed_pct(top_entry.get('resets_at', ''), top_period) if top_mode == 'overage' and top_period else None
-            time_pct_bottom = elapsed_pct(bottom_entry.get('resets_at', ''), bottom_period) if bottom_mode == 'overage' and bottom_period else None
+            time_pct_top = elapsed_pct(top_entry.get('resets_at', ''), top_period) if top_period else None
+            time_pct_bottom = elapsed_pct(bottom_entry.get('resets_at', ''), bottom_period) if bottom_period else None
             extra = data.get('extra_usage') or {}
             extra_limit = extra.get('monthly_limit') or 0
             extra_used = extra.get('used_credits') or 0

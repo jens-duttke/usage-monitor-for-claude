@@ -2,7 +2,7 @@
 Tray Icon
 ==========
 
-Creates monochrome system tray icons and detects the Windows taskbar theme.
+Creates system tray icons and detects the Windows taskbar theme.
 """
 from __future__ import annotations
 
@@ -24,6 +24,12 @@ THEME_REG_VALUE = 'SystemUsesLightTheme'
 REG_NOTIFY_CHANGE_LAST_SET = 0x00000004
 
 TRANSPARENT = (0, 0, 0, 0)
+
+# Icon canvas and bar geometry (pixels)
+ICON_SIZE = 64
+BAR_HEIGHT = 9
+BAR_GAP = 3
+MARKER_WIDTH = 4
 
 
 @functools.lru_cache(maxsize=None)
@@ -76,7 +82,7 @@ def create_icon_image(
     time_pct_top: float | None = None, time_pct_bottom: float | None = None,
     extra_usage_available: bool = False,
 ) -> Image.Image:
-    """Create monochrome tray icon: 'C' letter + two usage bars.
+    """Create tray icon: 'C' letter + two usage bars.
 
     Parameters
     ----------
@@ -92,8 +98,8 @@ def create_icon_image(
     mode_bottom : str
         Display mode for the lower bar.  Same semantics as *mode_top*.
     time_pct_top : float or None
-        Elapsed-time percentage for the upper bar.  Required for ``overage``
-        mode; ignored otherwise.
+        Elapsed-time percentage for the upper bar.  Draws the reset-time
+        marker in ``utilization`` mode; required for ``overage`` mode.
     time_pct_bottom : float or None
         Elapsed-time percentage for the lower bar.  Same semantics as
         *time_pct_top*.
@@ -103,9 +109,9 @@ def create_icon_image(
         (continuing costs money) or ``✕`` (fully blocked).
     """
     colors = ICON_DARK if light_taskbar else ICON_LIGHT
-    fg, fg_half = colors['fg'], colors['fg_half']
+    fg, fg_half, fg_warn = colors['fg'], colors['fg_half'], colors['fg_warn']
 
-    S = 64
+    S = ICON_SIZE
     img = Image.new('RGBA', (S, S), TRANSPARENT)
     draw = ImageDraw.Draw(img)
 
@@ -130,28 +136,46 @@ def create_icon_image(
     draw.text(((S - tw) / 2 - bbox[0], -bbox[1]), text, fill=fg, font=font, stroke_width=stroke_width, stroke_fill=fg)
 
     # Progress bars - full width, flush to bottom
-    bar_h = 9
-    gap = 3
-    bar2_y = S - bar_h
-    bar1_y = bar2_y - gap - bar_h
+    bar2_y = S - BAR_HEIGHT
+    bar1_y = bar2_y - BAR_GAP - BAR_HEIGHT
 
-    for y, pct, mode, time_pct in (
-        (bar1_y, pct_top, mode_top, time_pct_top),
-        (bar2_y, pct_bottom, mode_bottom, time_pct_bottom),
-    ):
-        draw.rectangle([0, y, S - 1, y + bar_h - 1], fill=fg_half)
-        if mode == 'overage' and time_pct is not None and time_pct < 100:
-            overage = max(0.0, pct - time_pct)
-            fill_ratio = min(1.0, overage / (100 - time_pct))
-            fill_w = max(0, int(S * fill_ratio))
-            if fill_w > 0:
-                draw.rectangle([0, y, fill_w - 1, y + bar_h - 1], fill=fg)
-        else:
-            fill_w = max(0, min(S, int(S * pct / 100)))
-            if fill_w > 0:
-                draw.rectangle([0, y, fill_w - 1, y + bar_h - 1], fill=fg)
+    _draw_usage_bar(draw, bar1_y, pct_top, mode_top, time_pct_top, fg, fg_half, fg_warn)
+    _draw_usage_bar(draw, bar2_y, pct_bottom, mode_bottom, time_pct_bottom, fg, fg_half, fg_warn)
 
     return img
+
+
+def _draw_usage_bar(draw: ImageDraw.ImageDraw, y: int, pct: float, mode: str, time_pct: float | None, fg: tuple, fg_half: tuple, fg_warn: tuple) -> None:
+    """Draw one full-width usage bar at vertical offset *y*.
+
+    In ``utilization`` mode the bar fills linearly with *pct* and shows a
+    reset-time marker in *fg* at the *time_pct* position; the fill switches
+    to *fg_warn* when usage is ahead of the elapsed time or fully exhausted,
+    mirroring the popup's warning fill.  In ``overage`` mode the bar fills
+    as *pct* exceeds *time_pct* and no marker is drawn - elapsed time is
+    already encoded in the fill.
+    """
+    draw.rectangle([0, y, ICON_SIZE - 1, y + BAR_HEIGHT - 1], fill=fg_half)
+
+    if mode == 'overage' and time_pct is not None and time_pct < 100:
+        overage = max(0.0, pct - time_pct)
+        fill_ratio = min(1.0, overage / (100 - time_pct))
+        fill_w = max(0, int(ICON_SIZE * fill_ratio))
+        if fill_w > 0:
+            draw.rectangle([0, y, fill_w - 1, y + BAR_HEIGHT - 1], fill=fg)
+        return
+
+    fill_w = max(0, min(ICON_SIZE, int(ICON_SIZE * pct / 100)))
+    if fill_w > 0:
+        warn = mode == 'utilization' and (pct >= 100 or (time_pct is not None and pct > time_pct))
+        draw.rectangle([0, y, fill_w - 1, y + BAR_HEIGHT - 1], fill=fg_warn if warn else fg)
+
+    if mode != 'utilization' or time_pct is None:
+        return
+
+    marker_x = min(ICON_SIZE - MARKER_WIDTH, max(0, int(ICON_SIZE * time_pct / 100) - MARKER_WIDTH // 2))
+    marker_end = marker_x + MARKER_WIDTH - 1
+    draw.rectangle([marker_x, y, marker_end, y + BAR_HEIGHT - 1], fill=fg)
 
 
 def create_status_image(text: str, light_taskbar: bool = False) -> Image.Image:

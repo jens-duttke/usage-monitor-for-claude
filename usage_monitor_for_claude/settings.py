@@ -276,11 +276,13 @@ ICON_LIGHT = _icon_colors('icon_light', {
     'fg': (255, 255, 255, 255),
     'fg_half': (255, 255, 255, 80),
     'fg_dim': (255, 255, 255, 140),
+    'fg_warn': (224, 80, 80, 255),
 })
 ICON_DARK = _icon_colors('icon_dark', {
     'fg': (0, 0, 0, 255),
     'fg_half': (0, 0, 0, 80),
     'fg_dim': (0, 0, 0, 140),
+    'fg_warn': (224, 80, 80, 255),
 })
 
 # Tray icon fields

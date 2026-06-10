@@ -927,14 +927,14 @@ class TestRenderTray(unittest.TestCase):
     @patch('usage_monitor_for_claude.app.elapsed_pct', return_value=40.0)
     @patch('usage_monitor_for_claude.app.ICON_FIELDS', ['five_hour:overage', 'seven_day'])
     def test_overage_mode_passes_time_pct(self, mock_elapsed, mock_icon, _tooltip):
-        """Overage mode passes elapsed time pct to create_icon_image for the top bar."""
+        """Elapsed time pct is passed for both bars regardless of display mode."""
         self.app._last_response = {
             'five_hour': {'utilization': 60.0, 'resets_at': '2025-01-15T18:00:00Z'},
             'seven_day': {'utilization': 20.0},
         }
         self.app._render_tray()
 
-        mock_icon.assert_called_once_with(60.0, 20.0, False, mode_top='overage', mode_bottom='utilization', time_pct_top=40.0, time_pct_bottom=None, extra_usage_available=False)
+        mock_icon.assert_called_once_with(60.0, 20.0, False, mode_top='overage', mode_bottom='utilization', time_pct_top=40.0, time_pct_bottom=40.0, extra_usage_available=False)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
@@ -949,6 +949,19 @@ class TestRenderTray(unittest.TestCase):
         self.app._render_tray()
 
         mock_icon.assert_called_once_with(30.0, 10.0, False, mode_top='overage', mode_bottom='overage', time_pct_top=50.0, time_pct_bottom=50.0, extra_usage_available=False)
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    @patch('usage_monitor_for_claude.app.elapsed_pct', return_value=35.0)
+    def test_utilization_mode_passes_time_pct(self, mock_elapsed, mock_icon, _tooltip):
+        """Default utilization mode passes elapsed time pct so the bars can draw the reset-time marker."""
+        self.app._last_response = {
+            'five_hour': {'utilization': 42.0, 'resets_at': '2025-01-15T18:00:00Z'},
+            'seven_day': {'utilization': 10.0, 'resets_at': '2025-01-20T00:00:00Z'},
+        }
+        self.app._render_tray()
+
+        mock_icon.assert_called_once_with(42.0, 10.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=35.0, time_pct_bottom=35.0, extra_usage_available=False)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
