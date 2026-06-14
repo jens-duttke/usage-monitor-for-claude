@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- [Today's Tokens](https://github.com/jens-duttke/usage-monitor-for-claude/discussions/19) - the popup now shows per-model token usage for the current day, read from your local Claude Code transcripts, surfacing usage for models the rate-limit API does not report separately. Output is the headline number, with input and cache read/write available on hover; toggle the section with the `show_token_stats` setting
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.16.0...HEAD)
 
 ## [1.16.0] - 2026-06-13

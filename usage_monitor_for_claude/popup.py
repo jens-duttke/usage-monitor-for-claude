@@ -23,7 +23,8 @@ from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
 from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
 from .i18n import T
-from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
+from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS, SHOW_TOKEN_STATS
+from .token_stats import collect_token_stats
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 _BASELINE_DPI = 96
@@ -62,6 +63,7 @@ def _usage_entries(usage: dict[str, Any]) -> list[tuple[str, dict[str, Any] | No
 
 def _snapshot_to_dict(
     snap: CacheSnapshot, installations: list[dict[str, str]] | None = None, next_poll_time: float | None = None,
+    token_stats: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Convert a CacheSnapshot to a JSON-serializable dict for the popup JS.
 
@@ -73,6 +75,9 @@ def _snapshot_to_dict(
         Pre-computed installation list, or None to detect now.
     next_poll_time : float or None
         Unix timestamp of the next scheduled API poll.
+    token_stats : list or None
+        Pre-computed per-model token statistics.  Always passed in (never
+        collected here) so the popup-open path never scans transcript files.
     """
     # Profile - truthiness check (not `is not None`): hides the account section when the API
     # returns an empty or incomplete response, instead of rendering empty Email/Plan fields.
@@ -147,6 +152,7 @@ def _snapshot_to_dict(
         'usage': usage,
         'extra': extra,
         'installations': installations,
+        'token_stats': token_stats or [],
         'status': status,
     }
 
@@ -161,6 +167,9 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
         't': {
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
             'usage': T['usage'], 'extra_usage': T['extra_usage'],
+            'todays_tokens': T['todays_tokens'], 'tokens_output': T['tokens_output'],
+            'tokens_input': T['tokens_input'], 'tokens_cache_write': T['tokens_cache_write'],
+            'tokens_cache_read': T['tokens_cache_read'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],
             'status_next_update': T['status_next_update'], 'status_refreshing': T['status_refreshing'],
@@ -401,9 +410,29 @@ class UsagePopup:
         self._closed.set()
 
     def _update_loop(self) -> None:
-        """Poll for data changes and push updates to the popup."""
+        """Poll for data changes and push updates to the popup.
+
+        Runs on a background thread started after the window is shown, so the
+        token-stats transcript scan never blocks the popup-open path.  The
+        scan result is cached and reused, refreshed only when the API snapshot
+        version changes (i.e. on real new activity).
+        """
         cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
+        cached_token_stats = collect_token_stats() if SHOW_TOKEN_STATS else []
         last_next_poll_time = self.app._next_poll_time
+
+        # Push once immediately so the async-collected token stats appear
+        # shortly after the popup opens, without re-scanning every loop tick.
+        try:
+            snap = self.app.cache.snapshot
+            data = _snapshot_to_dict(
+                snap, installations=cached_installations,
+                next_poll_time=last_next_poll_time, token_stats=cached_token_stats,
+            )
+            self._window.evaluate_js(f'updateData({json.dumps(data)})')
+        except Exception:
+            pass
+
         while self._running:
             time.sleep(self._CHECK_MS / 1000)
             if not self._running:
@@ -416,8 +445,12 @@ class UsagePopup:
                 if snap.version != self._last_version:
                     self._last_version = snap.version
                     cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
+                    cached_token_stats = collect_token_stats() if SHOW_TOKEN_STATS else []
                 last_next_poll_time = next_poll_time
-                data = _snapshot_to_dict(snap, installations=cached_installations, next_poll_time=next_poll_time)
+                data = _snapshot_to_dict(
+                    snap, installations=cached_installations,
+                    next_poll_time=next_poll_time, token_stats=cached_token_stats,
+                )
                 self._window.evaluate_js(f'updateData({json.dumps(data)})')
             except Exception:
                 break

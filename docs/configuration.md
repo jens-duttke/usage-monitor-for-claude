@@ -87,6 +87,22 @@ Must be an array of non-empty strings. `"*"` may appear at most once. Duplicates
 }
 ```
 
+## Popup sections
+
+The popup shows a "Today's Tokens" section listing per-model token usage for the current day, read from your local Claude Code transcripts. The primary number is output tokens; hover a row to see input, cache write, and cache read separately.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `show_token_stats` | `true` | Show the "Today's Tokens" section in the popup |
+
+This is read-only and fully offline - it scans the JSONL transcripts under your Claude config directory and never contacts the network. The scan runs on a background thread, so it never delays the popup from opening.
+
+```json
+{
+    "show_token_stats": false
+}
+```
+
 ## Tray icon bars
 
 The tray icon displays two small progress bars. By default, these show the session (5h) and weekly (7d) quotas. Use `icon_fields` to choose which two API fields are displayed.

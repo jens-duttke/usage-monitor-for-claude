@@ -71,6 +71,8 @@ const COLORS = {
 const T = {
     title: 'Usage Monitor for Claude', account: 'ACCOUNT', email: 'Email', plan: 'Plan',
     usage: 'USAGE', extra_usage: 'EXTRA USAGE', claude_code: 'CLAUDE CODE', changelog: 'Changelog',
+    todays_tokens: "TODAY'S TOKENS", tokens_output: 'Output', tokens_input: 'Input',
+    tokens_cache_write: 'Cache write', tokens_cache_read: 'Cache read',
     status_updated_s: 'Updated {s}s ago', status_updated: 'Updated {duration} ago',
     status_next_update: 'Next update in {duration}', status_refreshing: 'Refreshing...',
     duration_hm: '{h}h {m}m', duration_m: '{m}m', duration_s: '{s}s',
@@ -90,6 +92,11 @@ const PRESETS = {
               reset_text: 'Resets on Sat, 12:00', dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
         ],
         extra: { pct_text: '23%', fill_pct: 0.23, spent_text: '$4.60 / $20.00 spent' },
+        token_stats: [
+            { name: 'Haiku 4.5', output: 1020000, input: 9900, cache_write: 4900000, cache_read: 9000000 },
+            { name: 'Fable 5', output: 603800, input: 124000, cache_write: 4200000, cache_read: 318700000 },
+            { name: 'Opus 4.8', output: 88000, input: 31000, cache_write: 900000, cache_read: 42000000 },
+        ],
         installations: [
             { name: 'CLI', version: '2.1.69' },
             { name: 'VS Code', version: '2.1.69' },
@@ -104,6 +111,7 @@ const PRESETS = {
               reset_text: 'Resets in 4h 50m (17:00)', dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.03 },
         ],
         extra: null,
+        token_stats: [],
         installations: [],
         status: () => ({ last_success_time: now() - 90, next_poll_time: now() + 90, refreshing: false, error: null }),
     },
@@ -116,6 +124,7 @@ const PRESETS = {
               reset_text: 'Resets tomorrow, 08:00', dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.80 },
         ],
         extra: null,
+        token_stats: [],
         installations: [{ name: 'CLI', version: '2.1.69' }],
         status: () => ({ last_success_time: now() - 300, next_poll_time: now() + 30, refreshing: false, error: 'Could not connect to Anthropic API.' }),
     },
@@ -126,11 +135,12 @@ const PRESETS = {
               reset_text: 'Resets in 2h 30m (14:30)', dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.35 },
         ],
         extra: null,
+        token_stats: [],
         installations: [{ name: 'CLI', version: '2.1.69' }],
         status: () => ({ last_success_time: now() - 180, next_poll_time: null, refreshing: true, error: null }),
     },
     loading: {
-        profile: null, usage: [], extra: null, installations: [],
+        profile: null, usage: [], extra: null, token_stats: [], installations: [],
         status: { text: 'Refreshing...', is_error: false, refreshing: true },
     },
 };

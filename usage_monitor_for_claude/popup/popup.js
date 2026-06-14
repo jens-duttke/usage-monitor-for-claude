@@ -24,6 +24,8 @@ function init(config) {
     document.getElementById('labelPlan').textContent = translations.plan;
     document.getElementById('headingUsage').textContent = translations.usage;
     document.getElementById('headingExtraUsage').textContent = translations.extra_usage;
+    document.getElementById('headingTokens').textContent = translations.todays_tokens;
+    document.getElementById('tokensNote').textContent = translations.tokens_output;
     document.getElementById('headingClaudeCode').textContent = translations.claude_code;
 
     const changelogLink = document.getElementById('changelogLink');
@@ -45,6 +47,8 @@ function init(config) {
         extraSpent: document.getElementById('extraSpent'),
         extraPct: document.getElementById('extraPct'),
         extraFill: document.getElementById('extraFill'),
+        tokensSection: document.getElementById('tokensSection'),
+        tokenRows: document.getElementById('tokenRows'),
         installSection: document.getElementById('installSection'),
         installRows: document.getElementById('installRows'),
         statusSection: document.getElementById('statusSection'),
@@ -84,6 +88,26 @@ function updateData(data) {
         els.extraFill.style.width = `${data.extra.fill_pct * 100}%`;
     }
 
+    const hasTokens = !!data.token_stats?.length;
+    els.tokensSection.classList.toggle('visible', hasTokens);
+    if (hasTokens) {
+        els.tokenRows.replaceChildren(...data.token_stats.map((entry) => {
+            const row = document.createElement('div');
+            const dt = document.createElement('dt');
+            dt.textContent = entry.name;
+            const dd = document.createElement('dd');
+            dd.textContent = formatTokens(entry.output);
+            dd.title = [
+                `${translations.tokens_output}: ${formatTokens(entry.output)}`,
+                `${translations.tokens_input}: ${formatTokens(entry.input)}`,
+                `${translations.tokens_cache_write}: ${formatTokens(entry.cache_write)}`,
+                `${translations.tokens_cache_read}: ${formatTokens(entry.cache_read)}`,
+            ].join('\n');
+            row.append(dt, dd);
+            return row;
+        }));
+    }
+
     const hasInstalls = !!data.installations?.length;
     els.installSection.classList.toggle('visible', hasInstalls);
     if (hasInstalls) {
@@ -99,6 +123,27 @@ function updateData(data) {
     }
 
     updateStatus(data.status);
+}
+
+/**
+ * Format a token count as a short string (e.g. 3.4M), promoting to the next
+ * larger unit when rounding would otherwise produce a four-digit mantissa
+ * (999_999 -> "1.0M", not "1000.0k").  Mirrors format_tokens() in Python.
+ */
+function formatTokens(count) {
+    const units = [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']];
+    for (let i = 0; i < units.length; i++) {
+        const [divisor, suffix] = units[i];
+        if (count >= divisor) {
+            const value = Math.round((count / divisor) * 10) / 10;
+            if (value >= 1000 && i > 0) {
+                const [largerDivisor, largerSuffix] = units[i - 1];
+                return `${(count / largerDivisor).toFixed(1)}${largerSuffix}`;
+            }
+            return `${value.toFixed(1)}${suffix}`;
+        }
+    }
+    return String(count);
 }
 
 /**

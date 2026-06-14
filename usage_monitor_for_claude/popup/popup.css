@@ -79,6 +79,13 @@ h2 {
         text-decoration: underline;
         cursor: pointer;
     }
+
+    & > span.note {
+        color: var(--fg-dim);
+        text-decoration: none;
+        cursor: default;
+        text-transform: uppercase;
+    }
 }
 
 dl {

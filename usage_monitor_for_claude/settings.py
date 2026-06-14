@@ -32,7 +32,7 @@ __all__ = [
     'LANGUAGE', 'MAX_BACKOFF',
     'ON_RESET_COMMAND', 'ON_STARTUP_COMMAND', 'ON_THRESHOLD_COMMAND',
     'POLL_ERROR', 'POLL_FAST', 'POLL_FAST_EXTRA', 'POLL_INTERVAL',
-    'POPUP_FIELDS', 'SETTINGS_FILENAME', 'TOOLTIP_FIELDS',
+    'POPUP_FIELDS', 'SETTINGS_FILENAME', 'SHOW_TOKEN_STATS', 'TOOLTIP_FIELDS',
     'get_alert_thresholds',
 ]
 
@@ -52,7 +52,7 @@ _THRESHOLD_KEY_PREFIX = 'alert_thresholds_'
 _PERCENT_KEYS = frozenset({'alert_time_aware_below'})
 _STRING_KEYS = frozenset({'currency_symbol', 'language'})
 _COMMAND_KEYS = frozenset({'on_reset_command', 'on_startup_command', 'on_threshold_command'})
-_BOOL_KEYS = frozenset({'alert_time_aware'})
+_BOOL_KEYS = frozenset({'alert_time_aware', 'show_token_stats'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields'})
 _WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
@@ -297,6 +297,9 @@ POPUP_FIELDS: list[str] = _S.get('popup_fields', ['*'])
 # Alert thresholds
 ALERT_TIME_AWARE: bool = _S.get('alert_time_aware', True)
 ALERT_TIME_AWARE_BELOW: float = _S.get('alert_time_aware_below', 90)
+
+# Popup sections
+SHOW_TOKEN_STATS: bool = _S.get('show_token_stats', True)
 
 # Currency
 
