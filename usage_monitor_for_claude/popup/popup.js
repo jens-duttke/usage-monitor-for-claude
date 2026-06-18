@@ -34,6 +34,7 @@ function init(config) {
     document.getElementById('appVersion').textContent = config.app_version;
 
     els = {
+        dayStrip: document.getElementById('dayStrip'),
         accountSection: document.getElementById('accountSection'),
         emailRow: document.getElementById('emailRow'),
         emailValue: document.getElementById('emailValue'),
@@ -51,8 +52,30 @@ function init(config) {
         statusText: document.getElementById('statusText'),
     };
 
+    renderDayStrip();
     updateData(config.data);
     requestAnimationFrame(() => document.body.classList.add('open'));
+}
+
+/**
+ * Render the Mon-Sun weekday strip with the current day highlighted.
+ *
+ * Day letters use the browser locale's narrow weekday names (M T W T F S S
+ * in English).  Jan 1 2024 is a Monday, so it anchors the Monday-first order.
+ */
+function renderDayStrip() {
+    const formatWeekday = new Intl.DateTimeFormat(navigator.language, { weekday: 'narrow' });
+    const todayMondayFirst = (new Date().getDay() + 6) % 7;
+
+    const cells = [];
+    for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+        const span = document.createElement('span');
+        span.textContent = formatWeekday.format(new Date(2024, 0, 1 + dayIndex));
+        span.classList.toggle('today', dayIndex === todayMondayFirst);
+        cells.push(span);
+    }
+
+    els.dayStrip.replaceChildren(...cells);
 }
 
 /**

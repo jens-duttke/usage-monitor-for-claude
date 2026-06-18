@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The detail popup now shows a Monday-to-Sunday weekday strip at the top of the usage section, with the current day highlighted and gently glowing, so you can see where you are in the weekly quota cycle at a glance. Day letters follow your system locale
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.16.0...HEAD)
 
 ## [1.16.0] - 2026-06-13

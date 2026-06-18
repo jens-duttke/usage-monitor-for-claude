@@ -96,6 +96,49 @@ dl > div {
     & > dd { margin: 0; }
 }
 
+#dayStrip {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 2px;
+}
+
+#dayStrip > span {
+    flex: 1;
+    text-align: center;
+    padding: 4px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg-dim);
+    background: var(--bar-bg);
+    border-radius: 4px;
+    transition: color 0.3s ease, background-color 0.3s ease;
+
+    &.today {
+        color: var(--bg);
+        font-weight: 700;
+        background: linear-gradient(180deg,
+            color-mix(in srgb, var(--bar-fg) 85%, white) 0%,
+            var(--bar-fg) 100%);
+        box-shadow:
+            0 0 0 1px color-mix(in srgb, var(--bar-fg) 60%, transparent),
+            0 0 10px 2px color-mix(in srgb, var(--bar-fg) 55%, transparent);
+        animation: todayGlow 2.4s ease-in-out infinite;
+    }
+}
+
+@keyframes todayGlow {
+    0%, 100% {
+        box-shadow:
+            0 0 0 1px color-mix(in srgb, var(--bar-fg) 60%, transparent),
+            0 0 6px 1px color-mix(in srgb, var(--bar-fg) 45%, transparent);
+    }
+    50% {
+        box-shadow:
+            0 0 0 1px color-mix(in srgb, var(--bar-fg) 70%, transparent),
+            0 0 14px 4px color-mix(in srgb, var(--bar-fg) 65%, transparent);
+    }
+}
+
 #usageBars {
     display: flex;
     flex-direction: column;
