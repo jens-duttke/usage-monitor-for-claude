@@ -390,6 +390,31 @@ class TestSettingsValidation(unittest.TestCase):
         self.assertEqual(result['poll_fast'], 60)
         self.assertEqual(result['bg'], '#000')
 
+    # time_format validation
+
+    def test_time_format_24h_valid(self):
+        """time_format '24h' passes through unchanged."""
+        result, mock = self._run_validate({'time_format': '24h'})
+        self.assertEqual(result['time_format'], '24h')
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_time_format_12h_valid(self):
+        """time_format '12h' passes through unchanged."""
+        result, mock = self._run_validate({'time_format': '12h'})
+        self.assertEqual(result['time_format'], '12h')
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_time_format_unknown_value_dropped(self):
+        """Unknown time_format value is dropped with a MessageBox."""
+        result, mock = self._run_validate({'time_format': 'military'})
+        self.assertNotIn('time_format', result)
+        mock.windll.user32.MessageBoxW.assert_called_once()
+
+    def test_time_format_non_string_dropped(self):
+        """Non-string time_format value is dropped."""
+        result, _ = self._run_validate({'time_format': 24})
+        self.assertNotIn('time_format', result)
+
     # Non-negative numeric validation
 
     def test_idle_pause_zero_valid(self):

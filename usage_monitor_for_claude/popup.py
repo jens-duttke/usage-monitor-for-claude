@@ -23,7 +23,7 @@ from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
 from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
 from .i18n import T
-from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
+from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS, TIME_FORMAT
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 _BASELINE_DPI = 96
@@ -62,6 +62,7 @@ def _usage_entries(usage: dict[str, Any]) -> list[tuple[str, dict[str, Any] | No
 
 def _snapshot_to_dict(
     snap: CacheSnapshot, installations: list[dict[str, str]] | None = None, next_poll_time: float | None = None,
+    clock_24h: bool = True,
 ) -> dict[str, Any]:
     """Convert a CacheSnapshot to a JSON-serializable dict for the popup JS.
 
@@ -73,6 +74,8 @@ def _snapshot_to_dict(
         Pre-computed installation list, or None to detect now.
     next_poll_time : float or None
         Unix timestamp of the next scheduled API poll.
+    clock_24h : bool
+        Format reset clock times in 24-hour (True) or 12-hour (False) style.
     """
     # Profile - truthiness check (not `is not None`): hides the account section when the API
     # returns an empty or incomplete response, instead of rendering empty Email/Plan fields.
@@ -102,7 +105,7 @@ def _snapshot_to_dict(
                 'pct_text': f'{pct:.0f}%',
                 'fill_pct': max(0.0, min(1.0, pct / 100)),
                 'warn': warn,
-                'reset_text': time_until(resets_at) if resets_at else '',
+                'reset_text': time_until(resets_at, clock_24h) if resets_at else '',
                 'dividers': divider_positions(resets_at, period) if period else [],
                 'marker_rel': marker_rel,
             })
@@ -151,7 +154,7 @@ def _snapshot_to_dict(
     }
 
 
-def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> dict[str, Any]:
+def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None, clock_24h: bool = True) -> dict[str, Any]:
     """Build the config object passed to JS ``init()`` after the page loads."""
     return {
         'colors': {
@@ -167,7 +170,8 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
             'duration_hm': T['duration_hm'], 'duration_m': T['duration_m'], 'duration_s': T['duration_s'],
         },
         'app_version': __version__,
-        'data': _snapshot_to_dict(snap, next_poll_time=next_poll_time),
+        'clock_24h': clock_24h,
+        'data': _snapshot_to_dict(snap, next_poll_time=next_poll_time, clock_24h=clock_24h),
     }
 
 
@@ -186,6 +190,10 @@ class _PopupApi:
 
     def open_url(self) -> None:
         webbrowser.open(CHANGELOG_URL)
+
+    def set_time_format(self, clock_24h: bool) -> None:
+        """Switch reset times between 24-hour and 12-hour clock (current session only)."""
+        self._popup._set_time_format(bool(clock_24h))
 
     def report_height(self, height: int) -> None:
         """Called by JS ResizeObserver when content height changes."""
@@ -223,6 +231,7 @@ class UsagePopup:
         self._popup_hwnd = 0
         initial_height = 400
         self._last_height = initial_height
+        self._clock_24h = TIME_FORMAT == '24h'
         snap = app.cache.snapshot
         self._last_version = snap.version
 
@@ -245,7 +254,7 @@ class UsagePopup:
 
     def _on_loaded(self) -> None:
         """Inject config and show the window transparently for layout."""
-        config = _init_config(self.app.cache.snapshot, next_poll_time=self.app._next_poll_time)
+        config = _init_config(self.app.cache.snapshot, next_poll_time=self.app._next_poll_time, clock_24h=self._clock_24h)
         self._window.evaluate_js(f'init({json.dumps(config)})')
 
         self._popup_hwnd = self._window.native.Handle.ToInt32()
@@ -400,6 +409,20 @@ class UsagePopup:
             pass
         self._closed.set()
 
+    def _set_time_format(self, clock_24h: bool) -> None:
+        """Apply a new clock format and immediately re-render reset times.
+
+        Runtime-only: the choice lasts for the current session.  A persistent
+        default is set via the ``time_format`` settings key.
+        """
+        self._clock_24h = clock_24h
+        try:
+            snap = self.app.cache.snapshot
+            data = _snapshot_to_dict(snap, next_poll_time=self.app._next_poll_time, clock_24h=clock_24h)
+            self._window.evaluate_js(f'updateData({json.dumps(data)})')
+        except Exception:
+            pass
+
     def _update_loop(self) -> None:
         """Poll for data changes and push updates to the popup."""
         cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
@@ -417,7 +440,9 @@ class UsagePopup:
                     self._last_version = snap.version
                     cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
                 last_next_poll_time = next_poll_time
-                data = _snapshot_to_dict(snap, installations=cached_installations, next_poll_time=next_poll_time)
+                data = _snapshot_to_dict(
+                    snap, installations=cached_installations, next_poll_time=next_poll_time, clock_24h=self._clock_24h,
+                )
                 self._window.evaluate_js(f'updateData({json.dumps(data)})')
             except Exception:
                 break

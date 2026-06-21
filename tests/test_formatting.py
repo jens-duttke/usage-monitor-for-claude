@@ -653,6 +653,34 @@ class TestTimeUntil(unittest.TestCase):
         self.assertIn('00:00', result)
         self.assertIn('tomorrow', result)
 
+    def test_twelve_hour_pm(self, mock_dt):
+        """clock_24h=False formats an afternoon reset in 12-hour style."""
+        utc_now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        local_now = datetime(2025, 1, 15, 10, 0, 0)
+        self._setup(mock_dt, utc_now, local_now,
+            datetime(2025, 1, 15, 14, 30, 0), timedelta(hours=4, minutes=30))
+        result = time_until('ignored', clock_24h=False)
+        self.assertIn('2:30', result)
+        self.assertNotIn('14:30', result)
+
+    def test_twelve_hour_strips_leading_zero(self, mock_dt):
+        """12-hour morning reset drops the leading zero from the hour."""
+        utc_now = datetime(2025, 1, 15, 5, 0, 0, tzinfo=timezone.utc)
+        local_now = datetime(2025, 1, 15, 5, 0, 0)
+        self._setup(mock_dt, utc_now, local_now,
+            datetime(2025, 1, 15, 9, 5, 0), timedelta(hours=4, minutes=5))
+        result = time_until('ignored', clock_24h=False)
+        self.assertIn('9:05', result)
+        self.assertNotIn('09:05', result)
+
+    def test_twenty_four_hour_explicit(self, mock_dt):
+        """clock_24h=True keeps the existing 24-hour clock string."""
+        utc_now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+        local_now = datetime(2025, 1, 15, 10, 0, 0)
+        self._setup(mock_dt, utc_now, local_now,
+            datetime(2025, 1, 15, 14, 30, 0), timedelta(hours=4, minutes=30))
+        self.assertEqual(time_until('ignored', clock_24h=True), 'Resets in 4h 30m (14:30)')
+
 
 # ---------------------------------------------------------------------------
 # format_tooltip

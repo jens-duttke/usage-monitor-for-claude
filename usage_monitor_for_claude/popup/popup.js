@@ -2,6 +2,10 @@ let els;
 let statusState = {};
 let translations = {};
 let textTimerId = null;
+let clock24 = true;
+
+// Matches the HH:MM clock inside a reset string (e.g. "14:20" or "2:20" in "2:20 PM").
+const CLOCK_RE = /\d{1,2}:\d{2}/;
 
 /**
  * Set CSS custom properties for theme colors and inject translation strings.
@@ -31,6 +35,8 @@ function init(config) {
     changelogLink.addEventListener('click', () => pywebview.api.open_url());
     document.getElementById('closeBtn').addEventListener('click', () => pywebview.api.close());
 
+    clock24 = config.clock_24h !== false;
+
     document.getElementById('appVersion').textContent = config.app_version;
 
     els = {
@@ -51,8 +57,58 @@ function init(config) {
         statusText: document.getElementById('statusText'),
     };
 
+    els.usageBars.addEventListener('click', onClockToggle);
+
     updateData(config.data);
     requestAnimationFrame(() => document.body.classList.add('open'));
+}
+
+/**
+ * Render a reset string into an element with the clock time as a tappable toggle.
+ *
+ * The HH:MM clock is wrapped in a `.clock-toggle` span; tapping it switches
+ * between 24-hour and 12-hour format.  Everything else stays plain text.
+ *
+ * @param {HTMLElement} el - Target element (cleared and rebuilt).
+ * @param {string} text - Pre-formatted reset string, e.g. "Resets in 2h (14:20)".
+ */
+function renderResetText(el, text) {
+    el.replaceChildren();
+
+    const match = CLOCK_RE.exec(text);
+    if (!match) {
+        el.textContent = text;
+        return;
+    }
+
+    const start = match.index;
+    const end = start + match[0].length;
+    if (start > 0) {
+        el.append(document.createTextNode(text.slice(0, start)));
+    }
+
+    const clock = document.createElement('span');
+    clock.className = 'clock-toggle';
+    clock.textContent = match[0];
+    el.append(clock);
+
+    if (end < text.length) {
+        el.append(document.createTextNode(text.slice(end)));
+    }
+}
+
+/**
+ * Toggle the clock format when a reset time is tapped.
+ *
+ * Python reformats the reset times and pushes fresh data.  The choice lasts
+ * for the current session; a persistent default comes from the `time_format`
+ * setting.
+ */
+function onClockToggle(event) {
+    if (!event.target.classList.contains('clock-toggle')) return;
+
+    clock24 = !clock24;
+    pywebview?.api?.set_time_format?.(clock24);
 }
 
 /**
@@ -267,7 +323,7 @@ function createBarElement(entry) {
     if (entry.reset_text) {
         const reset = document.createElement('div');
         reset.className = 'reset-text';
-        reset.textContent = entry.reset_text;
+        renderResetText(reset, entry.reset_text);
         div.appendChild(reset);
     }
 
@@ -304,14 +360,12 @@ function updateBarElement(div, entry) {
 
     let resetEl = div.querySelector('.reset-text');
     if (entry.reset_text) {
-        if (resetEl) {
-            resetEl.textContent = entry.reset_text;
-        } else {
+        if (!resetEl) {
             resetEl = document.createElement('div');
             resetEl.className = 'reset-text';
-            resetEl.textContent = entry.reset_text;
             div.appendChild(resetEl);
         }
+        renderResetText(resetEl, entry.reset_text);
     } else if (resetEl) {
         resetEl.remove();
     }

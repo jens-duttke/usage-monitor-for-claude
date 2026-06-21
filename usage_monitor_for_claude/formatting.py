@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .i18n import T
-from .settings import CURRENCY_SYMBOL, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL
+from .settings import CURRENCY_SYMBOL, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL
 
 __all__ = [
     'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits',
@@ -273,13 +273,33 @@ def divider_positions(resets_at: str, period_seconds: int) -> list[float]:
         return []
 
 
-def time_until(iso_str: str) -> str:
+def _format_clock(when: datetime, clock_24h: bool) -> str:
+    """Format a local time as a 24-hour ('14:30') or 12-hour ('2:30 PM') clock string."""
+    if clock_24h:
+        return when.strftime('%H:%M')
+
+    # %I is zero-padded (e.g. '02:30 PM'); strip the single leading zero for '2:30 PM'.
+    return when.strftime('%I:%M %p').lstrip('0')
+
+
+def time_until(iso_str: str, clock_24h: bool | None = None) -> str:
     """Return human-readable reset time.
 
     Same day:  "Resets in 2h 20m (14:30)"
     Tomorrow:  "Resets tomorrow, 12:00"
     Later:     "Resets Sat., 12:00"
+
+    Parameters
+    ----------
+    iso_str : str
+        ISO 8601 timestamp when the limit resets.
+    clock_24h : bool or None
+        Format the clock time in 24-hour (True) or 12-hour (False) style.
+        ``None`` falls back to the ``time_format`` setting.
     """
+    if clock_24h is None:
+        clock_24h = TIME_FORMAT == '24h'
+
     try:
         reset = datetime.fromisoformat(iso_str)
         now = datetime.now(timezone.utc)
@@ -296,7 +316,7 @@ def time_until(iso_str: str) -> str:
         else:
             reset_local = reset_local.replace(second=0)
         reset_date = reset_local.date()
-        time_str = reset_local.strftime('%H:%M')
+        time_str = _format_clock(reset_local, clock_24h)
 
         if reset_date == today:
             if total_min >= 60:

@@ -153,6 +153,14 @@ Run a shell command when a usage event occurs. See [Event Commands](event-comman
 |-----|---------|-------------|
 | `language` | *(auto-detected)* | Override the UI language with a language code. Available: `de`, `en`, `es`, `fr`, `hi`, `id`, `it`, `ja`, `ko`, `pt-BR`, `uk`, `zh-CN`, `zh-TW` |
 
+## Time Format
+
+Sets the default clock style for reset times. Tapping a reset time in the detail popup switches it live for the current session; this key sets the default applied on every start.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `time_format` | `"24h"` | Clock format for reset times: `"24h"` (e.g. `14:30`) or `"12h"` (e.g. `2:30 PM`) |
+
 ## Currency
 
 The Anthropic API does not include currency information, so the app detects the currency symbol from your Windows locale settings. If your Windows locale currency differs from the currency Anthropic bills you in, you can override just the symbol here. Number formatting (decimal separator, symbol position) always follows your system locale.

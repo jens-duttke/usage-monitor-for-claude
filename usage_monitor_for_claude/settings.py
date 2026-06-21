@@ -32,7 +32,7 @@ __all__ = [
     'LANGUAGE', 'MAX_BACKOFF',
     'ON_RESET_COMMAND', 'ON_STARTUP_COMMAND', 'ON_THRESHOLD_COMMAND',
     'POLL_ERROR', 'POLL_FAST', 'POLL_FAST_EXTRA', 'POLL_INTERVAL',
-    'POPUP_FIELDS', 'SETTINGS_FILENAME', 'TOOLTIP_FIELDS',
+    'POPUP_FIELDS', 'SETTINGS_FILENAME', 'TIME_FORMAT', 'TOOLTIP_FIELDS',
     'get_alert_thresholds',
 ]
 
@@ -51,6 +51,7 @@ _ICON_KEYS = frozenset({'icon_light', 'icon_dark'})
 _THRESHOLD_KEY_PREFIX = 'alert_thresholds_'
 _PERCENT_KEYS = frozenset({'alert_time_aware_below'})
 _STRING_KEYS = frozenset({'currency_symbol', 'language'})
+_VALID_TIME_FORMATS = frozenset({'24h', '12h'})
 _COMMAND_KEYS = frozenset({'on_reset_command', 'on_startup_command', 'on_threshold_command'})
 _BOOL_KEYS = frozenset({'alert_time_aware'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields'})
@@ -146,6 +147,11 @@ def _validate(data: dict, path: Path) -> dict:
         elif key in _STRING_KEYS:
             if not isinstance(value, str):
                 errors.append(f'  {key}: expected a string, got {type(value).__name__}')
+                drop.append(key)
+
+        elif key == 'time_format':
+            if value not in _VALID_TIME_FORMATS:
+                errors.append(f'  {key}: must be "24h" or "12h", got {value!r}')
                 drop.append(key)
 
         elif key in _COMMAND_KEYS:
@@ -314,6 +320,9 @@ CURRENCY_SYMBOL: str = _S.get('currency_symbol', _SYSTEM_CURRENCY_SYMBOL)
 
 # Language override
 LANGUAGE: str = _S.get('language', '')
+
+# Clock format for reset times: '24h' (e.g. 14:30) or '12h' (e.g. 2:30 PM)
+TIME_FORMAT: str = _S.get('time_format', '24h')
 
 # Event commands
 ON_RESET_COMMAND: list[str] = _S.get('on_reset_command', [])
