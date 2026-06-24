@@ -191,6 +191,9 @@ class _PopupApi:
     def set_pinned(self, pinned: bool) -> bool:
         return self._popup._set_pinned(pinned)
 
+    def move_by(self, dx: int, dy: int) -> bool:
+        return self._popup._move_by(dx, dy)
+
     def report_height(self, height: int) -> None:
         """Called by JS ResizeObserver when content height changes."""
         if height and height != self._popup._last_height:
@@ -224,6 +227,7 @@ class UsagePopup:
         self.app = app
         self._running = True
         self._pinned = False
+        self._moved_while_pinned = False
         self._closed = threading.Event()
         self._popup_hwnd = 0
         initial_height = 400
@@ -407,7 +411,23 @@ class UsagePopup:
 
     def _set_pinned(self, pinned: bool) -> bool:
         self._pinned = bool(pinned)
+        if not self._pinned:
+            self._moved_while_pinned = False
         return self._pinned
+
+    def _move_by(self, dx: int, dy: int) -> bool:
+        if not self._pinned or not self._popup_hwnd:
+            return False
+
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(self._popup_hwnd, ctypes.byref(rect))
+        dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
+        scale = dpi / _BASELINE_DPI
+        x = int(rect.left / scale + dx)
+        y = int(rect.top / scale + dy)
+        self._window.move(x, y)
+        self._moved_while_pinned = True
+        return True
 
     def _update_loop(self) -> None:
         """Poll for data changes and push updates to the popup."""
@@ -490,5 +510,7 @@ class UsagePopup:
         physical_width = int(self.WIDTH * scale)
         physical_height = int(height * scale)
         self._window.resize(self.WIDTH, height)
+        if getattr(self, '_pinned', False) and getattr(self, '_moved_while_pinned', False):
+            return
         x, y = self._tray_position(physical_width, physical_height)
         self._window.move(x, y)

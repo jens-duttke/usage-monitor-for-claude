@@ -525,8 +525,38 @@ class TestPinState(unittest.TestCase):
         self.assertTrue(popup._set_pinned(True))
         self.assertTrue(popup._pinned)
 
+        popup._moved_while_pinned = True
         self.assertFalse(popup._set_pinned(False))
         self.assertFalse(popup._pinned)
+        self.assertFalse(popup._moved_while_pinned)
+
+    def test_move_by_ignores_unpinned_popup(self):
+        popup = object.__new__(UsagePopup)
+        popup._pinned = False
+        popup._popup_hwnd = 12345
+        popup._window = MagicMock()
+
+        self.assertFalse(popup._move_by(10, 20))
+        popup._window.move.assert_not_called()
+
+    def test_move_by_moves_pinned_popup_by_logical_delta(self):
+        popup = object.__new__(UsagePopup)
+        popup._pinned = True
+        popup._moved_while_pinned = False
+        popup._popup_hwnd = 12345
+        popup._window = MagicMock()
+
+        def fill_rect(_hwnd, ptr):
+            rect = ctypes.cast(ptr, ctypes.POINTER(ctypes.wintypes.RECT)).contents
+            rect.left = 240
+            rect.top = 360
+
+        with patch('ctypes.windll.user32.GetWindowRect', side_effect=fill_rect), \
+             patch('ctypes.windll.user32.GetDpiForWindow', return_value=120):
+            self.assertTrue(popup._move_by(8, -4))
+
+        popup._window.move.assert_called_once_with(200, 284)
+        self.assertTrue(popup._moved_while_pinned)
 
 
 # ---------------------------------------------------------------------------
@@ -734,6 +764,23 @@ class TestResizeAndPosition(unittest.TestCase):
 
         mock_sys_dpi.assert_called()
         mock_window.resize.assert_called_once_with(340, 500)
+
+    def test_pinned_moved_popup_resizes_without_snapping_to_tray(self):
+        """A moved pinned popup keeps its position when content height changes."""
+        popup = object.__new__(UsagePopup)
+        popup.WIDTH = UsagePopup.WIDTH
+        popup._popup_hwnd = 12345
+        popup._pinned = True
+        popup._moved_while_pinned = True
+
+        mock_window = MagicMock()
+        popup._window = mock_window
+
+        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=_BASELINE_DPI):
+            popup._resize_and_position(500)
+
+        mock_window.resize.assert_called_once_with(340, 500)
+        mock_window.move.assert_not_called()
 
 
 if __name__ == '__main__':

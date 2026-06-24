@@ -2,6 +2,7 @@ let els;
 let statusState = {};
 let translations = {};
 let textTimerId = null;
+let popupPinned = false;
 
 /**
  * Set CSS custom properties for theme colors and inject translation strings.
@@ -31,6 +32,7 @@ function init(config) {
     changelogLink.addEventListener('click', () => pywebview.api.open_url());
     document.getElementById('closeBtn').addEventListener('click', () => pywebview.api.close());
     setupPinButton();
+    setupPinnedDrag();
 
     document.getElementById('appVersion').textContent = config.app_version;
 
@@ -58,29 +60,62 @@ function init(config) {
 
 function setupPinButton() {
     const pinBtn = document.getElementById('pinBtn');
-    let pinned = false;
 
     function render() {
-        pinBtn.classList.toggle('pinned', pinned);
-        pinBtn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
-        pinBtn.setAttribute('aria-label', pinned ? translations.unpin_popup : translations.pin_popup);
-        pinBtn.title = pinned ? translations.unpin_popup : translations.pin_popup;
+        pinBtn.classList.toggle('pinned', popupPinned);
+        pinBtn.setAttribute('aria-pressed', popupPinned ? 'true' : 'false');
+        pinBtn.setAttribute('aria-label', popupPinned ? translations.unpin_popup : translations.pin_popup);
+        pinBtn.title = popupPinned ? translations.unpin_popup : translations.pin_popup;
     }
 
     pinBtn.addEventListener('click', () => {
-        const nextPinned = !pinned;
-        pinned = nextPinned;
+        const nextPinned = !popupPinned;
+        popupPinned = nextPinned;
         render();
         pywebview.api.set_pinned(nextPinned).then((applied) => {
-            pinned = !!applied;
+            popupPinned = !!applied;
             render();
         }).catch(() => {
-            pinned = !nextPinned;
+            popupPinned = !nextPinned;
             render();
         });
     });
 
     render();
+}
+
+function setupPinnedDrag() {
+    const header = document.querySelector('header');
+    let dragPosition = null;
+
+    header.addEventListener('mousedown', (event) => {
+        if (!popupPinned || event.button !== 0 || event.target.closest('button')) {
+            return;
+        }
+        dragPosition = { x: event.screenX, y: event.screenY };
+        event.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (event) => {
+        if (!dragPosition) {
+            return;
+        }
+
+        const dx = Math.round(event.screenX - dragPosition.x);
+        const dy = Math.round(event.screenY - dragPosition.y);
+        if (dx === 0 && dy === 0) {
+            return;
+        }
+
+        dragPosition = { x: event.screenX, y: event.screenY };
+        pywebview.api.move_by(dx, dy).catch(() => {
+            dragPosition = null;
+        });
+    });
+
+    document.addEventListener('mouseup', () => {
+        dragPosition = null;
+    });
 }
 
 /**
