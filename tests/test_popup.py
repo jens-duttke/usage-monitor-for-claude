@@ -451,14 +451,9 @@ class TestInitConfig(unittest.TestCase):
     """Tests for _init_config - builds the JS init() config object."""
 
     def test_top_level_keys(self):
-        """Config has colors, t (translations), app_version, clock_24h, and data."""
+        """Config has colors, t (translations), app_version, and data."""
         config = _init_config(_snap())
-        self.assertEqual(set(config.keys()), {'colors', 't', 'app_version', 'clock_24h', 'data'})
-
-    def test_clock_24h_passed_through(self):
-        """clock_24h flag is forwarded into the config."""
-        self.assertTrue(_init_config(_snap(), clock_24h=True)['clock_24h'])
-        self.assertFalse(_init_config(_snap(), clock_24h=False)['clock_24h'])
+        self.assertEqual(set(config.keys()), {'colors', 't', 'app_version', 'data'})
 
     def test_colors_from_settings(self):
         """Color values come from settings module constants."""

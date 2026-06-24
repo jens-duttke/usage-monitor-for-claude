@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Tap a reset time in the detail popup to switch all reset times between 24-hour (14:30) and 12-hour (2:30 PM) format; set a persistent default with the `time_format` setting
+- Reset times now follow your Windows clock format automatically, showing 24-hour (14:30) or 12-hour (2:30 PM) without any setup; override with the `time_format` setting
 
 ### Fixed
 

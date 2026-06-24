@@ -518,6 +518,7 @@ class TestDividerPositions(unittest.TestCase):
 # time_until
 # ---------------------------------------------------------------------------
 
+@patch('usage_monitor_for_claude.formatting.TIME_FORMAT', '24h')
 @patch('usage_monitor_for_claude.formatting.T', EN)
 @patch('usage_monitor_for_claude.formatting.datetime')
 class TestTimeUntil(unittest.TestCase):
@@ -525,7 +526,8 @@ class TestTimeUntil(unittest.TestCase):
 
     Uses MagicMock for fromisoformat's return value so that
     astimezone() returns a controlled local datetime, making
-    tests timezone-independent.
+    tests timezone-independent.  ``TIME_FORMAT`` is pinned to ``'24h'`` so the
+    default-format assertions do not depend on the test machine's locale.
     """
 
     def _setup(self, mock_dt, utc_now, local_now, reset_local, remaining):

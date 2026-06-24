@@ -17,6 +17,7 @@ The app never creates this file - users place it manually.
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import json
 import locale as _locale
 import os
@@ -322,7 +323,29 @@ CURRENCY_SYMBOL: str = _S.get('currency_symbol', _SYSTEM_CURRENCY_SYMBOL)
 LANGUAGE: str = _S.get('language', '')
 
 # Clock format for reset times: '24h' (e.g. 14:30) or '12h' (e.g. 2:30 PM)
-TIME_FORMAT: str = _S.get('time_format', '24h')
+
+def _detect_system_time_format() -> str:
+    """Detect whether the Windows clock uses a 24-hour or 12-hour format.
+
+    Reads ``LOCALE_ITIME`` for the current user locale, which returns ``1``
+    for a 24-hour clock and ``0`` for a 12-hour (AM/PM) clock and honors any
+    regional customizations.  Falls back to ``'24h'`` if the query fails.
+    """
+    LOCALE_NAME_USER_DEFAULT = None  # NULL selects the current user locale
+    LOCALE_ITIME = 0x00000023
+    LOCALE_RETURN_NUMBER = 0x20000000
+    value = ctypes.wintypes.DWORD()
+    chars = ctypes.windll.kernel32.GetLocaleInfoEx(
+        LOCALE_NAME_USER_DEFAULT, LOCALE_ITIME | LOCALE_RETURN_NUMBER,
+        ctypes.cast(ctypes.byref(value), ctypes.c_wchar_p), 2,
+    )
+    if chars == 0:
+        return '24h'
+    return '24h' if value.value == 1 else '12h'
+
+
+_SYSTEM_TIME_FORMAT = _detect_system_time_format()
+TIME_FORMAT: str = _S.get('time_format', _SYSTEM_TIME_FORMAT)
 
 # Event commands
 ON_RESET_COMMAND: list[str] = _S.get('on_reset_command', [])

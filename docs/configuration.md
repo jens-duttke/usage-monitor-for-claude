@@ -155,11 +155,11 @@ Run a shell command when a usage event occurs. See [Event Commands](event-comman
 
 ## Time Format
 
-Sets the default clock style for reset times. Tapping a reset time in the detail popup switches it live for the current session; this key sets the default applied on every start.
+By default, reset times follow your Windows clock format (the 24-hour or 12-hour / AM-PM setting from your regional preferences), so no configuration is needed. Set this key to override the auto-detected format.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `time_format` | `"24h"` | Clock format for reset times: `"24h"` (e.g. `14:30`) or `"12h"` (e.g. `2:30 PM`) |
+| `time_format` | *(auto-detected from Windows)* | Clock format for reset times: `"24h"` (e.g. `14:30`) or `"12h"` (e.g. `2:30 PM`) |
 
 ## Currency
 

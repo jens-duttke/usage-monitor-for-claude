@@ -731,6 +731,30 @@ class TestIconFieldsValidation(unittest.TestCase):
         mock.windll.user32.MessageBoxW.assert_not_called()
 
 
+class TestDetectSystemTimeFormat(unittest.TestCase):
+    """Tests for _detect_system_time_format() Windows locale detection."""
+
+    def _detect(self, chars: int, itime_value: int) -> str:
+        """Run detection with GetLocaleInfoEx mocked to return *chars* and write *itime_value*."""
+        mock_ctypes = MagicMock()
+        mock_ctypes.wintypes.DWORD.return_value.value = itime_value
+        mock_ctypes.windll.kernel32.GetLocaleInfoEx.return_value = chars
+        with patch.object(settings_mod, 'ctypes', mock_ctypes):
+            return settings_mod._detect_system_time_format()
+
+    def test_itime_one_is_24h(self):
+        """LOCALE_ITIME of 1 maps to a 24-hour clock."""
+        self.assertEqual(self._detect(chars=2, itime_value=1), '24h')
+
+    def test_itime_zero_is_12h(self):
+        """LOCALE_ITIME of 0 maps to a 12-hour clock."""
+        self.assertEqual(self._detect(chars=2, itime_value=0), '12h')
+
+    def test_query_failure_falls_back_to_24h(self):
+        """A failed locale query (0 chars written) falls back to 24-hour."""
+        self.assertEqual(self._detect(chars=0, itime_value=0), '24h')
+
+
 class TestIconFieldsDefault(unittest.TestCase):
     """Tests for ICON_FIELDS default value."""
 

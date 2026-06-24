@@ -157,14 +157,6 @@ dl > div {
     color: var(--fg-dim);
 }
 
-.clock-toggle {
-    text-decoration: underline dotted;
-    text-underline-offset: 2px;
-    cursor: pointer;
-
-    &:hover { color: var(--fg-heading); }
-}
-
 footer {
     font-size: 12px;
     color: var(--fg-dim);
