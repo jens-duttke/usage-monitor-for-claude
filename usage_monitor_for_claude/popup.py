@@ -162,6 +162,7 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
             'usage': T['usage'], 'extra_usage': T['extra_usage'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
+            'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],
             'status_next_update': T['status_next_update'], 'status_refreshing': T['status_refreshing'],
             'duration_hm': T['duration_hm'], 'duration_m': T['duration_m'], 'duration_s': T['duration_s'],
@@ -186,6 +187,9 @@ class _PopupApi:
 
     def open_url(self) -> None:
         webbrowser.open(CHANGELOG_URL)
+
+    def set_pinned(self, pinned: bool) -> bool:
+        return self._popup._set_pinned(pinned)
 
     def report_height(self, height: int) -> None:
         """Called by JS ResizeObserver when content height changes."""
@@ -219,6 +223,7 @@ class UsagePopup:
         """
         self.app = app
         self._running = True
+        self._pinned = False
         self._closed = threading.Event()
         self._popup_hwnd = 0
         initial_height = 400
@@ -289,7 +294,7 @@ class UsagePopup:
         WM_QUIT = 0x0012
 
         def _post_quit() -> None:
-            if self._shown:
+            if self._shown and not self._pinned:
                 ctypes.windll.user32.PostThreadMessageW(this_thread, WM_QUIT, 0, 0)
 
         # -- Shared argtypes for CallNextHookEx --
@@ -399,6 +404,10 @@ class UsagePopup:
         except Exception:
             pass
         self._closed.set()
+
+    def _set_pinned(self, pinned: bool) -> bool:
+        self._pinned = bool(pinned)
+        return self._pinned
 
     def _update_loop(self) -> None:
         """Poll for data changes and push updates to the popup."""

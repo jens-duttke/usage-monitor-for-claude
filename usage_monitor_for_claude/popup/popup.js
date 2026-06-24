@@ -30,6 +30,7 @@ function init(config) {
     changelogLink.textContent = translations.changelog;
     changelogLink.addEventListener('click', () => pywebview.api.open_url());
     document.getElementById('closeBtn').addEventListener('click', () => pywebview.api.close());
+    setupPinButton();
 
     document.getElementById('appVersion').textContent = config.app_version;
 
@@ -53,6 +54,33 @@ function init(config) {
 
     updateData(config.data);
     requestAnimationFrame(() => document.body.classList.add('open'));
+}
+
+function setupPinButton() {
+    const pinBtn = document.getElementById('pinBtn');
+    let pinned = false;
+
+    function render() {
+        pinBtn.classList.toggle('pinned', pinned);
+        pinBtn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+        pinBtn.setAttribute('aria-label', pinned ? translations.unpin_popup : translations.pin_popup);
+        pinBtn.title = pinned ? translations.unpin_popup : translations.pin_popup;
+    }
+
+    pinBtn.addEventListener('click', () => {
+        const nextPinned = !pinned;
+        pinned = nextPinned;
+        render();
+        pywebview.api.set_pinned(nextPinned).then((applied) => {
+            pinned = !!applied;
+            render();
+        }).catch(() => {
+            pinned = !nextPinned;
+            render();
+        });
+    });
+
+    render();
 }
 
 /**

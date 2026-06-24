@@ -486,6 +486,8 @@ class TestInitConfig(unittest.TestCase):
         self.assertEqual(t['extra_usage'], T['extra_usage'])
         self.assertEqual(t['claude_code'], T['claude_code'])
         self.assertEqual(t['changelog'], T['changelog'])
+        self.assertEqual(t['pin_popup'], T['pin_popup'])
+        self.assertEqual(t['unpin_popup'], T['unpin_popup'])
         self.assertEqual(t['status_updated_s'], T['status_updated_s'])
         self.assertEqual(t['status_updated'], T['status_updated'])
         self.assertEqual(t['status_refreshing'], T['status_refreshing'])
@@ -507,6 +509,24 @@ class TestInitConfig(unittest.TestCase):
         config = _init_config(snap)
         self.assertEqual(config['data']['profile']['email'], 'a@b.com')
         self.assertEqual(set(config['data'].keys()), {'profile', 'usage', 'extra', 'installations', 'status'})
+
+
+# ---------------------------------------------------------------------------
+# Pin state
+# ---------------------------------------------------------------------------
+
+class TestPinState(unittest.TestCase):
+    """Tests for UsagePopup pin state."""
+
+    def test_set_pinned_updates_state(self):
+        popup = object.__new__(UsagePopup)
+        popup._pinned = False
+
+        self.assertTrue(popup._set_pinned(True))
+        self.assertTrue(popup._pinned)
+
+        self.assertFalse(popup._set_pinned(False))
+        self.assertFalse(popup._pinned)
 
 
 # ---------------------------------------------------------------------------

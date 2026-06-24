@@ -54,6 +54,8 @@
     "extra_usage_spent": "{used} / {limit} terpakai",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
+    "pin_popup": "Sematkan popup",
+    "unpin_popup": "Lepas sematan popup",
     "notify_update_title": "Claude Code Diperbarui",
     "notify_update": "Claude Code diperbarui dari {old} ke {new}.",
     "server_error": "API Anthropic tidak tersedia sementara (HTTP {code}).",
