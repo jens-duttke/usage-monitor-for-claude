@@ -231,10 +231,15 @@ async function applyLanguage(code) {
     currentLang = code;
     currentLocale = await loadLocale(code);
     await reloadFrame();
-    win().pywebview = { api: { close() {}, open_url() {}, report_height(h) {
-        iframe.style.height = h + 'px';
-        iframe.style.visibility = 'visible';
-    } } };
+    win().pywebview = { api: { close() {}, open_url() {},
+        set_pinned(pinned) { return Promise.resolve(pinned); },
+        begin_drag() { return Promise.resolve(true); },
+        drag() { return Promise.resolve(true); },
+        end_drag() {},
+        report_height(h) {
+            iframe.style.height = h + 'px';
+            iframe.style.visibility = 'visible';
+        } } };
     win().init({ colors: COLORS, t: buildTranslations(currentLocale), app_version: '1.13.0', data: resolveData(currentPreset, currentLocale) });
 }
 

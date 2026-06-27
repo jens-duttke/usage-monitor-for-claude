@@ -57,6 +57,14 @@ header {
             &.pinned { color: var(--fg-heading); }
         }
     }
+
+    /* When pinned, the header acts as the drag handle. */
+    body.pinned & {
+        cursor: grab;
+        user-select: none;
+
+        &.dragging { cursor: grabbing; }
+    }
 }
 
 .window-controls {

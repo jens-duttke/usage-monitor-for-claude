@@ -12,7 +12,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.cache import CacheSnapshot
-from usage_monitor_for_claude.popup import UsagePopup, _BASELINE_DPI, _MONITORINFO, _init_config, _snapshot_to_dict, _usage_entries
+from usage_monitor_for_claude.popup import (
+    UsagePopup, _BASELINE_DPI, _MONITORINFO, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER,
+    _init_config, _snapshot_to_dict, _usage_entries,
+)
 
 
 def _snap(
@@ -530,33 +533,101 @@ class TestPinState(unittest.TestCase):
         self.assertFalse(popup._pinned)
         self.assertFalse(popup._moved_while_pinned)
 
-    def test_move_by_ignores_unpinned_popup(self):
+    def test_begin_drag_ignored_when_unpinned(self):
         popup = object.__new__(UsagePopup)
         popup._pinned = False
         popup._popup_hwnd = 12345
-        popup._window = MagicMock()
+        popup._dragging = False
 
-        self.assertFalse(popup._move_by(10, 20))
-        popup._window.move.assert_not_called()
+        self.assertFalse(popup._begin_drag())
+        self.assertFalse(popup._dragging)
 
-    def test_move_by_moves_pinned_popup_by_logical_delta(self):
+    def test_begin_drag_anchors_physical_cursor_offset(self):
         popup = object.__new__(UsagePopup)
         popup._pinned = True
-        popup._moved_while_pinned = False
         popup._popup_hwnd = 12345
-        popup._window = MagicMock()
+        popup._dragging = False
+
+        def fill_cursor(ptr):
+            point = ctypes.cast(ptr, ctypes.POINTER(ctypes.wintypes.POINT)).contents
+            point.x = 500
+            point.y = 400
 
         def fill_rect(_hwnd, ptr):
             rect = ctypes.cast(ptr, ctypes.POINTER(ctypes.wintypes.RECT)).contents
-            rect.left = 240
+            rect.left = 460
             rect.top = 360
 
-        with patch('ctypes.windll.user32.GetWindowRect', side_effect=fill_rect), \
-             patch('ctypes.windll.user32.GetDpiForWindow', return_value=120):
-            self.assertTrue(popup._move_by(8, -4))
+        with patch('ctypes.windll.user32.GetCursorPos', side_effect=fill_cursor), \
+             patch('ctypes.windll.user32.GetWindowRect', side_effect=fill_rect), \
+             patch('ctypes.windll.user32.GetDpiForWindow', return_value=96):
+            self.assertTrue(popup._begin_drag())
 
-        popup._window.move.assert_called_once_with(200, 284)
+        self.assertTrue(popup._dragging)
+        self.assertEqual(popup._drag_offset, (40, 40))
+        self.assertEqual(popup._drag_start_dpi, 96)
+
+    def test_drag_ignored_when_not_dragging(self):
+        popup = object.__new__(UsagePopup)
+        popup._pinned = True
+        popup._dragging = False
+        popup._popup_hwnd = 12345
+
+        with patch('ctypes.windll.user32.SetWindowPos') as mock_set_pos:
+            self.assertFalse(popup._drag())
+        mock_set_pos.assert_not_called()
+
+    def test_drag_moves_popup_to_physical_cursor(self):
+        popup = object.__new__(UsagePopup)
+        popup._pinned = True
+        popup._dragging = True
+        popup._popup_hwnd = 12345
+        popup._drag_offset = (40, 40)
+        popup._moved_while_pinned = False
+
+        def fill_cursor(ptr):
+            point = ctypes.cast(ptr, ctypes.POINTER(ctypes.wintypes.POINT)).contents
+            point.x = 700
+            point.y = 620
+
+        with patch('ctypes.windll.user32.GetCursorPos', side_effect=fill_cursor), \
+             patch('ctypes.windll.user32.SetWindowPos') as mock_set_pos:
+            self.assertTrue(popup._drag())
+
+        mock_set_pos.assert_called_once_with(
+            12345, 0, 660, 580, 0, 0, _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE,
+        )
         self.assertTrue(popup._moved_while_pinned)
+
+    def test_end_drag_reasserts_size_on_dpi_change(self):
+        popup = object.__new__(UsagePopup)
+        popup.WIDTH = UsagePopup.WIDTH
+        popup._popup_hwnd = 12345
+        popup._dragging = True
+        popup._drag_start_dpi = 96
+        popup._last_height = 500
+        popup._window = MagicMock()
+
+        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=144):
+            popup._end_drag()
+
+        self.assertFalse(popup._dragging)
+        popup._window.resize.assert_called_once_with(UsagePopup.WIDTH, 500)
+
+    def test_end_drag_keeps_size_without_dpi_change(self):
+        popup = object.__new__(UsagePopup)
+        popup.WIDTH = UsagePopup.WIDTH
+        popup._popup_hwnd = 12345
+        popup._dragging = True
+        popup._drag_start_dpi = 96
+        popup._last_height = 500
+        popup._window = MagicMock()
+
+        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=96):
+            popup._end_drag()
+
+        self.assertFalse(popup._dragging)
+        popup._window.resize.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -676,6 +747,8 @@ class TestResizeAndPosition(unittest.TestCase):
         popup = object.__new__(UsagePopup)
         popup.WIDTH = UsagePopup.WIDTH
         popup._popup_hwnd = 12345
+        popup._pinned = False
+        popup._moved_while_pinned = False
 
         mock_window = MagicMock()
         popup._window = mock_window
@@ -739,6 +812,8 @@ class TestResizeAndPosition(unittest.TestCase):
         popup = object.__new__(UsagePopup)
         popup.WIDTH = UsagePopup.WIDTH
         popup._popup_hwnd = 12345
+        popup._pinned = False
+        popup._moved_while_pinned = False
 
         mock_window = MagicMock()
         popup._window = mock_window

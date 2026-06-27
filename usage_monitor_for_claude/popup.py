@@ -32,6 +32,9 @@ _WS_EX_APPWINDOW = 0x00040000
 _WS_EX_TOOLWINDOW = 0x00000080
 _WS_EX_LAYERED = 0x00080000
 _LWA_ALPHA = 0x00000002
+_SWP_NOSIZE = 0x0001
+_SWP_NOZORDER = 0x0004
+_SWP_NOACTIVATE = 0x0010
 
 
 class _MONITORINFO(ctypes.Structure):
@@ -191,8 +194,14 @@ class _PopupApi:
     def set_pinned(self, pinned: bool) -> bool:
         return self._popup._set_pinned(pinned)
 
-    def move_by(self, dx: int, dy: int) -> bool:
-        return self._popup._move_by(dx, dy)
+    def begin_drag(self) -> bool:
+        return self._popup._begin_drag()
+
+    def drag(self) -> bool:
+        return self._popup._drag()
+
+    def end_drag(self) -> None:
+        self._popup._end_drag()
 
     def report_height(self, height: int) -> None:
         """Called by JS ResizeObserver when content height changes."""
@@ -228,6 +237,9 @@ class UsagePopup:
         self._running = True
         self._pinned = False
         self._moved_while_pinned = False
+        self._dragging = False
+        self._drag_offset = (0, 0)
+        self._drag_start_dpi = 0
         self._closed = threading.Event()
         self._popup_hwnd = 0
         initial_height = 400
@@ -415,19 +427,62 @@ class UsagePopup:
             self._moved_while_pinned = False
         return self._pinned
 
-    def _move_by(self, dx: int, dy: int) -> bool:
+    def _begin_drag(self) -> bool:
+        """Anchor the cursor to the window for a pinned-popup drag.
+
+        Records the physical offset between the cursor and the window's
+        top-left corner.  Dragging is then done entirely in physical
+        screen coordinates, which keeps the cursor anchored even across
+        monitors with different DPI scaling, where logical-pixel deltas
+        would jump at the boundary.
+        """
         if not self._pinned or not self._popup_hwnd:
             return False
 
+        cursor = ctypes.wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor))
         rect = ctypes.wintypes.RECT()
         ctypes.windll.user32.GetWindowRect(self._popup_hwnd, ctypes.byref(rect))
-        dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
-        scale = dpi / _BASELINE_DPI
-        x = int(rect.left / scale + dx)
-        y = int(rect.top / scale + dy)
-        self._window.move(x, y)
+        self._drag_offset = (cursor.x - rect.left, cursor.y - rect.top)
+        self._drag_start_dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
+        self._dragging = True
+        return True
+
+    def _drag(self) -> bool:
+        """Reposition the popup so the cursor keeps its initial grab offset.
+
+        Each step computes the absolute window position from the current
+        physical cursor position, so out-of-order calls converge on the
+        right spot instead of accumulating drift.
+        """
+        if not self._dragging or not self._pinned or not self._popup_hwnd:
+            return False
+
+        cursor = ctypes.wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor))
+        x = cursor.x - self._drag_offset[0]
+        y = cursor.y - self._drag_offset[1]
+        ctypes.windll.user32.SetWindowPos(self._popup_hwnd, 0, x, y, 0, 0, _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE)
         self._moved_while_pinned = True
         return True
+
+    def _end_drag(self) -> None:
+        """Finish a drag and correct the size after a cross-monitor DPI change.
+
+        Crossing a monitor boundary triggers Windows' Per-Monitor-V2
+        rescale, which can race with pywebview's size handling and leave
+        the popup mis-sized.  Re-asserting the size once, against the
+        destination monitor's DPI, makes the final dimensions
+        deterministic.  Position is preserved by ``resize``'s default
+        top-left fix point.
+        """
+        self._dragging = False
+        if not self._popup_hwnd:
+            return
+
+        current_dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
+        if current_dpi != self._drag_start_dpi:
+            self._window.resize(self.WIDTH, self._last_height)
 
     def _update_loop(self) -> None:
         """Poll for data changes and push updates to the popup."""
@@ -510,7 +565,7 @@ class UsagePopup:
         physical_width = int(self.WIDTH * scale)
         physical_height = int(height * scale)
         self._window.resize(self.WIDTH, height)
-        if getattr(self, '_pinned', False) and getattr(self, '_moved_while_pinned', False):
+        if self._pinned and self._moved_while_pinned:
             return
         x, y = self._tray_position(physical_width, physical_height)
         self._window.move(x, y)

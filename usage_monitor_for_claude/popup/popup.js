@@ -62,6 +62,7 @@ function setupPinButton() {
     const pinBtn = document.getElementById('pinBtn');
 
     function render() {
+        document.body.classList.toggle('pinned', popupPinned);
         pinBtn.classList.toggle('pinned', popupPinned);
         pinBtn.setAttribute('aria-pressed', popupPinned ? 'true' : 'false');
         pinBtn.setAttribute('aria-label', popupPinned ? translations.unpin_popup : translations.pin_popup);
@@ -86,35 +87,45 @@ function setupPinButton() {
 
 function setupPinnedDrag() {
     const header = document.querySelector('header');
-    let dragPosition = null;
+    let dragging = false;
+
+    function setDragging(active) {
+        dragging = active;
+        header.classList.toggle('dragging', active);
+    }
 
     header.addEventListener('mousedown', (event) => {
         if (!popupPinned || event.button !== 0 || event.target.closest('button')) {
             return;
         }
-        dragPosition = { x: event.screenX, y: event.screenY };
         event.preventDefault();
-    });
-
-    document.addEventListener('mousemove', (event) => {
-        if (!dragPosition) {
-            return;
-        }
-
-        const dx = Math.round(event.screenX - dragPosition.x);
-        const dy = Math.round(event.screenY - dragPosition.y);
-        if (dx === 0 && dy === 0) {
-            return;
-        }
-
-        dragPosition = { x: event.screenX, y: event.screenY };
-        pywebview.api.move_by(dx, dy).catch(() => {
-            dragPosition = null;
+        setDragging(true);
+        pywebview.api.begin_drag().then((started) => {
+            setDragging(!!started);
+        }).catch(() => {
+            setDragging(false);
         });
     });
 
+    document.addEventListener('mousemove', (event) => {
+        if (!dragging) {
+            return;
+        }
+        // No button held (e.g. released outside the window): stop dragging.
+        if (event.buttons === 0) {
+            setDragging(false);
+            pywebview.api.end_drag();
+            return;
+        }
+        pywebview.api.drag().catch(() => {});
+    });
+
     document.addEventListener('mouseup', () => {
-        dragPosition = null;
+        if (!dragging) {
+            return;
+        }
+        setDragging(false);
+        pywebview.api.end_drag();
     });
 }
 
