@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The detail popup can now be pinned open and moved while pinned, so usage details stay visible during long Claude Code sessions
+- The detail popup can now be pinned open and moved while pinned, so usage details stay visible during long Claude Code sessions (thanks to [@nmxi](https://github.com/nmxi) for the contribution)
 
 ### Fixed
 
