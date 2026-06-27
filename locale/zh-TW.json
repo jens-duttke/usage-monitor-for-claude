@@ -54,6 +54,8 @@
     "extra_usage_spent": "已用 {used} / {limit}",
     "claude_code": "CLAUDE CODE",
     "changelog": "更新紀錄",
+    "pin_popup": "固定彈出視窗",
+    "unpin_popup": "取消固定彈出視窗",
     "notify_update_title": "Claude Code 已更新",
     "notify_update": "Claude Code 已從 {old} 更新到 {new}。",
     "server_error": "Anthropic API 暫時無法使用 (HTTP {code})。",

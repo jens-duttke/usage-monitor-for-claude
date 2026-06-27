@@ -23,25 +23,55 @@ header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
 
     & > span {
         font-size: 15px;
         font-weight: 700;
         color: var(--fg-heading);
+        min-width: 0;
     }
 
-    & > button {
+    & button {
         font-size: 18px;
         color: var(--fg-dim);
         cursor: pointer;
-        padding: 0 2px;
+        width: 20px;
+        height: 20px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         line-height: 1;
         background: none;
         border: none;
         font-family: inherit;
 
         &:hover { color: var(--fg-heading); }
+
+        &#pinBtn {
+            & svg {
+                width: 16px;
+                height: 16px;
+            }
+
+            &.pinned { color: var(--fg-heading); }
+        }
     }
+
+    /* When pinned, the header acts as the drag handle. */
+    body.pinned & {
+        cursor: grab;
+        user-select: none;
+
+        &.dragging { cursor: grabbing; }
+    }
+}
+
+.window-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
 }
 
 section, footer {

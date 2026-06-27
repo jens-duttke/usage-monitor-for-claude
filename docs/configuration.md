@@ -87,6 +87,30 @@ Must be an array of non-empty strings. `"*"` may appear at most once. Duplicates
 }
 ```
 
+## Compact pinned view
+
+The detail popup can be pinned open (pin button in the header) so it stays visible and can be dragged anywhere. Use `compact_hide` to strip the pinned popup down to just the usage bars you care about - the entries listed here are hidden **only while the popup is pinned**, and reappear when you unpin it.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `compact_hide` | `[]` | Sections and usage bars to hide while the popup is pinned |
+
+Must be an array of non-empty strings. Duplicates are silently removed. Unknown names are accepted and simply have no effect. With the default empty list, pinning changes nothing about what is shown.
+
+Entries can be either a **section key** or a **usage field name**:
+
+**Section keys:** `account` (email and plan), `extra_usage` (paid overage bar), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When hiding leaves only the usage bars (no other section visible), the "Usage" heading is dropped automatically, since it has nothing left to distinguish the bars from.
+
+**Usage field names:** any quota field, e.g. `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`. This hides that single bar in the pinned view, independent of [`popup_fields`](#popup-fields) (which controls the normal, unpinned popup).
+
+**Example** - pin to a minimal view with only the session and weekly bars:
+
+```json
+{
+    "compact_hide": ["account", "extra_usage", "claude_code", "status", "seven_day_sonnet", "seven_day_opus"]
+}
+```
+
 ## Tray icon bars
 
 The tray icon displays two small progress bars. By default, these show the session (5h) and weekly (7d) quotas. Use `icon_fields` to choose which two API fields are displayed.

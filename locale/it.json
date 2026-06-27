@@ -54,6 +54,8 @@
     "extra_usage_spent": "{used} / {limit} speso",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
+    "pin_popup": "Fissa popup",
+    "unpin_popup": "Sblocca popup",
     "notify_update_title": "Claude Code aggiornato",
     "notify_update": "Claude Code aggiornato da {old} a {new}.",
     "server_error": "L'API Anthropic è temporaneamente non disponibile (HTTP {code}).",

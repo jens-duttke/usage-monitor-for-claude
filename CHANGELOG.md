@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Reset times now follow your Windows clock format automatically, showing 24-hour (14:30) or 12-hour (2:30 PM) without any setup; override with the `time_format` setting
+- The detail popup can now be pinned open and moved while pinned, so usage details stay visible during long Claude Code sessions (thanks to [@nmxi](https://github.com/nmxi) for the contribution)
+- [New `compact_hide` setting](https://github.com/jens-duttke/usage-monitor-for-claude/issues/55) shrinks the pinned popup to a compact view by hiding chosen sections (account, extra usage, Claude Code versions, status footer) and individual usage bars while it is pinned, so you can keep just the bars you care about on screen; when only the usage bars remain, the "Usage" heading is dropped as well
+- Reset times now follow your Windows clock format automatically, showing 24-hour (14:30) or 12-hour (2:30 PM) without any setup; override with the `time_format` setting (thanks to [@rohitjalan142](https://github.com/rohitjalan142) for the contribution)
 
 ### Fixed
 

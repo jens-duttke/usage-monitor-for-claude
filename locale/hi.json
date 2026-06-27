@@ -54,6 +54,8 @@
     "extra_usage_spent": "{used} / {limit} खर्च",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
+    "pin_popup": "पॉपअप पिन करें",
+    "unpin_popup": "पॉपअप अनपिन करें",
     "notify_update_title": "Claude Code अपडेट हुआ",
     "notify_update": "Claude Code {old} से {new} में अपडेट हुआ।",
     "server_error": "Anthropic API अस्थायी रूप से अनुपलब्ध है (HTTP {code})।",

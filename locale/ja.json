@@ -54,6 +54,8 @@
     "extra_usage_spent": "{used} / {limit} 使用済み",
     "claude_code": "CLAUDE CODE",
     "changelog": "変更履歴",
+    "pin_popup": "ポップアップを固定",
+    "unpin_popup": "ポップアップの固定を解除",
     "notify_update_title": "Claude Code 更新完了",
     "notify_update": "Claude Code が {old} から {new} に更新されました。",
     "server_error": "Anthropic APIが一時的に利用できません (HTTP {code})。",

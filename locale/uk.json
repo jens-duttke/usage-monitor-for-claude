@@ -54,6 +54,8 @@
     "extra_usage_spent": "Витрачено {used} / {limit}",
     "claude_code": "CLAUDE CODE",
     "changelog": "Список змін",
+    "pin_popup": "Закріпити спливне вікно",
+    "unpin_popup": "Відкріпити спливне вікно",
     "notify_update_title": "Claude Code оновлено",
     "notify_update": "Claude Code оновлено з {old} до {new}.",
     "server_error": "Anthropic API тимчасово недоступний (HTTP {code}).",

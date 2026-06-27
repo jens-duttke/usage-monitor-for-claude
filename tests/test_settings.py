@@ -1008,5 +1008,76 @@ class TestDynamicThresholdValidation(unittest.TestCase):
         self.assertEqual(result['alert_thresholds_seven_day_cowork'], [50, 80, 95])
 
 
+class TestCompactHideValidation(unittest.TestCase):
+    """Tests for compact_hide setting validation."""
+
+    def _run_validate(self, data: dict) -> tuple[dict, MagicMock]:
+        """Run _validate with mocked ctypes and return (result, mock_ctypes)."""
+        mock_ctypes = MagicMock()
+        with patch.object(settings_mod, 'ctypes', mock_ctypes):
+            result = settings_mod._validate(dict(data), Path('/fake/settings.json'))
+        return result, mock_ctypes
+
+    def test_valid_list(self):
+        """Array of section keys and field names passes through."""
+        result, mock = self._run_validate({'compact_hide': ['account', 'claude_code', 'seven_day_opus']})
+        self.assertEqual(result['compact_hide'], ['account', 'claude_code', 'seven_day_opus'])
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_empty_list_valid(self):
+        """Empty list is valid (pinning hides nothing)."""
+        result, mock = self._run_validate({'compact_hide': []})
+        self.assertEqual(result['compact_hide'], [])
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_not_array_dropped(self):
+        """Non-array value is dropped."""
+        result, mock = self._run_validate({'compact_hide': 'account'})
+        self.assertNotIn('compact_hide', result)
+        mock.windll.user32.MessageBoxW.assert_called_once()
+
+    def test_non_string_entry_dropped(self):
+        """Array with non-string entry is dropped."""
+        result, mock = self._run_validate({'compact_hide': ['account', 42]})
+        self.assertNotIn('compact_hide', result)
+        mock.windll.user32.MessageBoxW.assert_called_once()
+
+    def test_empty_string_entry_dropped(self):
+        """Array with empty string entry is dropped."""
+        result, mock = self._run_validate({'compact_hide': ['account', '']})
+        self.assertNotIn('compact_hide', result)
+        mock.windll.user32.MessageBoxW.assert_called_once()
+
+    def test_duplicates_removed(self):
+        """Duplicate entries are silently removed."""
+        result, mock = self._run_validate({'compact_hide': ['account', 'status', 'account']})
+        self.assertEqual(result['compact_hide'], ['account', 'status'])
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_unknown_names_accepted(self):
+        """Unknown section/field names are not rejected."""
+        result, mock = self._run_validate({'compact_hide': ['future_section']})
+        self.assertEqual(result['compact_hide'], ['future_section'])
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+
+class TestCompactHideDefault(unittest.TestCase):
+    """Tests for COMPACT_HIDE default value."""
+
+    def test_default_without_settings(self):
+        """compact_hide is absent when no settings file exists (defaults to empty)."""
+        with TemporaryDirectory() as app_tmp, TemporaryDirectory() as home_tmp:
+            loaded = _load(Path(app_tmp), Path(home_tmp))
+        self.assertNotIn('compact_hide', loaded)
+
+    def test_override_from_settings(self):
+        """compact_hide is loaded from the settings file."""
+        with TemporaryDirectory() as app_tmp, TemporaryDirectory() as home_tmp:
+            settings = {'compact_hide': ['account', 'status']}
+            (Path(app_tmp) / settings_mod.SETTINGS_FILENAME).write_text(json.dumps(settings), encoding='utf-8')
+            loaded = _load(Path(app_tmp), Path(home_tmp))
+        self.assertEqual(loaded['compact_hide'], ['account', 'status'])
+
+
 if __name__ == '__main__':
     unittest.main()

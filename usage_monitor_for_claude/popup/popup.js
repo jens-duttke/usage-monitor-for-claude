@@ -2,6 +2,9 @@ let els;
 let statusState = {};
 let translations = {};
 let textTimerId = null;
+let popupPinned = false;
+let compactHide = [];
+let lastData = null;
 
 /**
  * Set CSS custom properties for theme colors and inject translation strings.
@@ -18,6 +21,7 @@ function init(config) {
     }
 
     translations = config.t;
+    compactHide = config.compact_hide || [];
     document.getElementById('title').textContent = translations.title;
     document.getElementById('headingAccount').textContent = translations.account;
     document.getElementById('labelEmail').textContent = translations.email;
@@ -30,6 +34,8 @@ function init(config) {
     changelogLink.textContent = translations.changelog;
     changelogLink.addEventListener('click', () => pywebview.api.open_url());
     document.getElementById('closeBtn').addEventListener('click', () => pywebview.api.close());
+    setupPinButton();
+    setupPinnedDrag();
 
     document.getElementById('appVersion').textContent = config.app_version;
 
@@ -40,6 +46,7 @@ function init(config) {
         planRow: document.getElementById('planRow'),
         planValue: document.getElementById('planValue'),
         usageSection: document.getElementById('usageSection'),
+        headingUsage: document.getElementById('headingUsage'),
         usageBars: document.getElementById('usageBars'),
         extraSection: document.getElementById('extraSection'),
         extraSpent: document.getElementById('extraSpent'),
@@ -55,14 +62,109 @@ function init(config) {
     requestAnimationFrame(() => document.body.classList.add('open'));
 }
 
+function setupPinButton() {
+    const pinBtn = document.getElementById('pinBtn');
+
+    function render() {
+        document.body.classList.toggle('pinned', popupPinned);
+        pinBtn.classList.toggle('pinned', popupPinned);
+        pinBtn.setAttribute('aria-pressed', popupPinned ? 'true' : 'false');
+        pinBtn.setAttribute('aria-label', popupPinned ? translations.unpin_popup : translations.pin_popup);
+        pinBtn.title = popupPinned ? translations.unpin_popup : translations.pin_popup;
+    }
+
+    pinBtn.addEventListener('click', () => {
+        const nextPinned = !popupPinned;
+        popupPinned = nextPinned;
+        render();
+        reapplyData();
+        pywebview.api.set_pinned(nextPinned).then((applied) => {
+            popupPinned = !!applied;
+            render();
+            reapplyData();
+        }).catch(() => {
+            popupPinned = !nextPinned;
+            render();
+            reapplyData();
+        });
+    });
+
+    render();
+}
+
+/**
+ * Return true if a section or usage bar is hidden by the pinned compact view.
+ *
+ * Hiding only applies while the popup is pinned; unpinned it always shows
+ * everything.  `key` is a section key (account, extra_usage, claude_code,
+ * status) or a usage field name (e.g. seven_day_opus).
+ */
+function compactHidden(key) {
+    return popupPinned && compactHide.includes(key);
+}
+
+// Re-render the last snapshot so compact hiding takes effect on pin toggle.
+function reapplyData() {
+    if (lastData) {
+        updateData(lastData);
+    }
+}
+
+function setupPinnedDrag() {
+    const header = document.querySelector('header');
+    let dragging = false;
+
+    function setDragging(active) {
+        dragging = active;
+        header.classList.toggle('dragging', active);
+    }
+
+    header.addEventListener('mousedown', (event) => {
+        if (!popupPinned || event.button !== 0 || event.target.closest('button')) {
+            return;
+        }
+        event.preventDefault();
+        setDragging(true);
+        pywebview.api.begin_drag().then((started) => {
+            setDragging(!!started);
+        }).catch(() => {
+            setDragging(false);
+        });
+    });
+
+    document.addEventListener('mousemove', (event) => {
+        if (!dragging) {
+            return;
+        }
+        // No button held (e.g. released outside the window): stop dragging.
+        if (event.buttons === 0) {
+            setDragging(false);
+            pywebview.api.end_drag();
+            return;
+        }
+        pywebview.api.drag().catch(() => {});
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) {
+            return;
+        }
+        setDragging(false);
+        pywebview.api.end_drag();
+    });
+}
+
 /**
  * Update all popup sections with fresh data from Python.
  *
  * @param {object} data - Pre-formatted snapshot from _snapshot_to_dict().
  */
 function updateData(data) {
+    lastData = data;
+
     const hasProfile = !!data.profile;
-    els.accountSection.classList.toggle('visible', hasProfile);
+    const accountVisible = hasProfile && !compactHidden('account');
+    els.accountSection.classList.toggle('visible', accountVisible);
     if (hasProfile) {
         els.emailValue.textContent = data.profile.email;
         els.emailRow.style.display = data.profile.email ? '' : 'none';
@@ -70,14 +172,16 @@ function updateData(data) {
         els.planRow.style.display = data.profile.plan ? '' : 'none';
     }
 
-    const hasUsage = !!data.usage?.length;
+    const usage = (data.usage || []).filter((entry) => !compactHidden(entry.key));
+    const hasUsage = !!usage.length;
     els.usageSection.classList.toggle('visible', hasUsage);
     if (hasUsage) {
-        updateUsageBars(data.usage);
+        updateUsageBars(usage);
     }
 
     const hasExtra = !!data.extra;
-    els.extraSection.classList.toggle('visible', hasExtra);
+    const extraVisible = hasExtra && !compactHidden('extra_usage');
+    els.extraSection.classList.toggle('visible', extraVisible);
     if (hasExtra) {
         els.extraSpent.textContent = data.extra.spent_text;
         els.extraPct.textContent = data.extra.pct_text;
@@ -85,7 +189,13 @@ function updateData(data) {
     }
 
     const hasInstalls = !!data.installations?.length;
-    els.installSection.classList.toggle('visible', hasInstalls);
+    const installsVisible = hasInstalls && !compactHidden('claude_code');
+    els.installSection.classList.toggle('visible', installsVisible);
+
+    // The "Usage" heading only labels the bars against the other sections;
+    // when the usage bars stand alone, drop the now-redundant heading.
+    els.headingUsage.style.display = (hasUsage && !accountVisible && !extraVisible && !installsVisible) ? 'none' : '';
+
     if (hasInstalls) {
         els.installRows.replaceChildren(...data.installations.map((inst) => {
             const row = document.createElement('div');
@@ -118,7 +228,9 @@ function updateStatus(status) {
         return;
     }
 
-    els.statusSection.classList.add('visible');
+    // Keep the live timer running even when the footer is hidden in compact
+    // view, so the stale-dimming of the usage bars still updates.
+    els.statusSection.classList.toggle('visible', !compactHidden('status'));
 
     if (status.last_success_time !== undefined) {
         statusState = {

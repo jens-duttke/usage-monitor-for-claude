@@ -169,6 +169,13 @@ function localizeLabel(loc, entry) {
     return template.replace('{suffix}', entry.suffix);
 }
 
+// Map a preset usage entry to its API field key (so compact_hide preview works).
+function fieldKey(entry) {
+    if (entry.unit === 'hour') return 'five_hour';
+    if (entry.suffix === '7 day') return 'seven_day';
+    return 'seven_day_' + entry.suffix.toLowerCase();
+}
+
 function localizeReset(loc, reset) {
     if (!reset) return '';
     if (reset.kind === 'in') return loc.resets_in.replace('{duration}', reset.duration).replace('{clock}', reset.clock);
@@ -182,6 +189,7 @@ function resolveData(name, loc) {
     const preset = PRESETS[name];
 
     const usage = (preset.usage || []).map((entry) => ({
+        key: fieldKey(entry),
         label: localizeLabel(loc, entry),
         pct_text: entry.pct + '%',
         fill_pct: entry.pct / 100,
@@ -231,11 +239,19 @@ async function applyLanguage(code) {
     currentLang = code;
     currentLocale = await loadLocale(code);
     await reloadFrame();
-    win().pywebview = { api: { close() {}, open_url() {}, report_height(h) {
-        iframe.style.height = h + 'px';
-        iframe.style.visibility = 'visible';
-    } } };
-    win().init({ colors: COLORS, t: buildTranslations(currentLocale), app_version: '1.13.0', data: resolveData(currentPreset, currentLocale) });
+    win().pywebview = { api: { close() {}, open_url() {},
+        set_pinned(pinned) { return Promise.resolve(pinned); },
+        begin_drag() { return Promise.resolve(true); },
+        drag() { return Promise.resolve(true); },
+        end_drag() {},
+        report_height(h) {
+            iframe.style.height = h + 'px';
+            iframe.style.visibility = 'visible';
+        } } };
+    // Demo set so toggling the pin button previews compact hiding of both
+    // whole sections and an individual usage bar.
+    const compactHide = ['account', 'extra_usage', 'claude_code', 'status', 'seven_day_opus'];
+    win().init({ colors: COLORS, t: buildTranslations(currentLocale), app_version: '1.13.0', compact_hide: compactHide, data: resolveData(currentPreset, currentLocale) });
 }
 
 function loadPreset(name) {
