@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Multi-account support - launch additional instances with `--config-dir="<path>"` to monitor a second Claude account side by side; each instance reads its own credentials and settings, gets its own tray tooltip prefix and autostart entry, and keeps its `--config-dir` across restarts
+
+### Changed
+
+- When a custom config directory is in effect (`--config-dir` or `CLAUDE_CONFIG_DIR`), a `usage-monitor-settings.json` in that directory now takes priority over the one next to the EXE, so each instance can have its own settings
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.19.0...HEAD)
 
 ## [1.19.0] - 2026-07-14

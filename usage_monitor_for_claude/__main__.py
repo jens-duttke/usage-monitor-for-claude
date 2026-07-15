@@ -7,8 +7,26 @@ import os
 import subprocess
 import sys
 import traceback
+from pathlib import Path
+
+from usage_monitor_for_claude.instance_id import parse_config_dir
 
 _verbose = '--verbose' in sys.argv
+
+# --config-dir selects which Claude account to monitor. It must be
+# resolved into CLAUDE_CONFIG_DIR before any other package import:
+# api, settings, verbose and i18n all read the variable at import or
+# first-use time. Keep every other package import below this block.
+_config_dir = parse_config_dir(sys.argv)
+if _config_dir is not None:
+    _config_path = Path(_config_dir)
+    if not _config_path.is_dir():
+        ctypes.windll.user32.MessageBoxW(
+            0, f'--config-dir directory does not exist:\n{_config_dir}',
+            'Usage Monitor for Claude - Error', 0x10,
+        )
+        sys.exit(1)
+    os.environ['CLAUDE_CONFIG_DIR'] = str(_config_path.resolve())
 
 # In frozen builds (console=False), stdout/stderr go nowhere.
 # --verbose attaches a console so diagnostics are visible.
@@ -94,19 +112,25 @@ try:
     if app and app.restart_requested:
         release_instance_lock()
 
+        passthrough_args = []
+        if _config_dir is not None:
+            passthrough_args.append(f'--config-dir={os.environ["CLAUDE_CONFIG_DIR"]}')
+        if _verbose:
+            passthrough_args.append('--verbose')
+
         if getattr(sys, 'frozen', False):
             # Clear PyInstaller's internal env vars so the new
             # instance extracts to a fresh temp directory instead
             # of reusing the current (soon-to-be-deleted) one.
             env = {k: v for k, v in os.environ.items() if not k.startswith(('_PYI_', '_MEI'))}
             subprocess.Popen(
-                [sys.executable],
+                [sys.executable, *passthrough_args],
                 env=env,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
         else:
             subprocess.Popen(
-                [sys.executable, '-m', 'usage_monitor_for_claude'],
+                [sys.executable, '-m', 'usage_monitor_for_claude', *passthrough_args],
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
 except Exception:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 MODULE = 'usage_monitor_for_claude.single_instance'
@@ -176,6 +177,47 @@ class TestEnsureSingleInstance(unittest.TestCase):
 
         message = mock_user32.MessageBoxW.call_args[0][1]
         self.assertIn('?', message)
+
+
+# ---------------------------------------------------------------------------
+# Per-instance object names
+# ---------------------------------------------------------------------------
+
+class TestObjectNames(unittest.TestCase):
+    """Tests for _object_names() per-config-dir suffixing."""
+
+    def test_default_config_dir_uses_legacy_names(self):
+        """Default config dir keeps the unsuffixed names for cross-version detection."""
+        import usage_monitor_for_claude.single_instance as si
+
+        with patch(f'{MODULE}.config_dir_suffix', return_value=''):
+            mutex_name, mapping_name = si._object_names()
+
+        self.assertEqual(mutex_name, 'UsageMonitorForClaude_SingleInstance')
+        self.assertEqual(mapping_name, 'UsageMonitorForClaude_HolderPID')
+
+    def test_custom_config_dir_appends_suffix(self):
+        """A custom config dir yields suffixed, per-instance names."""
+        import usage_monitor_for_claude.single_instance as si
+
+        with patch(f'{MODULE}.config_dir_suffix', return_value='_abc123def456'):
+            mutex_name, mapping_name = si._object_names()
+
+        self.assertEqual(mutex_name, 'UsageMonitorForClaude_SingleInstance_abc123def456')
+        self.assertEqual(mapping_name, 'UsageMonitorForClaude_HolderPID_abc123def456')
+
+    def test_two_config_dirs_get_distinct_names(self):
+        """Two different config dirs never collide on kernel object names."""
+        import usage_monitor_for_claude.single_instance as si
+
+        with TemporaryDirectory() as dir_a, TemporaryDirectory() as dir_b:
+            with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': dir_a}):
+                names_a = si._object_names()
+            with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': dir_b}):
+                names_b = si._object_names()
+
+        self.assertNotEqual(names_a[0], names_b[0])
+        self.assertNotEqual(names_a[1], names_b[1])
 
 
 # ---------------------------------------------------------------------------

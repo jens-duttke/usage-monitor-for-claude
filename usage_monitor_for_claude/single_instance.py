@@ -16,11 +16,12 @@ import struct
 
 from . import __version__
 from .i18n import T
+from .instance_id import config_dir_suffix
 
 __all__ = ['ensure_single_instance', 'release_instance_lock']
 
-_MUTEX_NAME = 'UsageMonitorForClaude_SingleInstance'
-_PID_MAPPING_NAME = 'UsageMonitorForClaude_HolderPID'
+_MUTEX_BASE_NAME = 'UsageMonitorForClaude_SingleInstance'
+_PID_MAPPING_BASE_NAME = 'UsageMonitorForClaude_HolderPID'
 _ERROR_ALREADY_EXISTS = 0xB7
 _INVALID_HANDLE = ctypes.c_void_p(-1).value
 _PAGE_READWRITE = 0x04
@@ -74,6 +75,17 @@ _mutex_handle: int | None = None
 _pid_mapping_handle: int | None = None
 
 
+def _object_names() -> tuple[str, str]:
+    """Return the per-instance ``(mutex_name, pid_mapping_name)`` pair.
+
+    The names carry a config-dir suffix so one monitor instance per
+    Claude account can run concurrently, each a singleton for its own
+    config directory.
+    """
+    suffix = config_dir_suffix()
+    return _MUTEX_BASE_NAME + suffix, _PID_MAPPING_BASE_NAME + suffix
+
+
 def _store_holder_info() -> None:
     """Store our PID and version in named shared memory.
 
@@ -82,7 +94,7 @@ def _store_holder_info() -> None:
     """
     global _pid_mapping_handle
     _pid_mapping_handle = _kernel32.CreateFileMappingW(
-        _INVALID_HANDLE, None, _PAGE_READWRITE, 0, _SHARED_MEM_SIZE, _PID_MAPPING_NAME,
+        _INVALID_HANDLE, None, _PAGE_READWRITE, 0, _SHARED_MEM_SIZE, _object_names()[1],
     )
     if not _pid_mapping_handle:
         return
@@ -106,7 +118,7 @@ def _read_holder_info() -> tuple[int | None, str | None]:
         ``(pid, version)`` of the holder, or ``(None, None)`` if the
         shared memory does not exist.
     """
-    mapping = _kernel32.OpenFileMappingW(_FILE_MAP_READ, False, _PID_MAPPING_NAME)
+    mapping = _kernel32.OpenFileMappingW(_FILE_MAP_READ, False, _object_names()[1])
     if not mapping:
         return None, None
 
@@ -162,7 +174,8 @@ def ensure_single_instance() -> bool:
         True if this instance may proceed, False if it should exit.
     """
     global _mutex_handle
-    _mutex_handle = _kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+    mutex_name = _object_names()[0]
+    _mutex_handle = _kernel32.CreateMutexW(None, False, mutex_name)
     if ctypes.get_last_error() != _ERROR_ALREADY_EXISTS:
         _store_holder_info()
         return True
@@ -196,7 +209,7 @@ def ensure_single_instance() -> bool:
         _terminate_pid(holder_pid)
     _kernel32.CloseHandle(_mutex_handle)
 
-    _mutex_handle = _kernel32.CreateMutexW(None, False, _MUTEX_NAME)
+    _mutex_handle = _kernel32.CreateMutexW(None, False, mutex_name)
     _store_holder_info()
     return True
 

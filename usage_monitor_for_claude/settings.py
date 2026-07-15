@@ -8,8 +8,8 @@ registry keys, file paths) remain in their respective modules.
 Loads an optional ``usage-monitor-settings.json`` to let users override
 any constant.  Search order:
 
-1. Next to the executable (frozen) or project root (source)
-2. ``$CLAUDE_CONFIG_DIR/usage-monitor-settings.json`` (if set and different from ``~/.claude/``)
+1. ``$CLAUDE_CONFIG_DIR/usage-monitor-settings.json`` (if set and different from ``~/.claude/``)
+2. Next to the executable (frozen) or project root (source)
 3. ``~/.claude/usage-monitor-settings.json``
 
 The app never creates this file - users place it manually.
@@ -20,9 +20,10 @@ import ctypes
 import ctypes.wintypes
 import json
 import locale as _locale
-import os
 import sys
 from pathlib import Path
+
+from .instance_id import effective_config_dir, is_default_config_dir
 
 __all__ = [
     'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
@@ -68,11 +69,13 @@ def _load_settings() -> dict:
         app_dir = Path(__file__).resolve().parent.parent
 
     home_claude = Path.home() / '.claude'
-    custom_config = Path(os.environ['CLAUDE_CONFIG_DIR']) if os.environ.get('CLAUDE_CONFIG_DIR') else None
 
-    search_paths = [app_dir / SETTINGS_FILENAME]
-    if custom_config and custom_config != home_claude:
-        search_paths.append(custom_config / SETTINGS_FILENAME)
+    # A custom config dir takes precedence over the exe-adjacent file so
+    # each instance (one per Claude account) can have its own settings.
+    search_paths = []
+    if not is_default_config_dir():
+        search_paths.append(effective_config_dir() / SETTINGS_FILENAME)
+    search_paths.append(app_dir / SETTINGS_FILENAME)
     search_paths.append(home_claude / SETTINGS_FILENAME)
 
     for path in search_paths:

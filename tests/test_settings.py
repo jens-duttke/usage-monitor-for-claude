@@ -109,6 +109,18 @@ class TestLoadSettings(unittest.TestCase):
                 result = settings_mod._load_settings()
         self.assertEqual(result, settings)
 
+    def test_custom_config_dir_wins_over_app_dir(self):
+        """A custom config dir file takes priority over the exe-adjacent file."""
+        with TemporaryDirectory() as app_tmp, TemporaryDirectory() as config_tmp:
+            (Path(app_tmp) / settings_mod.SETTINGS_FILENAME).write_text(json.dumps({'bg': '#app'}), encoding='utf-8')
+            (Path(config_tmp) / settings_mod.SETTINGS_FILENAME).write_text(json.dumps({'bg': '#custom'}), encoding='utf-8')
+            fake_file = str(Path(app_tmp) / 'usage_monitor_for_claude' / 'settings.py')
+            with patch.object(settings_mod, '__file__', fake_file), \
+                 patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': config_tmp}), \
+                 patch.object(settings_mod, 'ctypes', MagicMock()):
+                result = settings_mod._load_settings()
+        self.assertEqual(result['bg'], '#custom')
+
     def test_app_dir_takes_priority(self):
         """File next to app wins over ~/.claude/ file."""
         with TemporaryDirectory() as app_tmp, TemporaryDirectory() as home_tmp:

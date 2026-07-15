@@ -12,8 +12,8 @@ All settings work out of the box - no configuration file is needed. To customize
 
 The app searches for this file in these locations (first match wins):
 
-1. **Next to the EXE** (or project root when running from source)
-2. **`$CLAUDE_CONFIG_DIR/usage-monitor-settings.json`** (only if `CLAUDE_CONFIG_DIR` is set and differs from `~/.claude/`)
+1. **`$CLAUDE_CONFIG_DIR/usage-monitor-settings.json`** (only if a custom config directory is set via `--config-dir` or `CLAUDE_CONFIG_DIR` and differs from `~/.claude/`) - this lets every instance have its own settings when running one instance per Claude account
+2. **Next to the EXE** (or project root when running from source)
 3. **`~/.claude/usage-monitor-settings.json`**
 
 The app never creates or modifies this file. To start, create an empty file and add keys as needed. Settings are read at startup - after editing the file, use the **Restart** option in the tray context menu to apply changes.

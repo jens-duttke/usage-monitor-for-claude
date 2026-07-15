@@ -24,6 +24,7 @@ from .cache import UsageCache
 from .claude_cli import PROJECT_URL
 from .command import run_event_command
 from .idle import get_idle_seconds, is_workstation_locked
+from .instance_id import effective_config_dir, is_default_config_dir
 from .settings import (
     ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_PAUSE, NOTIFY_CLAUDE_UPDATE,
     ON_DOUBLE_CLICK_COMMAND, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND,
@@ -133,10 +134,14 @@ class UsageMonitorForClaude:
 
         self.restart_requested = False
 
+        # Non-default config dirs get a tooltip prefix so multiple
+        # instances (one per Claude account) can be told apart.
+        self._tooltip_prefix = '' if is_default_config_dir() else f'[{effective_config_dir().name}] '
+
         self.icon = pystray.Icon(
             'usage_monitor',
             icon=create_icon_image(0, 0, self._light_taskbar),
-            title=T['loading'],
+            title=self._tooltip_prefix + T['loading'],
             menu=pystray.Menu(
                 pystray.MenuItem(T['menu_show'], self.on_show_popup, default=True),
                 pystray.Menu.SEPARATOR,
@@ -397,7 +402,7 @@ class UsageMonitorForClaude:
                 time_pct_top=time_pct_top, time_pct_bottom=time_pct_bottom,
                 extra_usage_available=extra_usage_available,
             )
-        self.icon.title = format_tooltip(data)
+        self.icon.title = self._tooltip_prefix + format_tooltip(data)
 
     def _on_theme_changed(self) -> None:
         """Re-render the tray icon when the Windows theme changes."""
