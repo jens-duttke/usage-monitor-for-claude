@@ -121,20 +121,33 @@ def _snapshot_to_dict(
     if snap.usage:
         extra_data = snap.usage.get('extra_usage')
         if extra_data and extra_data.get('is_enabled'):
-            limit = extra_data.get('monthly_limit', 0) or 0
-            if limit > 0:
-                used = extra_data.get('used_credits', 0) or 0
-                pct = used / limit * 100
+            used = extra_data.get('used_credits')
+            if used is not None:
+                limit = extra_data.get('monthly_limit', 0) or 0
                 currency = extra_data.get('currency')
                 decimal_places = extra_data.get('decimal_places')
-                extra = {
-                    'pct_text': f'{pct:.0f}%',
-                    'fill_pct': max(0.0, min(1.0, pct / 100)),
-                    'spent_text': T['extra_usage_spent'].format(
-                        used=format_credits(used, currency, decimal_places),
-                        limit=format_credits(limit, currency, decimal_places),
-                    ),
-                }
+                if limit > 0:
+                    pct = used / limit * 100
+                    extra = {
+                        'has_limit': True,
+                        'pct_text': f'{pct:.0f}%',
+                        'fill_pct': max(0.0, min(1.0, pct / 100)),
+                        'spent_text': T['extra_usage_spent'].format(
+                            used=format_credits(used, currency, decimal_places),
+                            limit=format_credits(limit, currency, decimal_places),
+                        ),
+                    }
+                else:
+                    # No monthly cap (e.g. uncapped pay-as-you-go credits) - show
+                    # what has been spent without a percentage bar to imply a limit.
+                    extra = {
+                        'has_limit': False,
+                        'pct_text': '',
+                        'fill_pct': 0.0,
+                        'spent_text': T['extra_usage_spent_no_limit'].format(
+                            used=format_credits(used, currency, decimal_places),
+                        ),
+                    }
 
     # Installations
     if installations is None:

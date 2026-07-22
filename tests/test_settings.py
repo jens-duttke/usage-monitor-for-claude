@@ -1148,6 +1148,71 @@ class TestDynamicThresholdValidation(unittest.TestCase):
         self.assertEqual(result['alert_thresholds_seven_day_cowork'], [50, 80, 95])
 
 
+class TestAlertExtraUsageSpentValidation(unittest.TestCase):
+    """Tests for alert_extra_usage_spent setting validation."""
+
+    def _run_validate(self, data: dict) -> tuple[dict, MagicMock]:
+        """Run _validate with mocked ctypes and return (result, mock_ctypes)."""
+        mock_ctypes = MagicMock()
+        with patch.object(settings_mod, 'ctypes', mock_ctypes):
+            result = settings_mod._validate(dict(data), Path('/fake/settings.json'))
+        return result, mock_ctypes
+
+    def test_valid_amounts_accepted(self):
+        """Valid spend amounts are accepted unchanged."""
+        result, mock = self._run_validate({'alert_extra_usage_spent': [50, 100, 150]})
+        self.assertEqual(result['alert_extra_usage_spent'], [50, 100, 150])
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_amounts_sorted_and_deduped(self):
+        """Spend amounts are sorted and deduplicated."""
+        result, _ = self._run_validate({'alert_extra_usage_spent': [150, 50, 100, 50]})
+        self.assertEqual(result['alert_extra_usage_spent'], [50, 100, 150])
+
+    def test_amounts_above_100_accepted(self):
+        """Unlike percentage thresholds, spend amounts have no upper bound."""
+        result, mock = self._run_validate({'alert_extra_usage_spent': [500, 1000]})
+        self.assertEqual(result['alert_extra_usage_spent'], [500, 1000])
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_fractional_amounts_accepted(self):
+        """Fractional spend amounts are accepted."""
+        result, _ = self._run_validate({'alert_extra_usage_spent': [0.5, 99.99]})
+        self.assertEqual(result['alert_extra_usage_spent'], [0.5, 99.99])
+
+    def test_empty_list_accepted(self):
+        """An empty list (alerts disabled) is accepted."""
+        result, mock = self._run_validate({'alert_extra_usage_spent': []})
+        self.assertEqual(result['alert_extra_usage_spent'], [])
+        mock.windll.user32.MessageBoxW.assert_not_called()
+
+    def test_non_list_dropped(self):
+        """A non-list value is dropped with an error."""
+        result, mock = self._run_validate({'alert_extra_usage_spent': 50})
+        self.assertNotIn('alert_extra_usage_spent', result)
+        mock.windll.user32.MessageBoxW.assert_called_once()
+
+    def test_zero_amount_dropped(self):
+        """A zero amount invalidates the whole list."""
+        result, _ = self._run_validate({'alert_extra_usage_spent': [0, 50]})
+        self.assertNotIn('alert_extra_usage_spent', result)
+
+    def test_negative_amount_dropped(self):
+        """A negative amount invalidates the whole list."""
+        result, _ = self._run_validate({'alert_extra_usage_spent': [-10, 50]})
+        self.assertNotIn('alert_extra_usage_spent', result)
+
+    def test_non_numeric_amount_dropped(self):
+        """A non-numeric amount invalidates the whole list."""
+        result, _ = self._run_validate({'alert_extra_usage_spent': [50, 'high']})
+        self.assertNotIn('alert_extra_usage_spent', result)
+
+    def test_bool_amount_dropped(self):
+        """A boolean amount invalidates the whole list."""
+        result, _ = self._run_validate({'alert_extra_usage_spent': [True, 50]})
+        self.assertNotIn('alert_extra_usage_spent', result)
+
+
 class TestCompactHideValidation(unittest.TestCase):
     """Tests for compact_hide setting validation."""
 

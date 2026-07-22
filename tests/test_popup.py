@@ -391,11 +391,32 @@ class TestSnapshotToDict(unittest.TestCase):
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
         self.assertIsNone(result['extra'])
 
-    def test_extra_usage_zero_limit(self):
-        """Extra is None when monthly limit is zero."""
-        usage = {'extra_usage': {'is_enabled': True, 'monthly_limit': 0, 'used_credits': 0}}
+    def test_extra_usage_enabled_no_used_credits_key(self):
+        """Extra is None when used_credits is absent, even if enabled."""
+        usage = {'extra_usage': {'is_enabled': True, 'monthly_limit': 1000}}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
         self.assertIsNone(result['extra'])
+
+    @patch('usage_monitor_for_claude.popup.format_credits', side_effect=lambda c, *_: f'${c / 100:.2f}')
+    def test_extra_usage_zero_limit_shows_no_cap_variant(self, _mock_credits):
+        """A zero monthly limit shows the no-cap spent text instead of hiding the section."""
+        usage = {'extra_usage': {'is_enabled': True, 'monthly_limit': 0, 'used_credits': 0}}
+        result = _snapshot_to_dict(_snap(usage=usage), installations=[])
+        extra = result['extra']
+        self.assertIsNotNone(extra)
+        self.assertFalse(extra['has_limit'])
+        self.assertEqual(extra['pct_text'], '')
+        self.assertIn('$0.00', extra['spent_text'])
+
+    @patch('usage_monitor_for_claude.popup.format_credits', side_effect=lambda c, *_: f'${c / 100:.2f}')
+    def test_extra_usage_null_limit_shows_no_cap_variant(self, _mock_credits):
+        """A null monthly_limit (uncapped pay-as-you-go credits) shows what has been spent."""
+        usage = {'extra_usage': {'is_enabled': True, 'monthly_limit': None, 'used_credits': 2981}}
+        result = _snapshot_to_dict(_snap(usage=usage), installations=[])
+        extra = result['extra']
+        self.assertIsNotNone(extra)
+        self.assertFalse(extra['has_limit'])
+        self.assertIn('$29.81', extra['spent_text'])
 
     @patch('usage_monitor_for_claude.popup.format_credits', side_effect=lambda c, *_: f'${c / 100:.2f}')
     def test_extra_usage_calculation(self, _mock_credits):
@@ -405,6 +426,7 @@ class TestSnapshotToDict(unittest.TestCase):
 
         extra = result['extra']
         self.assertIsNotNone(extra)
+        self.assertTrue(extra['has_limit'])
         self.assertEqual(extra['pct_text'], '25%')
         self.assertAlmostEqual(extra['fill_pct'], 0.25)
         self.assertIn('$25.00', extra['spent_text'])

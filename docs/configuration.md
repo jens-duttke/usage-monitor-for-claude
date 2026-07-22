@@ -27,6 +27,7 @@ Configure usage percentage thresholds that trigger Windows notifications. Sessio
 | `alert_thresholds_five_hour` | `[50, 80, 95]` | Thresholds (%) for Session (5hr) |
 | `alert_thresholds_seven_day` | `[95]` | Thresholds (%) for Weekly quotas (7 day and all variants) |
 | `alert_thresholds_extra_usage` | `[50, 80, 95]` | Thresholds (%) for Extra Usage (paid overage) |
+| `alert_extra_usage_spent` | `[]` | Absolute Extra Usage spending amounts (in your billing currency, e.g. `[50, 100, 150]` for dollars) that trigger a notification - the only alert that works when extra usage has no monthly limit |
 | `alert_time_aware` | `true` | Only alert when usage outpaces elapsed time |
 | `alert_time_aware_below` | `90` | Time-aware check applies only to thresholds below this value; thresholds at or above always fire |
 

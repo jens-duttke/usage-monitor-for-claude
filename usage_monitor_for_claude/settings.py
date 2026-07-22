@@ -26,7 +26,7 @@ from pathlib import Path
 from .instance_id import effective_config_dir, is_default_config_dir
 
 __all__ = [
-    'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
+    'ALERT_EXTRA_USAGE_SPENT', 'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
     'BAR_BG', 'BAR_DIVIDER', 'BAR_FG', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
     'CLI_COMMAND', 'COMPACT_HIDE', 'CURRENCY_SYMBOL',
     'FG', 'FG_DIM', 'FG_HEADING', 'FG_LINK',
@@ -138,6 +138,18 @@ def _validate(data: dict, path: Path) -> dict:
                 bad = [v for v in value if isinstance(v, bool) or not isinstance(v, (int, float)) or not (1 <= v <= 100)]
                 if bad:
                     errors.append(f'  {key}: all values must be numbers between 1 and 100')
+                    drop.append(key)
+                else:
+                    data[key] = sorted(set(value))
+
+        elif key == 'alert_extra_usage_spent':
+            if not isinstance(value, list):
+                errors.append(f'  {key}: expected an array, got {type(value).__name__}')
+                drop.append(key)
+            else:
+                bad = [v for v in value if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0]
+                if bad:
+                    errors.append(f'  {key}: all values must be numbers greater than 0')
                     drop.append(key)
                 else:
                     data[key] = sorted(set(value))
@@ -401,6 +413,12 @@ _ALERT_THRESHOLDS: dict[str, list[float]] = {
     'seven_day': [95],
     'extra_usage': [50, 80, 95],
 }
+
+# Absolute extra-usage spending amounts (in major currency units, e.g. dollars)
+# that trigger a notification.  Complements the percentage thresholds and is
+# the only alert that can fire when extra usage has no monthly limit.  Empty
+# by default - sensible amounts depend on the account's currency and budget.
+ALERT_EXTRA_USAGE_SPENT: list[float] = _S.get('alert_extra_usage_spent', [])
 
 
 def get_alert_thresholds(variant_key: str) -> list[float]:

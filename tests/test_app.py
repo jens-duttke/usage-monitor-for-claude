@@ -464,6 +464,129 @@ class TestExtraUsageAlerts(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _check_extra_usage_spent_alerts
+# ---------------------------------------------------------------------------
+
+class TestExtraUsageSpentAlerts(unittest.TestCase):
+    """Tests for _check_extra_usage_spent_alerts() notification logic."""
+
+    def setUp(self):
+        self.app = _make_app(thresholds=[])
+        self._cmd_patch = patch('usage_monitor_for_claude.app.run_event_command')
+        self._cmd_patch.start()
+        self._amounts_patch = patch('usage_monitor_for_claude.app.ALERT_EXTRA_USAGE_SPENT', [50, 100, 150])
+        self._amounts_patch.start()
+
+    def tearDown(self):
+        self._amounts_patch.stop()
+        self._cmd_patch.stop()
+        _cleanup(self.app)
+
+    def _extra_data(self, used: float, limit: float | None = None, enabled: bool = True, decimal_places: int | None = 2) -> dict:
+        extra = {'is_enabled': enabled, 'monthly_limit': limit, 'used_credits': used, 'utilization': None}
+        if decimal_places is not None:
+            extra['decimal_places'] = decimal_places
+        return {'extra_usage': extra}
+
+    def test_notification_when_spend_crosses_amount(self):
+        """Notification fires when uncapped spending crosses a configured amount."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=5000))
+
+        self.app.icon.notify.assert_called_once()
+
+    def test_no_notification_below_lowest_amount(self):
+        """No notification while spending is below every configured amount."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=4999))
+
+        self.app.icon.notify.assert_not_called()
+
+    def test_no_duplicate_notification(self):
+        """No notification if the crossed amount was already notified."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=5000))
+        self.app.icon.notify.reset_mock()
+
+        self.app._check_extra_usage_alerts(self._extra_data(used=6000))
+
+        self.app.icon.notify.assert_not_called()
+
+    def test_higher_amount_triggers_new_notification(self):
+        """Crossing a higher configured amount triggers a new notification."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=5000))
+        self.app.icon.notify.reset_mock()
+
+        self.app._check_extra_usage_alerts(self._extra_data(used=10500))
+
+        self.app.icon.notify.assert_called_once()
+
+    def test_re_notification_after_spend_drops(self):
+        """After spending drops (e.g. new billing cycle), amounts re-trigger."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=10500))
+        self.app.icon.notify.reset_mock()
+
+        self.app._check_extra_usage_alerts(self._extra_data(used=1000))
+        self.app.icon.notify.assert_not_called()
+
+        self.app._check_extra_usage_alerts(self._extra_data(used=5500))
+        self.app.icon.notify.assert_called_once()
+
+    def test_notification_includes_spent_amount(self):
+        """Notification message includes the formatted spent amount."""
+        with patch('usage_monitor_for_claude.app.format_credits', side_effect=lambda c, *_: f'${c / 100:.2f}'):
+            self.app._check_extra_usage_alerts(self._extra_data(used=10631))
+
+        args = self.app.icon.notify.call_args[0]
+        self.assertIn('$106.31', args[0])
+
+    def test_fires_alongside_percentage_alerts_when_capped(self):
+        """With a monthly limit, spend amounts and percentage thresholds alert independently."""
+        _cleanup(self.app)
+        self.app = _make_app(thresholds=[80, 95])
+
+        self.app._check_extra_usage_alerts(self._extra_data(used=8200, limit=10000))
+
+        self.assertEqual(self.app.icon.notify.call_count, 2)
+
+    def test_disabled_extra_usage_skipped(self):
+        """No notification when extra usage is disabled."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=10500, enabled=False))
+
+        self.app.icon.notify.assert_not_called()
+
+    def test_no_notification_when_amounts_empty(self):
+        """No notification when no spend amounts are configured (the default)."""
+        with patch('usage_monitor_for_claude.app.ALERT_EXTRA_USAGE_SPENT', []):
+            self.app._check_extra_usage_alerts(self._extra_data(used=10500))
+
+        self.app.icon.notify.assert_not_called()
+
+    def test_decimal_places_respected(self):
+        """Spending is converted to major units using the API's decimal_places."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=50, decimal_places=0))
+
+        self.app.icon.notify.assert_called_once()
+
+    def test_missing_decimal_places_defaults_to_two(self):
+        """Without decimal_places, used_credits is treated as hundredths."""
+        self.app._check_extra_usage_alerts(self._extra_data(used=5000, decimal_places=None))
+
+        self.app.icon.notify.assert_called_once()
+
+    @patch('usage_monitor_for_claude.app.ON_THRESHOLD_COMMAND', ['notify.bat'])
+    def test_threshold_command_omits_utilization(self):
+        """The spend alert's threshold command carries no utilization percentage."""
+        self.app._first_update_done = True
+        with patch('usage_monitor_for_claude.app.run_event_command') as mock_cmd:
+            self.app._check_extra_usage_alerts(self._extra_data(used=5000))
+
+        env = mock_cmd.call_args[0][1]
+        self.assertEqual(env['USAGE_MONITOR_VARIANT'], 'extra_usage_spent')
+        self.assertNotIn('USAGE_MONITOR_UTILIZATION', env)
+        self.assertEqual(env['USAGE_MONITOR_THRESHOLD'], '50')
+        self.assertIn('USAGE_MONITOR_EXTRA_USED', env)
+        self.assertNotIn('USAGE_MONITOR_EXTRA_LIMIT', env)
+
+
+# ---------------------------------------------------------------------------
 # update() orchestration
 # ---------------------------------------------------------------------------
 
@@ -1083,6 +1206,42 @@ class TestRenderTray(unittest.TestCase):
     def test_extra_usage_available_false_when_extra_usage_null(self, mock_icon, _tooltip):
         """extra_usage_available is False when the extra_usage field is explicitly null."""
         self.app._last_response = {'five_hour': {'utilization': 100.0}, 'extra_usage': None}
+        self.app._render_tray()
+
+        self.assertFalse(mock_icon.call_args.kwargs['extra_usage_available'])
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_extra_usage_available_true_when_uncapped(self, mock_icon, _tooltip):
+        """extra_usage_available is True for enabled extra usage with a null monthly_limit (uncapped)."""
+        self.app._last_response = {
+            'five_hour': {'utilization': 100.0},
+            'extra_usage': {'is_enabled': True, 'monthly_limit': None, 'used_credits': 10631.0},
+        }
+        self.app._render_tray()
+
+        self.assertTrue(mock_icon.call_args.kwargs['extra_usage_available'])
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_extra_usage_available_true_when_limit_missing(self, mock_icon, _tooltip):
+        """extra_usage_available is True for enabled extra usage without a monthly_limit key."""
+        self.app._last_response = {
+            'five_hour': {'utilization': 100.0},
+            'extra_usage': {'is_enabled': True, 'used_credits': 500.0},
+        }
+        self.app._render_tray()
+
+        self.assertTrue(mock_icon.call_args.kwargs['extra_usage_available'])
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_extra_usage_available_false_when_uncapped_but_disabled(self, mock_icon, _tooltip):
+        """A null monthly_limit does not make disabled extra usage available."""
+        self.app._last_response = {
+            'five_hour': {'utilization': 100.0},
+            'extra_usage': {'is_enabled': False, 'monthly_limit': None, 'used_credits': 0},
+        }
         self.app._render_tray()
 
         self.assertFalse(mock_icon.call_args.kwargs['extra_usage_available'])
@@ -3061,6 +3220,24 @@ class TestStartupCommand(unittest.TestCase):
         self.assertIn('USAGE_MONITOR_EXTRA_USED', env)
         self.assertIn('USAGE_MONITOR_EXTRA_LIMIT', env)
         self.assertNotIn('USAGE_MONITOR_UTILIZATION_EXTRA_USAGE', env)
+
+    @patch('usage_monitor_for_claude.app.ON_STARTUP_COMMAND', ['echo startup'])
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_extra_usage_env_omits_limit_when_uncapped(self, _icon, _tooltip, mock_cmd):
+        """USAGE_MONITOR_EXTRA_LIMIT is omitted when extra usage has no monthly limit."""
+        data = {
+            'five_hour': {'utilization': 10.0, 'resets_at': '2025-01-15T18:00:00Z'},
+            'extra_usage': {'is_enabled': True, 'used_credits': 8.20, 'monthly_limit': None},
+        }
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        env = mock_cmd.call_args[0][1]
+        self.assertIn('USAGE_MONITOR_EXTRA_USED', env)
+        self.assertNotIn('USAGE_MONITOR_EXTRA_LIMIT', env)
 
     @patch('usage_monitor_for_claude.app.ON_STARTUP_COMMAND', ['echo startup'])
     @patch('usage_monitor_for_claude.app.run_event_command')

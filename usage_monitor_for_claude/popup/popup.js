@@ -51,6 +51,7 @@ function init(config) {
         extraSection: document.getElementById('extraSection'),
         extraSpent: document.getElementById('extraSpent'),
         extraPct: document.getElementById('extraPct'),
+        extraBarContainer: document.getElementById('extraBarContainer'),
         extraFill: document.getElementById('extraFill'),
         installSection: document.getElementById('installSection'),
         installRows: document.getElementById('installRows'),
@@ -184,7 +185,9 @@ function updateData(data) {
     els.extraSection.classList.toggle('visible', extraVisible);
     if (hasExtra) {
         els.extraSpent.textContent = data.extra.spent_text;
+        els.extraPct.style.display = data.extra.has_limit ? '' : 'none';
         els.extraPct.textContent = data.extra.pct_text;
+        els.extraBarContainer.style.display = data.extra.has_limit ? '' : 'none';
         els.extraFill.style.width = `${data.extra.fill_pct * 100}%`;
     }
 

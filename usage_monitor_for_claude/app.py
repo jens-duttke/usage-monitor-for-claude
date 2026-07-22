@@ -26,7 +26,7 @@ from .command import run_event_command
 from .idle import get_idle_seconds, is_workstation_locked
 from .instance_id import effective_config_dir, is_default_config_dir
 from .settings import (
-    ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_PAUSE, NOTIFY_CLAUDE_UPDATE,
+    ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_PAUSE, NOTIFY_CLAUDE_UPDATE,
     ON_DOUBLE_CLICK_COMMAND, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND,
     POLL_ERROR, POLL_FAST, POLL_FAST_EXTRA, POLL_INTERVAL, get_alert_thresholds,
 )
@@ -406,7 +406,9 @@ class UsageMonitorForClaude:
             extra = data.get('extra_usage') or {}
             extra_limit = extra.get('monthly_limit') or 0
             extra_used = extra.get('used_credits') or 0
-            extra_usage_available = bool(extra.get('is_enabled')) and extra_limit > 0 and extra_used < extra_limit
+            # A missing/null monthly_limit means uncapped pay-as-you-go extra
+            # usage, which cannot be exhausted.
+            extra_usage_available = bool(extra.get('is_enabled')) and (extra_limit <= 0 or extra_used < extra_limit)
             self.icon.icon = create_icon_image(
                 pct_top, pct_bottom, self._light_taskbar,
                 mode_top=top_mode, mode_bottom=bottom_mode,
@@ -627,38 +629,65 @@ class UsageMonitorForClaude:
         if not extra or not extra.get('is_enabled'):
             return
 
-        limit = extra.get('monthly_limit', 0) or 0
-        if limit <= 0:
-            return
-
         used = extra.get('used_credits', 0) or 0
-        pct = used / limit * 100
+        currency = extra.get('currency')
+        decimal_places = extra.get('decimal_places')
+        used_text = format_credits(used, currency, decimal_places)
 
-        thresholds = get_alert_thresholds('extra_usage')
-        if not thresholds:
+        limit = extra.get('monthly_limit', 0) or 0
+        if limit > 0:
+            pct = used / limit * 100
+            thresholds = get_alert_thresholds('extra_usage')
+            exceeded = [t for t in thresholds if pct >= t]
+            highest_exceeded = max(exceeded) if exceeded else 0
+            last_notified = self._notified_thresholds.get('extra_usage', 0)
+
+            if highest_exceeded > last_notified:
+                title = T['notify_threshold_title']
+                limit_text = format_credits(limit, currency, decimal_places)
+                message = T['notify_threshold_extra_usage'].format(
+                    pct=f'{pct:.0f}', used=used_text, limit=limit_text,
+                )
+                self._notify_or_defer('threshold_extra_usage', message, title)
+                self._run_threshold_command(
+                    'extra_usage', pct, highest_exceeded, extra, title, message,
+                    extra_used=used_text, extra_limit=limit_text,
+                )
+                self._notified_thresholds['extra_usage'] = highest_exceeded
+            elif highest_exceeded < last_notified:
+                self._notified_thresholds['extra_usage'] = highest_exceeded
+
+        self._check_extra_usage_spent_alerts(extra, used, used_text)
+
+    def _check_extra_usage_spent_alerts(self, extra: dict[str, Any], used: float, used_text: str) -> None:
+        """Show a notification when extra-usage spending crosses a configured amount.
+
+        Amounts in ``ALERT_EXTRA_USAGE_SPENT`` are absolute major-unit values
+        (e.g. dollars), so they also work for accounts whose extra usage has
+        no monthly limit and can never produce a percentage.
+        """
+        if not ALERT_EXTRA_USAGE_SPENT:
             return
 
-        exceeded = [t for t in thresholds if pct >= t]
+        decimal_places = extra.get('decimal_places')
+        places = decimal_places if decimal_places is not None else 2
+        spent = used / (10 ** places)
+
+        exceeded = [amount for amount in ALERT_EXTRA_USAGE_SPENT if spent >= amount]
         highest_exceeded = max(exceeded) if exceeded else 0
-        last_notified = self._notified_thresholds.get('extra_usage', 0)
+        last_notified = self._notified_thresholds.get('extra_usage_spent', 0)
 
         if highest_exceeded > last_notified:
             title = T['notify_threshold_title']
-            currency = extra.get('currency')
-            decimal_places = extra.get('decimal_places')
-            used_text = format_credits(used, currency, decimal_places)
-            limit_text = format_credits(limit, currency, decimal_places)
-            message = T['notify_threshold_extra_usage'].format(
-                pct=f'{pct:.0f}', used=used_text, limit=limit_text,
-            )
-            self._notify_or_defer('threshold_extra_usage', message, title)
+            message = T['notify_threshold_extra_usage_spent'].format(used=used_text)
+            self._notify_or_defer('threshold_extra_usage_spent', message, title)
             self._run_threshold_command(
-                'extra_usage', pct, highest_exceeded, extra, title, message,
-                extra_used=used_text, extra_limit=limit_text,
+                'extra_usage_spent', None, highest_exceeded, extra, title, message,
+                extra_used=used_text,
             )
-            self._notified_thresholds['extra_usage'] = highest_exceeded
+            self._notified_thresholds['extra_usage_spent'] = highest_exceeded
         elif highest_exceeded < last_notified:
-            self._notified_thresholds['extra_usage'] = highest_exceeded
+            self._notified_thresholds['extra_usage_spent'] = highest_exceeded
 
     # Event commands
 
@@ -667,8 +696,10 @@ class UsageMonitorForClaude:
 
         Emits one ``USAGE_MONITOR_UTILIZATION_<FIELD>`` /
         ``USAGE_MONITOR_RESETS_AT_<FIELD>`` pair per detected quota field, plus
-        ``USAGE_MONITOR_EXTRA_USED`` / ``USAGE_MONITOR_EXTRA_LIMIT`` when paid
-        extra usage is enabled.  Shared by the startup and double-click commands.
+        ``USAGE_MONITOR_EXTRA_USED`` when paid extra usage is enabled and
+        ``USAGE_MONITOR_EXTRA_LIMIT`` when it also has a monthly limit (an
+        uncapped account has no limit to report).  Shared by the startup and
+        double-click commands.
         """
         env_vars: dict[str, str] = {}
         for key, entry in data.items():
@@ -684,7 +715,8 @@ class UsageMonitorForClaude:
             currency = extra.get('currency')
             decimal_places = extra.get('decimal_places')
             env_vars['USAGE_MONITOR_EXTRA_USED'] = format_credits(used, currency, decimal_places)
-            env_vars['USAGE_MONITOR_EXTRA_LIMIT'] = format_credits(limit, currency, decimal_places)
+            if limit > 0:
+                env_vars['USAGE_MONITOR_EXTRA_LIMIT'] = format_credits(limit, currency, decimal_places)
 
         return env_vars
 
@@ -739,7 +771,7 @@ class UsageMonitorForClaude:
         })
 
     def _run_threshold_command(
-        self, variant: str, pct: float, threshold: float,
+        self, variant: str, pct: float | None, threshold: float,
         entry: dict[str, Any], title: str, message: str,
         *, extra_used: str = '', extra_limit: str = '',
     ) -> None:
@@ -749,6 +781,10 @@ class UsageMonitorForClaude:
         so that already-exceeded thresholds at app startup do not trigger
         commands.  Notifications still fire - commands react to *events*,
         not *state*.
+
+        ``pct`` is None for spend-amount alerts, which have no utilization
+        percentage; ``USAGE_MONITOR_UTILIZATION`` is omitted from the
+        environment in that case.
         """
         if not ON_THRESHOLD_COMMAND or not self._first_update_done:
             return
@@ -756,12 +792,15 @@ class UsageMonitorForClaude:
         env_vars = {
             'USAGE_MONITOR_EVENT': 'threshold',
             'USAGE_MONITOR_VARIANT': variant,
-            'USAGE_MONITOR_UTILIZATION': str(round(pct)),
+        }
+        if pct is not None:
+            env_vars['USAGE_MONITOR_UTILIZATION'] = str(round(pct))
+        env_vars.update({
             'USAGE_MONITOR_THRESHOLD': str(round(threshold)),
             'USAGE_MONITOR_RESETS_AT': entry.get('resets_at', ''),
             'USAGE_MONITOR_TITLE': title,
             'USAGE_MONITOR_MESSAGE': message,
-        }
+        })
         if extra_used:
             env_vars['USAGE_MONITOR_EXTRA_USED'] = extra_used
         if extra_limit:
