@@ -637,6 +637,44 @@ class TestCreateIconImageTimeMarker(unittest.TestCase):
             self.assertEqual(pixels[5, mid_y], fg_warn, f'Expected warn fill pixel at x=5, y={mid_y}')
 
 
+class TestCreateIconImageGradientFill(unittest.TestCase):
+    """Tests for create_icon_image() with BAR_GRADIENT_FILL enabled."""
+
+    def setUp(self):
+        tray_icon_mod.load_font.cache_clear()
+        patcher = patch('usage_monitor_for_claude.tray_icon.BAR_GRADIENT_FILL', True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        tray_icon_mod.load_font.cache_clear()
+
+    @staticmethod
+    def _bar_mid_rows():
+        bar2_y = tray_icon_mod.ICON_SIZE - tray_icon_mod.BAR_HEIGHT
+        bar1_y = bar2_y - tray_icon_mod.BAR_GAP - tray_icon_mod.BAR_HEIGHT
+        return (bar1_y + tray_icon_mod.BAR_HEIGHT // 2, bar2_y + tray_icon_mod.BAR_HEIGHT // 2)
+
+    def test_fill_uses_gradient_between_fg_and_fg_warn(self):
+        """With the setting enabled, the fill fades from fg to fg_warn instead of switching abruptly."""
+        img = tray_icon_mod.create_icon_image(100, 100, time_pct_top=100, time_pct_bottom=100)
+
+        fg, fg_warn = tray_icon_mod.ICON_LIGHT['fg'], tray_icon_mod.ICON_LIGHT['fg_warn']
+        pixels = img.load()
+        for mid_y in self._bar_mid_rows():
+            self.assertEqual(pixels[5, mid_y], tray_icon_mod._gradient_color(5, fg, fg_warn), f'Expected gradient fill pixel at x=5, y={mid_y}')
+
+    def test_overage_mode_also_uses_gradient(self):
+        """Overage mode's fill also fades from fg to fg_warn when the setting is enabled."""
+        img = tray_icon_mod.create_icon_image(80, 80, mode_top='overage', mode_bottom='overage', time_pct_top=50, time_pct_bottom=50)
+
+        fg, fg_warn = tray_icon_mod.ICON_LIGHT['fg'], tray_icon_mod.ICON_LIGHT['fg_warn']
+        pixels = img.load()
+        for mid_y in self._bar_mid_rows():
+            for x in range(30, 34):
+                self.assertEqual(pixels[x, mid_y], tray_icon_mod._gradient_color(x, fg, fg_warn), f'Expected gradient fill pixel at x={x}, y={mid_y}')
+
+
 class TestCreateStatusImage(unittest.TestCase):
     """Tests for create_status_image()."""
 
@@ -667,6 +705,94 @@ class TestCreateStatusImage(unittest.TestCase):
         img = tray_icon_mod.create_status_image('!', light_taskbar=True)
 
         self.assertEqual(img.size, (64, 64))
+
+
+class TestDrawStatusDot(unittest.TestCase):
+    """Tests for draw_status_dot()."""
+
+    def _blank_image(self):
+        return Image.new('RGBA', (tray_icon_mod.ICON_SIZE, tray_icon_mod.ICON_SIZE), tray_icon_mod.TRANSPARENT)
+
+    def _center(self):
+        outer_r = tray_icon_mod.STATUS_DOT_RADIUS + tray_icon_mod.STATUS_DOT_RING_WIDTH
+        c = tray_icon_mod.ICON_SIZE - 1 - outer_r
+        return c, c
+
+    def test_none_indicator_draws_green_dot(self):
+        """'none' indicator draws the green dot color at the center."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'none')
+
+        cx, cy = self._center()
+        self.assertEqual(img.load()[cx, cy], tray_icon_mod.STATUS_DOT_COLORS['none'])
+
+    def test_minor_indicator_draws_orange_dot(self):
+        """'minor' indicator draws the orange dot color at the center."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'minor')
+
+        cx, cy = self._center()
+        self.assertEqual(img.load()[cx, cy], tray_icon_mod.STATUS_DOT_COLORS['minor'])
+
+    def test_major_indicator_draws_red_dot(self):
+        """'major' indicator draws the red dot color at the center."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'major')
+
+        cx, cy = self._center()
+        self.assertEqual(img.load()[cx, cy], tray_icon_mod.STATUS_DOT_COLORS['major'])
+
+    def test_critical_indicator_draws_red_dot(self):
+        """'critical' indicator draws the same red as 'major'."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'critical')
+
+        cx, cy = self._center()
+        self.assertEqual(img.load()[cx, cy], tray_icon_mod.STATUS_DOT_COLORS['critical'])
+        self.assertEqual(tray_icon_mod.STATUS_DOT_COLORS['critical'], tray_icon_mod.STATUS_DOT_COLORS['major'])
+
+    def test_none_value_draws_gray_dot(self):
+        """indicator=None (status API unreachable or not yet fetched) draws gray."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, None)
+
+        cx, cy = self._center()
+        self.assertEqual(img.load()[cx, cy], tray_icon_mod.STATUS_DOT_COLOR_UNKNOWN)
+
+    def test_unrecognized_indicator_draws_gray_dot(self):
+        """Any unrecognized indicator string falls back to gray."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'some_future_value')
+
+        cx, cy = self._center()
+        self.assertEqual(img.load()[cx, cy], tray_icon_mod.STATUS_DOT_COLOR_UNKNOWN)
+
+    def test_ring_uses_dark_taskbar_contrast_color(self):
+        """Default (dark taskbar) draws the ring in white."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'none', light_taskbar=False)
+
+        cx, cy = self._center()
+        ring_pixel = img.load()[cx, cy - tray_icon_mod.STATUS_DOT_RADIUS - 1]
+        self.assertEqual(ring_pixel, tray_icon_mod.ICON_LIGHT['fg'])
+
+    def test_ring_uses_light_taskbar_contrast_color(self):
+        """light_taskbar=True draws the ring in black."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'none', light_taskbar=True)
+
+        cx, cy = self._center()
+        ring_pixel = img.load()[cx, cy - tray_icon_mod.STATUS_DOT_RADIUS - 1]
+        self.assertEqual(ring_pixel, tray_icon_mod.ICON_DARK['fg'])
+
+    def test_dot_sits_in_bottom_right_corner(self):
+        """The dot overlay does not touch pixels away from the bottom-right corner."""
+        img = self._blank_image()
+        tray_icon_mod.draw_status_dot(img, 'major')
+
+        self.assertEqual(img.load()[0, 0], tray_icon_mod.TRANSPARENT)
+        self.assertEqual(img.load()[0, tray_icon_mod.ICON_SIZE - 1], tray_icon_mod.TRANSPARENT)
+        self.assertEqual(img.load()[tray_icon_mod.ICON_SIZE - 1, 0], tray_icon_mod.TRANSPARENT)
 
 
 if __name__ == '__main__':

@@ -409,27 +409,41 @@ def format_credits(minor_units: float, currency: str | None = None, decimal_plac
         return f'{amount:.{places}f}'
 
 
-def format_tooltip(data: dict[str, Any]) -> str:
-    """Format usage data as short tooltip text."""
+def format_tooltip(data: dict[str, Any], status_description: str | None = None) -> str:
+    """Format usage data as short tooltip text.
+
+    Parameters
+    ----------
+    data : dict
+        Usage API response, or an ``'error'`` dict.
+    status_description : str or None
+        Claude system-status description to append as an extra line, or
+        None to omit it.
+    """
     if 'error' in data:
         if data.get('auth_error'):
-            return f"{T['auth_expired_label']}\n{T['auth_expired_short']}"
-        error = data['error']
-        server_msg = data.get('server_message')
-        if server_msg:
-            error += f' {server_msg}'
-        return f"{T['error_label']}\n{error[:80]}"
+            text = f"{T['auth_expired_label']}\n{T['auth_expired_short']}"
+        else:
+            error = data['error']
+            server_msg = data.get('server_message')
+            if server_msg:
+                error += f' {server_msg}'
+            text = f"{T['error_label']}\n{error[:80]}"
+    else:
+        lines = [T['tooltip_title']]
+        for key in TOOLTIP_FIELDS:
+            entry = data.get(key)
+            if isinstance(entry, dict) and entry.get('utilization') is not None:
+                short = tooltip_label(key)
+                pct = f"{entry['utilization']:.0f}%"
+                reset = time_until(entry.get('resets_at', ''))
+                line = f'{short}: {pct}'
+                if reset:
+                    line += f' ({reset})'
+                lines.append(line)
+        text = '\n'.join(lines)
 
-    lines = [T['tooltip_title']]
-    for key in TOOLTIP_FIELDS:
-        entry = data.get(key)
-        if isinstance(entry, dict) and entry.get('utilization') is not None:
-            short = tooltip_label(key)
-            pct = f"{entry['utilization']:.0f}%"
-            reset = time_until(entry.get('resets_at', ''))
-            line = f'{short}: {pct}'
-            if reset:
-                line += f' ({reset})'
-            lines.append(line)
+    if status_description:
+        text += f'\n{status_description[:80]}'
 
-    return '\n'.join(lines)
+    return text

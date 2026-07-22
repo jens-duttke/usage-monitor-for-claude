@@ -1248,6 +1248,175 @@ class TestRenderTray(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _render_tray - service status dot and tooltip
+# ---------------------------------------------------------------------------
+
+class TestRenderTrayServiceStatus(unittest.TestCase):
+    """Tests for _render_tray() overlaying the service status dot and tooltip line."""
+
+    def setUp(self):
+        self.app = _make_app()
+
+    def tearDown(self):
+        _cleanup(self.app)
+
+    @patch('usage_monitor_for_claude.app.draw_status_dot')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_unknown_status_draws_none_indicator(self, mock_icon, _tooltip, mock_dot):
+        """Before the status API has ever responded, the dot indicator is None (gray)."""
+        self.app._last_response = {'five_hour': {'utilization': 42.0}}
+        self.app._render_tray()
+
+        mock_dot.assert_called_once_with(mock_icon.return_value, None, False)
+
+    @patch('usage_monitor_for_claude.app.draw_status_dot')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_known_status_draws_matching_indicator(self, mock_icon, _tooltip, mock_dot):
+        """The dot indicator matches the last fetched service status."""
+        self.app._service_status = {'indicator': 'major', 'description': 'Major System Outage'}
+        self.app._last_response = {'five_hour': {'utilization': 42.0}}
+        self.app._render_tray()
+
+        mock_dot.assert_called_once_with(mock_icon.return_value, 'major', False)
+
+    @patch('usage_monitor_for_claude.app.draw_status_dot')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_status_description_passed_to_tooltip(self, _mock_icon, _mock_dot):
+        """The service status description is forwarded to format_tooltip()."""
+        self.app._service_status = {'indicator': 'none', 'description': 'All Systems Operational'}
+        self.app._last_response = {'five_hour': {'utilization': 42.0}}
+        with patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip') as mock_tooltip:
+            self.app._render_tray()
+
+        mock_tooltip.assert_called_once_with(self.app._last_response, 'All Systems Operational')
+
+    @patch('usage_monitor_for_claude.app.draw_status_dot')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_no_status_passes_none_description(self, _mock_icon, _mock_dot):
+        """Before the status API has ever responded, format_tooltip() gets None."""
+        self.app._last_response = {'five_hour': {'utilization': 42.0}}
+        with patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip') as mock_tooltip:
+            self.app._render_tray()
+
+        mock_tooltip.assert_called_once_with(self.app._last_response, None)
+
+    @patch('usage_monitor_for_claude.app.draw_status_dot')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_status_image')
+    def test_status_dot_drawn_on_error_icon_too(self, mock_status, _tooltip, mock_dot):
+        """The status dot is overlaid even when the tray shows an error icon."""
+        self.app._service_status = {'indicator': 'critical', 'description': 'Critical System Outage'}
+        self.app._last_response = {'error': 'server down'}
+        self.app._render_tray()
+
+        mock_dot.assert_called_once_with(mock_status.return_value, 'critical', False)
+
+
+# ---------------------------------------------------------------------------
+# _service_status_loop
+# ---------------------------------------------------------------------------
+
+class TestServiceStatusLoop(unittest.TestCase):
+    """Tests for _service_status_loop() polling and re-rendering on indicator change."""
+
+    def setUp(self):
+        self.app = _make_app()
+
+    def tearDown(self):
+        _cleanup(self.app)
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.fetch_service_status')
+    def test_stores_fetched_status(self, mock_fetch, _mock_sleep):
+        """Each iteration stores the freshly fetched status."""
+        mock_fetch.return_value = {'indicator': 'minor', 'description': 'Partial System Outage'}
+
+        def stop(*args, **kwargs):
+            self.app.running = False
+
+        with patch.object(self.app, '_render_tray', side_effect=stop):
+            self.app._service_status_loop()
+
+        self.assertEqual(self.app._service_status, {'indicator': 'minor', 'description': 'Partial System Outage'})
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.fetch_service_status')
+    def test_renders_when_indicator_changes(self, mock_fetch, _mock_sleep):
+        """A changed indicator triggers an immediate tray re-render."""
+        mock_fetch.return_value = {'indicator': 'major', 'description': 'Major System Outage'}
+        self.app._service_status = {'indicator': 'none', 'description': 'All Systems Operational'}
+
+        call_count = [0]
+
+        def stop(*args, **kwargs):
+            call_count[0] += 1
+            self.app.running = False
+
+        with patch.object(self.app, '_render_tray', side_effect=stop) as mock_render:
+            self.app._service_status_loop()
+
+        mock_render.assert_called_once()
+        self.assertEqual(call_count[0], 1)
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.fetch_service_status')
+    def test_no_render_when_indicator_unchanged(self, mock_fetch, mock_sleep):
+        """An unchanged indicator does not trigger a re-render."""
+        mock_fetch.return_value = {'indicator': 'none', 'description': 'All Systems Operational'}
+        self.app._service_status = {'indicator': 'none', 'description': 'All Systems Operational'}
+
+        def stop(*args, **kwargs):
+            self.app.running = False
+
+        mock_sleep.side_effect = stop
+
+        with patch.object(self.app, '_render_tray') as mock_render:
+            self.app._service_status_loop()
+
+        mock_render.assert_not_called()
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.fetch_service_status', return_value=None)
+    def test_unreachable_status_renders_once_from_unknown(self, _mock_fetch, _mock_sleep):
+        """Transitioning from an already-known status to unreachable (None) re-renders once."""
+        self.app._service_status = {'indicator': 'none', 'description': 'All Systems Operational'}
+
+        def stop(*args, **kwargs):
+            self.app.running = False
+
+        with patch.object(self.app, '_render_tray', side_effect=stop) as mock_render:
+            self.app._service_status_loop()
+
+        mock_render.assert_called_once()
+        self.assertIsNone(self.app._service_status)
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.fetch_service_status', return_value=None)
+    def test_unreachable_from_start_does_not_render(self, _mock_fetch, mock_sleep):
+        """Staying unreachable (None -> None) does not trigger a re-render."""
+
+        def stop(*args, **kwargs):
+            self.app.running = False
+
+        mock_sleep.side_effect = stop
+
+        with patch.object(self.app, '_render_tray') as mock_render:
+            self.app._service_status_loop()
+
+        mock_render.assert_not_called()
+
+    def test_stops_when_running_false(self):
+        """The loop exits immediately if the app is already stopped."""
+        self.app.running = False
+        with patch('usage_monitor_for_claude.app.fetch_service_status') as mock_fetch:
+            self.app._service_status_loop()
+
+        mock_fetch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # _on_theme_changed
 # ---------------------------------------------------------------------------
 

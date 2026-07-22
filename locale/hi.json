@@ -60,6 +60,8 @@
     "changelog": "Changelog",
     "pin_popup": "पॉपअप पिन करें",
     "unpin_popup": "पॉपअप अनपिन करें",
+    "service_status": "सेवा स्थिति",
+    "status_page": "स्थिति पेज",
     "notify_update_title": "Claude Code अपडेट हुआ",
     "notify_update": "Claude Code {old} से {new} में अपडेट हुआ।",
     "server_error": "Anthropic API अस्थायी रूप से अनुपलब्ध है (HTTP {code})।",

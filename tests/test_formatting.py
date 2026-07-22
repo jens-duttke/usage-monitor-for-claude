@@ -881,6 +881,37 @@ class TestFormatTooltip(unittest.TestCase):
         }
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 50%')
 
+    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
+    def test_status_description_appended(self, _mock_tu):
+        """A given status_description is appended as an extra line."""
+        data = {'five_hour': {'utilization': 42.0, 'resets_at': ''}}
+        result = format_tooltip(data, 'All Systems Operational')
+        self.assertEqual(result, 'Claude Usage\n5h: 42%\nAll Systems Operational')
+
+    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
+    def test_status_description_none_omitted(self, _mock_tu):
+        """status_description=None (the default) does not add an extra line."""
+        data = {'five_hour': {'utilization': 42.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data, None), 'Claude Usage\n5h: 42%')
+
+    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
+    def test_status_description_empty_string_omitted(self, _mock_tu):
+        """An empty status_description does not add an extra (blank) line."""
+        data = {'five_hour': {'utilization': 42.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data, ''), 'Claude Usage\n5h: 42%')
+
+    def test_status_description_appended_on_error(self):
+        """status_description is appended even when the tooltip shows an error."""
+        result = format_tooltip({'error': 'Connection failed'}, 'All Systems Operational')
+        self.assertEqual(result, 'Usage Monitor: Error\nConnection failed\nAll Systems Operational')
+
+    def test_status_description_truncated_to_80_chars(self):
+        """A very long status_description is truncated to 80 characters."""
+        data = {}
+        result = format_tooltip(data, 'x' * 200)
+        status_line = result.split('\n')[1]
+        self.assertEqual(len(status_line), 80)
+
 
 # ---------------------------------------------------------------------------
 # tooltip length - Windows limits tooltip text to 127 characters

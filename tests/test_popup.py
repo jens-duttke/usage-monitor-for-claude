@@ -3,7 +3,7 @@ Popup Tests
 =============
 
 Unit tests for popup data helpers: _usage_entries, _snapshot_to_dict,
-and _init_config.
+_init_config, and _PopupApi.
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.cache import CacheSnapshot
 from usage_monitor_for_claude.popup import (
-    UsagePopup, _BASELINE_DPI, _MONITORINFO, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER,
-    _init_config, _snapshot_to_dict, _usage_entries,
+    UsagePopup, _BASELINE_DPI, _MONITORINFO, _PopupApi, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER,
+    _apply_dwm_styling, _init_config, _snapshot_to_dict, _usage_entries,
 )
 
 
@@ -509,9 +509,49 @@ class TestSnapshotToDict(unittest.TestCase):
     # -- top-level dict structure --
 
     def test_all_top_level_keys_present(self):
-        """Result always has profile, usage, extra, installations, status."""
+        """Result always has profile, usage, extra, installations, status, service_status."""
         result = _snapshot_to_dict(_snap(), installations=[])
-        self.assertEqual(set(result.keys()), {'profile', 'usage', 'extra', 'installations', 'status'})
+        self.assertEqual(set(result.keys()), {'profile', 'usage', 'extra', 'installations', 'status', 'service_status'})
+
+    # -- service status --
+
+    def test_no_service_status(self):
+        """service_status is None when not provided (not yet fetched)."""
+        result = _snapshot_to_dict(_snap(), installations=[])
+        self.assertIsNone(result['service_status'])
+
+    def test_service_status_operational(self):
+        """A 'none' indicator maps to the green color and passes the description through."""
+        result = _snapshot_to_dict(
+            _snap(), installations=[],
+            service_status={'indicator': 'none', 'description': 'All Systems Operational'},
+        )
+        self.assertEqual(result['service_status'], {'description': 'All Systems Operational', 'color': '#30a45c'})
+
+    def test_service_status_minor(self):
+        """A 'minor' indicator maps to the orange color."""
+        result = _snapshot_to_dict(
+            _snap(), installations=[],
+            service_status={'indicator': 'minor', 'description': 'Partial System Outage'},
+        )
+        self.assertEqual(result['service_status']['color'], '#e89a1e')
+
+    def test_service_status_major_and_critical_share_color(self):
+        """Both 'major' and 'critical' indicators map to the same red color."""
+        major = _snapshot_to_dict(_snap(), installations=[], service_status={'indicator': 'major', 'description': 'Major'})
+        critical = _snapshot_to_dict(_snap(), installations=[], service_status={'indicator': 'critical', 'description': 'Critical'})
+        self.assertEqual(major['service_status']['color'], '#d93a3a')
+        self.assertEqual(critical['service_status']['color'], '#d93a3a')
+
+    def test_service_status_unknown_indicator_uses_gray(self):
+        """An unrecognized indicator falls back to the gray 'unknown' color."""
+        result = _snapshot_to_dict(_snap(), installations=[], service_status={'indicator': 'weird', 'description': 'x'})
+        self.assertEqual(result['service_status']['color'], '#888888')
+
+    def test_service_status_missing_description_defaults_to_empty_string(self):
+        """A missing description key defaults to an empty string, not None."""
+        result = _snapshot_to_dict(_snap(), installations=[], service_status={'indicator': 'none'})
+        self.assertEqual(result['service_status']['description'], '')
 
 
 # ---------------------------------------------------------------------------
@@ -522,15 +562,22 @@ class TestInitConfig(unittest.TestCase):
     """Tests for _init_config - builds the JS init() config object."""
 
     def test_top_level_keys(self):
-        """Config has colors, t (translations), app_version, compact_hide, and data."""
+        """Config has colors, t (translations), app_version, compact_hide, bar_gradient_fill, and data."""
         config = _init_config(_snap())
-        self.assertEqual(set(config.keys()), {'colors', 't', 'app_version', 'compact_hide', 'data'})
+        self.assertEqual(set(config.keys()), {'colors', 't', 'app_version', 'compact_hide', 'bar_gradient_fill', 'data'})
 
     @patch('usage_monitor_for_claude.popup.COMPACT_HIDE', ['account', 'seven_day_opus'])
     def test_compact_hide_from_settings(self):
         """compact_hide is taken from the COMPACT_HIDE setting."""
         config = _init_config(_snap())
         self.assertEqual(config['compact_hide'], ['account', 'seven_day_opus'])
+
+    def test_bar_gradient_fill_from_settings(self):
+        """bar_gradient_fill matches the BAR_GRADIENT_FILL setting."""
+        from usage_monitor_for_claude.settings import BAR_GRADIENT_FILL
+
+        config = _init_config(_snap())
+        self.assertEqual(config['bar_gradient_fill'], BAR_GRADIENT_FILL)
 
     def test_colors_from_settings(self):
         """Color values come from settings module constants."""
@@ -565,6 +612,8 @@ class TestInitConfig(unittest.TestCase):
         self.assertEqual(t['changelog'], T['changelog'])
         self.assertEqual(t['pin_popup'], T['pin_popup'])
         self.assertEqual(t['unpin_popup'], T['unpin_popup'])
+        self.assertEqual(t['service_status'], T['service_status'])
+        self.assertEqual(t['status_page'], T['status_page'])
         self.assertEqual(t['status_updated_s'], T['status_updated_s'])
         self.assertEqual(t['status_updated'], T['status_updated'])
         self.assertEqual(t['status_refreshing'], T['status_refreshing'])
@@ -585,7 +634,40 @@ class TestInitConfig(unittest.TestCase):
         snap = _snap(profile={'account': {'email': 'a@b.com'}, 'organization': {}})
         config = _init_config(snap)
         self.assertEqual(config['data']['profile']['email'], 'a@b.com')
-        self.assertEqual(set(config['data'].keys()), {'profile', 'usage', 'extra', 'installations', 'status'})
+        self.assertEqual(set(config['data'].keys()), {'profile', 'usage', 'extra', 'installations', 'status', 'service_status'})
+
+    def test_service_status_passed_through(self):
+        """service_status is forwarded into the snapshot data."""
+        config = _init_config(_snap(), service_status={'indicator': 'minor', 'description': 'Partial System Outage'})
+        self.assertEqual(config['data']['service_status'], {'description': 'Partial System Outage', 'color': '#e89a1e'})
+
+
+# ---------------------------------------------------------------------------
+# _PopupApi
+# ---------------------------------------------------------------------------
+
+class TestPopupApi(unittest.TestCase):
+    """Tests for _PopupApi - methods exposed to JavaScript via the JS bridge."""
+
+    def test_open_status_page_opens_status_page_url(self):
+        """open_status_page() opens the public Claude status page, not the JSON API endpoint."""
+        from usage_monitor_for_claude.service_status import STATUS_PAGE_URL
+
+        api = _PopupApi(MagicMock())
+        with patch('usage_monitor_for_claude.popup.webbrowser.open') as mock_open:
+            api.open_status_page()
+
+        mock_open.assert_called_once_with(STATUS_PAGE_URL)
+
+    def test_open_url_opens_changelog_url(self):
+        """open_url() opens the changelog URL."""
+        from usage_monitor_for_claude.claude_cli import CHANGELOG_URL
+
+        api = _PopupApi(MagicMock())
+        with patch('usage_monitor_for_claude.popup.webbrowser.open') as mock_open:
+            api.open_url()
+
+        mock_open.assert_called_once_with(CHANGELOG_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -1213,6 +1295,45 @@ class TestResizeAndPosition(unittest.TestCase):
 
         mock_window.resize.assert_called_once_with(340, 500)
         mock_window.move.assert_not_called()
+
+
+class TestApplyDwmStyling(unittest.TestCase):
+    """Tests for _apply_dwm_styling - DWM shadow and Windows-11-only rounded corners."""
+
+    def test_shadow_applied_on_windows_10(self):
+        """DwmExtendFrameIntoClientArea runs on Windows 10, corner preference does not."""
+        mock_version = MagicMock(build=19045)  # Windows 10 22H2
+
+        with patch('usage_monitor_for_claude.popup.sys.getwindowsversion', return_value=mock_version), \
+             patch('ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea') as mock_shadow, \
+             patch('ctypes.windll.dwmapi.DwmSetWindowAttribute') as mock_corner:
+            _apply_dwm_styling(12345)
+
+        mock_shadow.assert_called_once()
+        mock_corner.assert_not_called()
+
+    def test_shadow_and_rounded_corners_applied_on_windows_11(self):
+        """Both DwmExtendFrameIntoClientArea and the corner preference run on Windows 11."""
+        mock_version = MagicMock(build=22621)  # Windows 11 22H2
+
+        with patch('usage_monitor_for_claude.popup.sys.getwindowsversion', return_value=mock_version), \
+             patch('ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea') as mock_shadow, \
+             patch('ctypes.windll.dwmapi.DwmSetWindowAttribute') as mock_corner:
+            _apply_dwm_styling(12345)
+
+        mock_shadow.assert_called_once()
+        mock_corner.assert_called_once()
+
+    def test_build_exactly_at_windows_11_threshold_applies_rounded_corners(self):
+        """The first Windows 11 build number (22000) is treated as Windows 11."""
+        mock_version = MagicMock(build=22000)
+
+        with patch('usage_monitor_for_claude.popup.sys.getwindowsversion', return_value=mock_version), \
+             patch('ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea'), \
+             patch('ctypes.windll.dwmapi.DwmSetWindowAttribute') as mock_corner:
+            _apply_dwm_styling(12345)
+
+        mock_corner.assert_called_once()
 
 
 if __name__ == '__main__':

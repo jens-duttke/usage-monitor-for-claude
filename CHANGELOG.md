@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Extra usage without a monthly limit (uncapped pay-as-you-go overage, the usual state for Team and Enterprise plans) now appears in the popup as the amount spent - previously the Extra Usage section stayed hidden unless a monthly limit was configured, silently hiding real spending (thanks to [@joeklittle](https://github.com/joeklittle) for the contribution)
 - New `alert_extra_usage_spent` setting - absolute spending amounts in your billing currency (e.g. `[50, 100, 150]`) that trigger a notification when extra-usage spending crosses them; complements the percentage thresholds and is the only alert that can fire for uncapped extra usage, where no percentage exists (thanks to [@joeklittle](https://github.com/joeklittle) for the contribution)
+- Tray icon now shows a small colored status dot in the bottom-right corner reflecting the live Claude system status (green: operational, orange: minor incident, red: major/critical incident, gray: status service unreachable), refreshed every 60 seconds; the tooltip also shows the current status description below the usage lines
+- Detail popup now includes a Service Status section with a colored dot and description matching the tray icon, plus a link that opens status.claude.com
+- New `bar_gradient_fill` setting (off by default) fades the tray icon and popup usage-bar fill between the normal and warning colors instead of switching abruptly, so how close you are to the warning threshold is visible at a glance
+- Detail popup now follows the Windows light/dark app theme automatically instead of always using the dark palette
+- Detail popup window now has softly rounded corners and a native drop shadow on Windows 11
 
 ### Fixed
 

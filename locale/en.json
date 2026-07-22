@@ -52,6 +52,8 @@
     "changelog": "Changelog",
     "pin_popup": "Pin popup",
     "unpin_popup": "Unpin popup",
+    "service_status": "SERVICE STATUS",
+    "status_page": "Status Page",
     "notify_update_title": "Claude Code Updated",
     "notify_update": "Claude Code updated from {old} to {new}.",
     "server_error": "Anthropic API temporarily unavailable (HTTP {code}).",

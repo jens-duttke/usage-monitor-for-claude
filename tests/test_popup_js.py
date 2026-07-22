@@ -28,7 +28,7 @@ class StubElement {
         this.className = '';
         this.textContent = '';
         this.title = '';
-        this.style = {};
+        this.style = { setProperty(prop, value) { this[prop] = value; } };
         this.dataset = {};
         this.children = [];
         this.parentNode = null;

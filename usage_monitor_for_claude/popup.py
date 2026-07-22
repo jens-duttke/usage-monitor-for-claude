@@ -11,6 +11,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import json
+import sys
 import threading
 import time
 import webbrowser
@@ -23,7 +24,8 @@ from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
 from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
 from .i18n import T
-from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
+from .service_status import STATUS_PAGE_URL
+from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_GRADIENT_FILL, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 _BASELINE_DPI = 96
@@ -36,6 +38,9 @@ _SWP_NOSIZE = 0x0001
 _SWP_NOZORDER = 0x0004
 _SWP_NOACTIVATE = 0x0010
 _WM_QUIT = 0x0012
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWCP_ROUND = 2
+_WINDOWS_11_BUILD = 22000  # first public Windows 11 build number
 
 
 class _MONITORINFO(ctypes.Structure):
@@ -47,7 +52,40 @@ class _MONITORINFO(ctypes.Structure):
     ]
 
 
+class _MARGINS(ctypes.Structure):
+    _fields_ = [('left', ctypes.c_int), ('right', ctypes.c_int), ('top', ctypes.c_int), ('bottom', ctypes.c_int)]
+
+
 __all__ = ['UsagePopup']
+
+# Service status dot colors - kept in sync with tray_icon.STATUS_DOT_COLORS,
+# expressed as CSS hex instead of PIL RGBA tuples.
+_SERVICE_STATUS_COLORS: dict[str, str] = {
+    'none': '#30a45c',  # green - operational
+    'minor': '#e89a1e',  # orange - minor incident
+    'major': '#d93a3a',  # red - major incident
+    'critical': '#d93a3a',  # red - critical outage
+}
+_SERVICE_STATUS_COLOR_UNKNOWN = '#888888'  # gray - status API unreachable or not yet fetched
+
+
+def _apply_dwm_styling(hwnd: int) -> None:
+    """Enable DWM drop shadow and, on Windows 11, rounded corners on a frameless popup window.
+
+    ``DwmExtendFrameIntoClientArea`` with 1-pixel margins activates the DWM
+    shadow on Windows 10 and 11.  ``DwmSetWindowAttribute`` with
+    ``DWMWA_WINDOW_CORNER_PREFERENCE`` additionally rounds the window corners,
+    but that attribute was only introduced in Windows 11 - the build number is
+    checked explicitly rather than relying on the call failing silently on
+    Windows 10.
+    """
+    dwmapi = ctypes.windll.dwmapi
+    dwmapi.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(_MARGINS(1, 1, 1, 1)))
+
+    if sys.getwindowsversion().build >= _WINDOWS_11_BUILD:
+        corner_pref = ctypes.c_int(_DWMWCP_ROUND)
+        dwmapi.DwmSetWindowAttribute(hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, ctypes.byref(corner_pref), ctypes.sizeof(corner_pref))
+
 
 if TYPE_CHECKING:
     from .app import UsageMonitorForClaude
@@ -70,6 +108,7 @@ def _usage_entries(usage: dict[str, Any]) -> list[tuple[str, dict[str, Any] | No
 
 def _snapshot_to_dict(
     snap: CacheSnapshot, installations: list[dict[str, str]] | None = None, next_poll_time: float | None = None,
+    service_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert a CacheSnapshot to a JSON-serializable dict for the popup JS.
 
@@ -81,6 +120,9 @@ def _snapshot_to_dict(
         Pre-computed installation list, or None to detect now.
     next_poll_time : float or None
         Unix timestamp of the next scheduled API poll.
+    service_status : dict or None
+        Claude system-status dict with ``indicator`` and ``description``
+        keys (see ``fetch_service_status()``), or None if not yet fetched.
     """
     # Profile - truthiness check (not `is not None`): hides the account section when the API
     # returns an empty or incomplete response, instead of rendering empty Email/Plan fields.
@@ -167,16 +209,25 @@ def _snapshot_to_dict(
             'error': snap.last_error[:120] if snap.last_error else None,
         }
 
+    # Service status - colored dot + description, hidden until status.claude.com has responded
+    service_status_out = None
+    if service_status:
+        service_status_out = {
+            'description': service_status.get('description') or '',
+            'color': _SERVICE_STATUS_COLORS.get(service_status.get('indicator'), _SERVICE_STATUS_COLOR_UNKNOWN),
+        }
+
     return {
         'profile': profile,
         'usage': usage,
         'extra': extra,
         'installations': installations,
         'status': status,
+        'service_status': service_status_out,
     }
 
 
-def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> dict[str, Any]:
+def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None, service_status: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build the config object passed to JS ``init()`` after the page loads."""
     return {
         'colors': {
@@ -188,13 +239,15 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
             'usage': T['usage'], 'extra_usage': T['extra_usage'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
+            'service_status': T['service_status'], 'status_page': T['status_page'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],
             'status_next_update': T['status_next_update'], 'status_refreshing': T['status_refreshing'],
             'duration_hm': T['duration_hm'], 'duration_m': T['duration_m'], 'duration_s': T['duration_s'],
         },
         'app_version': __version__,
         'compact_hide': COMPACT_HIDE,
-        'data': _snapshot_to_dict(snap, next_poll_time=next_poll_time),
+        'bar_gradient_fill': BAR_GRADIENT_FILL,
+        'data': _snapshot_to_dict(snap, next_poll_time=next_poll_time, service_status=service_status),
     }
 
 
@@ -225,6 +278,9 @@ class _PopupApi:
 
     def end_drag(self) -> None:
         self._popup._end_drag()
+
+    def open_status_page(self) -> None:
+        webbrowser.open(STATUS_PAGE_URL)
 
     def report_height(self, height: int) -> None:
         """Called by JS ResizeObserver when content height changes.
@@ -309,10 +365,12 @@ class UsagePopup:
 
     def _on_loaded(self) -> None:
         """Inject config and show the window transparently for layout."""
-        config = _init_config(self.app.cache.snapshot, next_poll_time=self.app._next_poll_time)
+        config = _init_config(self.app.cache.snapshot, next_poll_time=self.app._next_poll_time, service_status=self.app._service_status)
         self._window.evaluate_js(f'init({json.dumps(config)})')
 
         self._popup_hwnd = self._window.native.Handle.ToInt32()
+
+        _apply_dwm_styling(self._popup_hwnd)
 
         # Hide the taskbar icon and enable layered mode for opacity control.
         # WinForms sets WS_EX_APPWINDOW by default, which forces a taskbar
@@ -551,6 +609,7 @@ class UsagePopup:
         """Poll for data changes and push updates to the popup."""
         cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
         last_next_poll_time = self.app._next_poll_time
+        last_service_status = self.app._service_status
         while self._running:
             time.sleep(self._CHECK_MS / 1000)
             if not self._running:
@@ -558,17 +617,19 @@ class UsagePopup:
             try:
                 snap = self.app.cache.snapshot
                 next_poll_time = self.app._next_poll_time
-                if snap.version == self._last_version and next_poll_time == last_next_poll_time:
+                service_status = self.app._service_status
+                if snap.version == self._last_version and next_poll_time == last_next_poll_time and service_status == last_service_status:
                     continue
                 if snap.version != self._last_version:
                     cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
-                data = _snapshot_to_dict(snap, installations=cached_installations, next_poll_time=next_poll_time)
+                data = _snapshot_to_dict(snap, installations=cached_installations, next_poll_time=next_poll_time, service_status=service_status)
                 self._window.evaluate_js(f'updateData({json.dumps(data)})')
                 # Commit the markers only after a successful push, so a failed
                 # update is retried on the next tick instead of being skipped
                 # by the dedup check until the next data change.
                 self._last_version = snap.version
                 last_next_poll_time = next_poll_time
+                last_service_status = service_status
             except Exception:
                 # A transient failure (snapshot conversion, filesystem scan,
                 # one-off evaluate_js hiccup) must not end the update stream -

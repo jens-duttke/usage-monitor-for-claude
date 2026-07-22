@@ -57,7 +57,8 @@ Prioritize readability and auditability - users handle credentials and must be a
 
 ## Security & Transparency
 - All URLs and API endpoints as top-level constants - no dynamic URL construction
-- Network communication exclusively with `api.anthropic.com` - no other destinations
+- Network communication exclusively with `api.anthropic.com` and `status.claude.com` - no other destinations
+- `status.claude.com` is the public Claude system-status page (Statuspage API) - unauthenticated, read-only, no credentials ever sent to or expected from it; isolated in its own module (`service_status.py`), never combined with `api.py`'s credentialed requests
 - Credentials used only in HTTP Authorization headers - never log, store, or transmit elsewhere
 - No file write operations - the app is read-only
 - No `eval()`, `exec()`, `compile()`, or dynamic imports - no dynamic code execution

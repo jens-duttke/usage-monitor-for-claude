@@ -14,9 +14,9 @@ from typing import Callable
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .settings import ICON_DARK, ICON_LIGHT
+from .settings import BAR_GRADIENT_FILL, ICON_DARK, ICON_LIGHT
 
-__all__ = ['load_font', 'taskbar_uses_light_theme', 'watch_theme_change', 'create_icon_image', 'create_status_image']
+__all__ = ['load_font', 'taskbar_uses_light_theme', 'watch_theme_change', 'create_icon_image', 'create_status_image', 'draw_status_dot']
 
 # Theme registry
 THEME_REG_KEY = r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
@@ -30,6 +30,17 @@ ICON_SIZE = 64
 BAR_HEIGHT = 9
 BAR_GAP = 3
 MARKER_WIDTH = 4
+
+# Service status dot: small presence-style overlay in the bottom-right corner
+STATUS_DOT_RADIUS = 7
+STATUS_DOT_RING_WIDTH = 2
+STATUS_DOT_COLORS: dict[str, tuple[int, int, int, int]] = {
+    'none': (0x30, 0xa4, 0x5c, 255),  # green - operational
+    'minor': (0xe8, 0x9a, 0x1e, 255),  # orange - minor incident
+    'major': (0xd9, 0x3a, 0x3a, 255),  # red - major incident
+    'critical': (0xd9, 0x3a, 0x3a, 255),  # red - critical outage
+}
+STATUS_DOT_COLOR_UNKNOWN = (0x88, 0x88, 0x88, 255)  # gray - status API unreachable or not yet fetched
 
 
 @functools.lru_cache(maxsize=None)
@@ -153,15 +164,43 @@ def create_icon_image(
     return img
 
 
+def _gradient_color(px: int, start_rgb: tuple[int, int, int], end_rgb: tuple[int, int, int]) -> tuple[int, int, int, int]:
+    """Return the gradient RGBA color at pixel column *px* interpolating from *start_rgb* to *end_rgb*."""
+    t = px / (ICON_SIZE - 1)
+    r = start_rgb[0] + int((end_rgb[0] - start_rgb[0]) * t)
+    g = start_rgb[1] + int((end_rgb[1] - start_rgb[1]) * t)
+    b = start_rgb[2] + int((end_rgb[2] - start_rgb[2]) * t)
+    return (r, g, b, 255)
+
+
+def _draw_gradient_fill(draw: ImageDraw.ImageDraw, y: int, fill_w: int, start_rgb: tuple[int, int, int], end_rgb: tuple[int, int, int]) -> None:
+    """Fill the first *fill_w* columns of the bar with a gradient from *start_rgb* to *end_rgb*."""
+    for px in range(fill_w):
+        draw.line([(px, y), (px, y + BAR_HEIGHT - 1)], fill=_gradient_color(px, start_rgb, end_rgb))
+
+
+def _fill_bar(draw: ImageDraw.ImageDraw, y: int, fill_w: int, fg: tuple, fg_warn: tuple, *, warn: bool) -> None:
+    """Fill the first *fill_w* columns of the bar.
+
+    Uses a continuous *fg*-to-*fg_warn* gradient when ``BAR_GRADIENT_FILL`` is
+    enabled in settings; otherwise a solid *fg_warn* fill when *warn* is true
+    and a solid *fg* fill otherwise.
+    """
+    if BAR_GRADIENT_FILL:
+        _draw_gradient_fill(draw, y, fill_w, fg, fg_warn)
+    else:
+        draw.rectangle([0, y, fill_w - 1, y + BAR_HEIGHT - 1], fill=fg_warn if warn else fg)
+
+
 def _draw_usage_bar(draw: ImageDraw.ImageDraw, y: int, pct: float, mode: str, time_pct: float | None, fg: tuple, fg_half: tuple, fg_warn: tuple) -> None:
     """Draw one full-width usage bar at vertical offset *y*.
 
     In ``utilization`` mode the bar fills linearly with *pct* and shows a
     reset-time marker in *fg* at the *time_pct* position; the fill switches
-    to *fg_warn* when usage is ahead of the elapsed time or fully exhausted,
-    mirroring the popup's warning fill.  In ``overage`` mode the bar fills
-    as *pct* exceeds *time_pct* and no marker is drawn - elapsed time is
-    already encoded in the fill.
+    to *fg_warn* (or fades toward it, if ``BAR_GRADIENT_FILL`` is enabled)
+    when usage is ahead of the elapsed time or fully exhausted.  In
+    ``overage`` mode the bar fills as *pct* exceeds *time_pct* and no marker
+    is drawn - elapsed time is already encoded in the fill.
     """
     draw.rectangle([0, y, ICON_SIZE - 1, y + BAR_HEIGHT - 1], fill=fg_half)
 
@@ -179,13 +218,13 @@ def _draw_usage_bar(draw: ImageDraw.ImageDraw, y: int, pct: float, mode: str, ti
         fill_ratio = min(1.0, overage / (100 - time_pct))
         fill_w = max(0, int(ICON_SIZE * fill_ratio))
         if fill_w > 0:
-            draw.rectangle([0, y, fill_w - 1, y + BAR_HEIGHT - 1], fill=fg)
+            _fill_bar(draw, y, fill_w, fg, fg_warn, warn=False)
         return
 
     fill_w = max(0, min(ICON_SIZE, int(ICON_SIZE * pct / 100)))
     if fill_w > 0:
         warn = mode == 'utilization' and (pct >= 100 or (time_pct is not None and pct > time_pct))
-        draw.rectangle([0, y, fill_w - 1, y + BAR_HEIGHT - 1], fill=fg_warn if warn else fg)
+        _fill_bar(draw, y, fill_w, fg, fg_warn, warn=warn)
 
     if mode != 'utilization' or time_pct is None:
         return
@@ -208,3 +247,33 @@ def create_status_image(text: str, light_taskbar: bool = False) -> Image.Image:
     draw.text(((S - tw) / 2 - bbox[0], (S - th) / 2 - bbox[1]), text, fill=fg_dim, font=font)
 
     return img
+
+
+def draw_status_dot(img: Image.Image, indicator: str | None, light_taskbar: bool = False) -> None:
+    """Overlay a small presence-style status dot in the icon's bottom-right corner (mutates *img* in place).
+
+    Draws a solid ring in the taskbar-contrasting color before the dot
+    itself, so the dot stays legible over whatever is drawn underneath
+    (the bottom usage bar) - the same cutout technique used by presence
+    badges in Discord/Teams. No other pixel of *img* is touched.
+
+    Parameters
+    ----------
+    img : Image.Image
+        Icon image to draw onto, mutated in place.
+    indicator : str or None
+        Claude status indicator (``'none'``, ``'minor'``, ``'major'`` or
+        ``'critical'``). Any other value, including ``None`` (status API
+        unreachable or not yet fetched), draws a gray dot.
+    light_taskbar : bool
+        Use the dark ring color for a light taskbar.
+    """
+    draw = ImageDraw.Draw(img)
+    ring_rgb = (ICON_DARK if light_taskbar else ICON_LIGHT)['fg']
+    dot_color = STATUS_DOT_COLORS.get(indicator, STATUS_DOT_COLOR_UNKNOWN)
+
+    outer_r = STATUS_DOT_RADIUS + STATUS_DOT_RING_WIDTH
+    cx = cy = ICON_SIZE - 1 - outer_r
+
+    draw.ellipse([cx - outer_r, cy - outer_r, cx + outer_r, cy + outer_r], fill=ring_rgb)
+    draw.ellipse([cx - STATUS_DOT_RADIUS, cy - STATUS_DOT_RADIUS, cx + STATUS_DOT_RADIUS, cy + STATUS_DOT_RADIUS], fill=dot_color)

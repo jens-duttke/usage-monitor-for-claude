@@ -28,12 +28,13 @@ from .instance_id import effective_config_dir, is_default_config_dir
 from .settings import (
     ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_PAUSE, NOTIFY_CLAUDE_UPDATE,
     ON_DOUBLE_CLICK_COMMAND, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND,
-    POLL_ERROR, POLL_FAST, POLL_FAST_EXTRA, POLL_INTERVAL, get_alert_thresholds,
+    POLL_ERROR, POLL_FAST, POLL_FAST_EXTRA, POLL_INTERVAL, STATUS_POLL_INTERVAL, get_alert_thresholds,
 )
 from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, parse_field_name, popup_label
 from .i18n import T
 from .popup import UsagePopup
-from .tray_icon import create_icon_image, create_status_image, taskbar_uses_light_theme, watch_theme_change
+from .service_status import fetch_service_status
+from .tray_icon import create_icon_image, create_status_image, draw_status_dot, taskbar_uses_light_theme, watch_theme_change
 
 __all__ = ['UsageMonitorForClaude', 'crash_log']
 
@@ -136,6 +137,9 @@ class UsageMonitorForClaude:
 
         # Theme state
         self._light_taskbar = taskbar_uses_light_theme()
+
+        # Service status state (None until fetched, or if status.claude.com is unreachable)
+        self._service_status: dict[str, Any] | None = None
 
         self.restart_requested = False
 
@@ -385,7 +389,7 @@ class UsageMonitorForClaude:
         """Re-render tray icon and tooltip from current state."""
         data = self._last_response
         if 'error' in data:
-            self.icon.icon = create_status_image('C!' if data.get('auth_error') else '!', self._light_taskbar)
+            img = create_status_image('C!' if data.get('auth_error') else '!', self._light_taskbar)
         else:
             top_field, top_mode = ICON_FIELDS[0].split(':', 1) if ':' in ICON_FIELDS[0] else (ICON_FIELDS[0], 'utilization')
             bottom_field, bottom_mode = ICON_FIELDS[1].split(':', 1) if ':' in ICON_FIELDS[1] else (ICON_FIELDS[1], 'utilization')
@@ -409,13 +413,19 @@ class UsageMonitorForClaude:
             # A missing/null monthly_limit means uncapped pay-as-you-go extra
             # usage, which cannot be exhausted.
             extra_usage_available = bool(extra.get('is_enabled')) and (extra_limit <= 0 or extra_used < extra_limit)
-            self.icon.icon = create_icon_image(
+            img = create_icon_image(
                 pct_top, pct_bottom, self._light_taskbar,
                 mode_top=top_mode, mode_bottom=bottom_mode,
                 time_pct_top=time_pct_top, time_pct_bottom=time_pct_bottom,
                 extra_usage_available=extra_usage_available,
             )
-        self.icon.title = self._tooltip_prefix + format_tooltip(data)
+
+        status_indicator = self._service_status.get('indicator') if self._service_status else None
+        draw_status_dot(img, status_indicator, self._light_taskbar)
+        self.icon.icon = img
+
+        status_description = self._service_status.get('description') if self._service_status else None
+        self.icon.title = self._tooltip_prefix + format_tooltip(data, status_description)
 
     def _on_theme_changed(self) -> None:
         """Re-render the tray icon when the Windows theme changes."""
@@ -426,6 +436,24 @@ class UsageMonitorForClaude:
         self._light_taskbar = light
         if self._last_response:
             self._render_tray()
+
+    def _service_status_loop(self) -> None:
+        """Poll the Claude system-status API every STATUS_POLL_INTERVAL seconds.
+
+        Runs in its own daemon thread, independent of the usage poll loop,
+        so a slow or unreachable status.claude.com never delays usage
+        polling. Re-renders the tray icon immediately when the indicator
+        changes, so the status dot updates without waiting for the next
+        usage poll.
+        """
+        while self.running:
+            status = fetch_service_status()
+            new_indicator = status.get('indicator') if status else None
+            old_indicator = self._service_status.get('indicator') if self._service_status else None
+            self._service_status = status
+            if new_indicator != old_indicator:
+                self._render_tray()
+            time.sleep(STATUS_POLL_INTERVAL)
 
     # Update orchestration
 
@@ -1050,6 +1078,7 @@ class UsageMonitorForClaude:
             if not api_headers():
                 icon.notify(f"{T['warn_no_token']}\n{T['warn_login']}", T['popup_title'])
             threading.Thread(target=watch_theme_change, args=(self._on_theme_changed,), daemon=True).start()
+            threading.Thread(target=self._service_status_loop, daemon=True).start()
             self.poll_loop()
         except Exception:
             crash_log(traceback.format_exc())

@@ -205,6 +205,7 @@ Run a shell command when a usage event occurs. See [Event Commands](event-comman
 | `poll_error` | `30` | Seconds after a transient error (5xx, network). Rate-limit errors (429) use exponential backoff instead |
 | `max_backoff` | `900` | Maximum backoff in seconds for rate-limit errors (15 min) |
 | `idle_pause` | `300` | Seconds of inactivity before polling pauses (0 = disable). Polling also pauses when the workstation is locked |
+| `status_poll_interval` | `60` | Seconds between checks of the Claude system-status indicator shown as a dot on the tray icon. Runs independently of the usage polling above and is never paused by idle/lock |
 
 ## Language
 
@@ -251,3 +252,4 @@ Override individual channels as RGBA arrays `[R, G, B, A]` (0-255). Unspecified 
 | `bar_fg_warn` | `"#e05050"` | Progress bar fill when usage outpaces elapsed time, error text |
 | `bar_divider` | `"#000c"` | Time dividers on progress bars (hour marks on the session bar, midnights on weekly bars) |
 | `bar_marker` | `"#fffc"` | Time-position marker on progress bars |
+| `bar_gradient_fill` | `false` | Fade the tray icon and popup bar fill from `bar_fg`/`icon_light`.`fg` to `bar_fg_warn`/`icon_light`.`fg_warn` instead of switching abruptly between them |

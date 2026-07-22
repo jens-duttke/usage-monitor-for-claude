@@ -60,6 +60,8 @@
     "changelog": "更新日志",
     "pin_popup": "固定弹出窗口",
     "unpin_popup": "取消固定弹出窗口",
+    "service_status": "服务状态",
+    "status_page": "状态页面",
     "notify_update_title": "Claude Code 已更新",
     "notify_update": "Claude Code 已从 {old} 更新到 {new}。",
     "server_error": "Anthropic API 暂时不可用 (HTTP {code})。",

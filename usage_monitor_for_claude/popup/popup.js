@@ -12,13 +12,14 @@ let lastData = null;
  * Called once by Python after the page loads.  Translations are set as
  * textContent on heading elements so the HTML file stays language-neutral.
  *
- * @param {object} config - { colors, t (translations), app_version, data (initial snapshot) }
+ * @param {object} config - { colors, t (translations), app_version, bar_gradient_fill, data (initial snapshot) }
  */
 function init(config) {
     const s = document.documentElement.style;
     for (const [key, value] of Object.entries(config.colors)) {
         s.setProperty(`--${key.replaceAll('_', '-')}`, value);
     }
+    document.documentElement.classList.toggle('bar-gradient-fill', config.bar_gradient_fill);
 
     translations = config.t;
     compactHide = config.compact_hide || [];
@@ -29,10 +30,16 @@ function init(config) {
     document.getElementById('headingUsage').textContent = translations.usage;
     document.getElementById('headingExtraUsage').textContent = translations.extra_usage;
     document.getElementById('headingClaudeCode').textContent = translations.claude_code;
+    document.getElementById('headingServiceStatus').textContent = translations.service_status;
 
     const changelogLink = document.getElementById('changelogLink');
     changelogLink.textContent = translations.changelog;
     changelogLink.addEventListener('click', () => pywebview.api.open_url());
+
+    const statusPageLink = document.getElementById('statusPageLink');
+    statusPageLink.textContent = translations.status_page;
+    statusPageLink.addEventListener('click', () => pywebview.api.open_status_page());
+
     document.getElementById('closeBtn').addEventListener('click', () => pywebview.api.close());
     setupPinButton();
     setupPinnedDrag();
@@ -55,6 +62,9 @@ function init(config) {
         extraFill: document.getElementById('extraFill'),
         installSection: document.getElementById('installSection'),
         installRows: document.getElementById('installRows'),
+        serviceStatusSection: document.getElementById('serviceStatusSection'),
+        serviceStatusDot: document.getElementById('serviceStatusDot'),
+        serviceStatusText: document.getElementById('serviceStatusText'),
         statusSection: document.getElementById('statusSection'),
         statusText: document.getElementById('statusText'),
     };
@@ -189,6 +199,7 @@ function updateData(data) {
         els.extraPct.textContent = data.extra.pct_text;
         els.extraBarContainer.style.display = data.extra.has_limit ? '' : 'none';
         els.extraFill.style.width = `${data.extra.fill_pct * 100}%`;
+        els.extraFill.style.setProperty('--fill-pct', data.extra.fill_pct);
     }
 
     const hasInstalls = !!data.installations?.length;
@@ -209,6 +220,13 @@ function updateData(data) {
             row.append(dt, dd);
             return row;
         }));
+    }
+
+    const hasServiceStatus = !!data.service_status;
+    els.serviceStatusSection.classList.toggle('visible', hasServiceStatus);
+    if (hasServiceStatus) {
+        els.serviceStatusDot.style.backgroundColor = data.service_status.color;
+        els.serviceStatusText.textContent = data.service_status.description;
     }
 
     updateStatus(data.status);
@@ -338,8 +356,9 @@ function updateUsageBars(entries) {
         els.usageBars.replaceChildren(...entries.map(createBarElement));
         requestAnimationFrame(() => {
             for (let i = 0; i < entries.length; i++) {
-                els.usageBars.children[i].querySelector('.bar-fill').style.width =
-                    `${entries[i].fill_pct * 100}%`;
+                const fill = els.usageBars.children[i].querySelector('.bar-fill');
+                fill.style.width = `${entries[i].fill_pct * 100}%`;
+                fill.style.setProperty('--fill-pct', entries[i].fill_pct);
             }
         });
     } else {
@@ -402,6 +421,7 @@ function updateBarElement(div, entry) {
 
     const fill = div.querySelector('.bar-fill');
     fill.style.width = `${entry.fill_pct * 100}%`;
+    fill.style.setProperty('--fill-pct', entry.fill_pct);
     fill.classList.toggle('warn', entry.warn);
 
     const container = div.querySelector('.bar-container');

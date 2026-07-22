@@ -60,6 +60,8 @@
     "changelog": "변경 내역",
     "pin_popup": "팝업 고정",
     "unpin_popup": "팝업 고정 해제",
+    "service_status": "서비스 상태",
+    "status_page": "상태 페이지",
     "notify_update_title": "Claude Code 업데이트됨",
     "notify_update": "Claude Code가 {old}에서 {new}(으)로 업데이트되었습니다.",
     "server_error": "Anthropic API가 일시적으로 사용할 수 없습니다 (HTTP {code}).",

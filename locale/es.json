@@ -60,6 +60,8 @@
     "changelog": "Changelog",
     "pin_popup": "Fijar ventana emergente",
     "unpin_popup": "Desfijar ventana emergente",
+    "service_status": "ESTADO DEL SERVICIO",
+    "status_page": "Página de estado",
     "notify_update_title": "Claude Code actualizado",
     "notify_update": "Claude Code actualizado de {old} a {new}.",
     "server_error": "La API de Anthropic no está disponible temporalmente (HTTP {code}).",
