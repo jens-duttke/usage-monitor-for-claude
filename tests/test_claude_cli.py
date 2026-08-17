@@ -626,5 +626,60 @@ class TestRefreshTokenIgnoresCliCommand(unittest.TestCase):
         self.assertEqual(claude_cli._command_version_cache[('wsl', 'claude')], '2.1.204')
 
 
+# ---------------------------------------------------------------------------
+# refresh_token() on non-UTF-8 locales (regression: #80)
+# ---------------------------------------------------------------------------
+
+class TestRefreshTokenNonUtf8Locale(unittest.TestCase):
+    """Regression tests for the cp950/non-UTF-8 locale crash (issue #80).
+
+    ``claude update`` emits UTF-8.  When ``subprocess.run`` decodes its
+    pipes with the system locale codec (e.g. cp950), a non-ASCII glyph
+    kills the pipe-reader thread; CPython then hands back ``None`` for that
+    stream, and ``proc.stdout + proc.stderr`` raised ``TypeError``.
+    """
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    @patch('usage_monitor_for_claude.claude_cli.CLAUDE_CLI_PATH')
+    def test_decodes_output_as_utf8_regardless_of_locale(self, mock_path, mock_run):
+        """The CLI output is decoded as UTF-8, not the ambient locale codec."""
+        mock_path.is_file.return_value = True
+        mock_run.return_value = MagicMock(stdout='', stderr='', returncode=0)
+        refresh_token()
+        _args, kwargs = mock_run.call_args
+        self.assertEqual(kwargs.get('encoding'), 'utf-8')
+        self.assertEqual(kwargs.get('errors'), 'replace')
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    @patch('usage_monitor_for_claude.claude_cli.CLAUDE_CLI_PATH')
+    def test_survives_none_stderr_from_dead_pipe_thread(self, mock_path, mock_run):
+        """A ``None`` stderr (dead decode thread) must not raise TypeError.
+
+        This is the exact reported traceback: the update succeeded, stdout
+        carried the success line, but the stderr pipe-reader thread had died
+        and CPython returned ``None`` for it.
+        """
+        mock_path.is_file.return_value = True
+        mock_run.return_value = MagicMock(
+            stdout='Successfully updated from 2.1.38 to version 2.1.69',
+            stderr=None, returncode=0,
+        )
+        result = refresh_token()  # must not raise "can only concatenate str ... NoneType"
+        self.assertTrue(result.success)
+        self.assertTrue(result.updated)
+        self.assertEqual(result.old_version, '2.1.38')
+        self.assertEqual(result.new_version, '2.1.69')
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    @patch('usage_monitor_for_claude.claude_cli.CLAUDE_CLI_PATH')
+    def test_survives_both_streams_none(self, mock_path, mock_run):
+        """Both streams ``None`` (returncode 0) still resolves without crashing."""
+        mock_path.is_file.return_value = True
+        mock_run.return_value = MagicMock(stdout=None, stderr=None, returncode=0)
+        result = refresh_token()
+        self.assertTrue(result.success)
+        self.assertFalse(result.updated)
+
+
 if __name__ == '__main__':
     unittest.main()

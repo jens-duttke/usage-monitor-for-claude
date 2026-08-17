@@ -185,14 +185,18 @@ def refresh_token() -> RefreshResult:
     try:
         proc = subprocess.run(
             [str(CLAUDE_CLI_PATH), 'update'],
-            capture_output=True, text=True, timeout=60, creationflags=subprocess.CREATE_NO_WINDOW,
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=60, creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return RefreshResult(success=False, updated=False, old_version='', new_version='', error='Timeout')
     except OSError as e:
         return RefreshResult(success=False, updated=False, old_version='', new_version='', error=str(e))
 
-    output = proc.stdout + proc.stderr
+    # ``claude update`` emits UTF-8; decoding it with the ambient locale codec
+    # (e.g. cp950) can kill the pipe-reader thread and leave a stream as None,
+    # so decode as UTF-8 above and defend against a None stream here (#80).
+    output = (proc.stdout or '') + (proc.stderr or '')
 
     # Parse: "Successfully updated from X.Y.Z to version A.B.C"
     update_match = re.search(r'updated from (\S+) to (?:version )?(\S+)', output)
