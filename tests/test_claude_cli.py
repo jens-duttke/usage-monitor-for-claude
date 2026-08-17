@@ -168,7 +168,8 @@ class TestCliVersion(unittest.TestCase):
         cli_version(path)
         mock_run.assert_called_once_with(
             [str(path), '--version'],
-            capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
     @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
@@ -465,7 +466,8 @@ class TestCommandVersion(unittest.TestCase):
         claude_cli._command_version(['wsl', '/home/user/.local/bin/claude'])
         mock_run.assert_called_once_with(
             ['wsl', '/home/user/.local/bin/claude', '--version'],
-            capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
     @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
@@ -679,6 +681,79 @@ class TestRefreshTokenNonUtf8Locale(unittest.TestCase):
         result = refresh_token()
         self.assertTrue(result.success)
         self.assertFalse(result.updated)
+
+
+# ---------------------------------------------------------------------------
+# cli_version() / _command_version() on non-UTF-8 locales (regression: #80)
+# ---------------------------------------------------------------------------
+
+class TestVersionProbesNonUtf8Locale(unittest.TestCase):
+    """Same-root-cause regression as #80 for the two ``--version`` probes.
+
+    ``claude --version`` emits UTF-8.  When ``subprocess.run`` decodes its
+    pipes with the ambient locale codec (e.g. cp950), a non-ASCII glyph kills
+    the pipe-reader thread and CPython hands back ``None`` for that stream.
+
+    ``cli_version`` swallows the resulting ``AttributeError`` in its broad
+    ``except`` (so it silently loses the version), but ``_command_version``
+    parses ``proc.stdout`` *outside* its ``try`` and ``find_installations``
+    calls it unguarded, so a ``None`` stdout used to raise
+    ``AttributeError: 'NoneType' object has no attribute 'strip'`` straight
+    into the popup's update path.
+    """
+
+    def setUp(self):
+        claude_cli._version_cache.clear()
+        claude_cli._command_version_cache.clear()
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    @patch('pathlib.Path.stat', return_value=MagicMock(st_mtime=1000.0))
+    def test_cli_version_decodes_output_as_utf8(self, _mock_stat, mock_run):
+        """cli_version decodes --version output as UTF-8, not the locale codec."""
+        mock_run.return_value = MagicMock(stdout='2.1.69 (Claude Code)\n', returncode=0)
+        cli_version(Path('/fake/claude.exe'))
+        _args, kwargs = mock_run.call_args
+        self.assertEqual(kwargs.get('encoding'), 'utf-8')
+        self.assertEqual(kwargs.get('errors'), 'replace')
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    def test_command_version_decodes_output_as_utf8(self, mock_run):
+        """_command_version decodes --version output as UTF-8, not the locale codec."""
+        mock_run.return_value = MagicMock(stdout='2.1.204 (Claude Code)\n', returncode=0)
+        claude_cli._command_version(['wsl', 'claude'])
+        _args, kwargs = mock_run.call_args
+        self.assertEqual(kwargs.get('encoding'), 'utf-8')
+        self.assertEqual(kwargs.get('errors'), 'replace')
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    def test_command_version_survives_none_stdout(self, mock_run):
+        """A None stdout (dead decode thread) returns '' instead of raising.
+
+        This is the exact reported traceback for the custom-command path:
+        ``_parse_version(proc.stdout)`` sits outside the ``try``, so a None
+        stdout raised ``AttributeError`` before this fix.
+        """
+        mock_run.return_value = MagicMock(stdout=None, stderr=None, returncode=0)
+        self.assertEqual(claude_cli._command_version(['wsl', 'claude']), '')
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    @patch('pathlib.Path.stat', return_value=MagicMock(st_mtime=1000.0))
+    def test_cli_version_survives_none_stdout(self, _mock_stat, mock_run):
+        """cli_version returns '' (never raises) on a None stdout."""
+        mock_run.return_value = MagicMock(stdout=None, returncode=0)
+        self.assertEqual(cli_version(Path('/fake/claude.exe')), '')
+
+    @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
+    @patch('usage_monitor_for_claude.claude_cli.CLI_COMMAND', {'WSL': ['wsl', 'claude']})
+    @patch('usage_monitor_for_claude.claude_cli._EXTENSION_DIRS', [])
+    @patch('usage_monitor_for_claude.claude_cli.CLAUDE_CLI_PATH')
+    def test_find_installations_survives_none_command_stdout(self, mock_path, mock_run):
+        """A configured cli_command whose --version stdout is None must not
+        crash find_installations() - the popup's update path (regression #80)."""
+        mock_path.is_file.return_value = False
+        mock_run.return_value = MagicMock(stdout=None, stderr=None, returncode=0)
+        result = find_installations()  # must not raise AttributeError
+        self.assertEqual(result, [])
 
 
 if __name__ == '__main__':

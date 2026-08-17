@@ -237,9 +237,13 @@ def cli_version(path: Path) -> str:
 
         proc = subprocess.run(
             [str(path), '--version'],
-            capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        version = _parse_version(proc.stdout)
+        # ``claude --version`` emits UTF-8; decode it as UTF-8 (not the ambient
+        # locale codec, e.g. cp950) so a non-ASCII glyph cannot kill the
+        # pipe-reader thread and leave ``proc.stdout`` as None (#80).
+        version = _parse_version(proc.stdout or '')
         _version_cache[path] = (mtime, version)
         return version
     except Exception:
@@ -260,12 +264,18 @@ def _command_version(command: list[str]) -> str:
     try:
         proc = subprocess.run(
             [*command, '--version'],
-            capture_output=True, text=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
+            timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
         )
     except Exception:
         return ''
 
-    version = _parse_version(proc.stdout)
+    # ``--version`` output is UTF-8; decode it as UTF-8 above (not the ambient
+    # locale codec) so a non-ASCII glyph cannot kill the pipe-reader thread and
+    # leave ``proc.stdout`` as None.  This parse runs outside the ``try`` and
+    # find_installations() calls this unguarded, so also defend against a None
+    # stdout here rather than raising AttributeError into the popup (#80).
+    version = _parse_version(proc.stdout or '')
     _command_version_cache[key] = version
     return version
 
