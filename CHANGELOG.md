@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- [WinGet](https://learn.microsoft.com/windows/package-manager/) is now documented as an alternative way to install and update the app (`winget install jens-duttke.usage-monitor-for-claude`), together with a note on what the community repository verifies about a package and what it does not - the direct download stays the authoritative source
+- Every release now lists the SHA256 of `UsageMonitorForClaude.exe`, so a download can be verified against the official release page - including the file WinGet installs, independently of its validation pipeline
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.21.0...HEAD)
 
 ## [1.21.0] - 2026-08-21

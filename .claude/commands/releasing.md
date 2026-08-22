@@ -37,12 +37,15 @@ The release publishes a tag, which the git rule forbids this command from doing.
 - The notes must use the **exact** content from the new version's `CHANGELOG.md` section (the `### Added` / `### Changed` / `### Fixed` / `### Removed` blocks), followed by:
   - a `[Full changelog](<compare-url>)` link, and
   - a `[README for this version](https://github.com/jens-duttke/usage-monitor-for-claude/blob/vX.Y.Z/README.md)` link.
+- Write those notes to a file and pass it with `--notes-file`, never inline via `--notes "..."`. The entries contain backticks, which PowerShell treats as escape characters inside double quotes and which would mangle the published notes.
 - The build artifact `dist/UsageMonitorForClaude.exe` is produced by the user's build step - note it as a prerequisite; do not attempt to build it here.
+- The notes end with the SHA256 of the published EXE, so anyone can verify a download and check the `InstallerSha256` of the WinGet manifest against a source other than the WinGet pipeline. The hash cannot be known before the build, so the command appends it instead of the notes file carrying it - never reuse a hash from a previous release.
 
-Present the command in this shape (filled in with the real version and notes):
+Present the command in this shape (filled in with the real version and the path of the notes file):
 
-```
-gh release create vX.Y.Z dist/UsageMonitorForClaude.exe --title "vX.Y.Z" --notes "<changelog section + links>"
+```powershell
+"`n**SHA256 of UsageMonitorForClaude.exe:** $((Get-FileHash dist/UsageMonitorForClaude.exe -Algorithm SHA256).Hash)" | Add-Content <notes-file>
+gh release create vX.Y.Z dist/UsageMonitorForClaude.exe --title "vX.Y.Z" --notes-file <notes-file>
 ```
 
 ## Summary

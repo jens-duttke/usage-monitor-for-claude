@@ -145,6 +145,12 @@ Prioritize readability and auditability - users handle credentials and must be a
 ## Releasing
 - Cut releases with the `/releasing` command - it bumps the version (`__version__` in `usage_monitor_for_claude/__init__.py` plus all four fields in `version_info.py`), rolls `CHANGELOG.md`, runs the tests, and prepares the `gh release create` notes. Per the git rule it never tags or publishes - it hands the final command to you to run
 
+## Distribution
+- Every release is pushed to the WinGet community repository by `.github/workflows/winget.yml`. That manifest is **not owned** by this project: anyone may submit a version for the package id, and the automated validation checks the installer *domain* (`github.com`), never the repository path behind it - a manifest pointing at a foreign account is caught only by a moderator reading the diff. The package's own first version (1.16.0) was in fact submitted by a third party
+- Two measures cover that gap and neither replaces the other, so never drop one as redundant: `.github/workflows/winget-watch.yml` reports pull requests and merged manifest commits from other authors as issues (detection), and every release lists the SHA256 of the EXE (verification without trusting the WinGet pipeline). The hash is appended by the release command from the built artifact - never carried over from a previous release
+- Both watcher steps need `set -o pipefail`. Without it a failing `gh api` is masked by the exit code of the `while` loop that consumes it, and the run reports success while having checked nothing - the worst failure mode for a monitor. Duplicate detection compares issue titles locally instead of using `gh issue list --search`, whose index updates asynchronously and splits on `#` and `@`
+- `README.md` documents WinGet as an alternative to the direct download. If that passage is reworded, it must keep both parts: what the community repository does not verify, and that the direct download is the authoritative source
+
 ## Testing
 - After completing all changes, run the full test suite (`python -m unittest discover -s tests`) and ensure all tests pass - this applies to any change (code, locale files, config, data files), not just Python modules
 - Fix the code to make tests pass - never weaken or remove tests to avoid failures

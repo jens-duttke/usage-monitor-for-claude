@@ -62,6 +62,15 @@ This tool handles your Claude Code OAuth token, so you should be able to verify 
 
 **No Python required.** Download the latest [**UsageMonitorForClaude.exe**](https://github.com/jens-duttke/usage-monitor-for-claude/releases/latest), place it wherever you like, and run it. To remove, disable "Start with Windows" in the context menu first (if enabled), then delete the file.
 
+Or install it from [WinGet](https://learn.microsoft.com/windows/package-manager/), where every release is published automatically:
+
+```powershell
+winget install jens-duttke.usage-monitor-for-claude
+```
+
+> [!NOTE]
+> Anyone can submit manifests for any package to the WinGet community repository, and its automated validation checks the installer domain (`github.com`) but not the repository path behind it, so a submission pointing at a different account would have to be caught by a human reviewer. Use that channel at your own risk - the download link above is the authoritative source.
+
 ---
 
 ## How to Use

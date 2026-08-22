@@ -1,0 +1,57 @@
+name: Watch WinGet submissions
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+permissions:
+  issues: write
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      PACKAGE: jens-duttke.usage-monitor-for-claude
+      MANIFEST_PATH: manifests/j/jens-duttke/usage-monitor-for-claude
+      MAINTAINER: jens-duttke
+    steps:
+      # The community repository accepts manifests for any package from any contributor, so a third party
+      # can point the installer URL of this package at a different GitHub account. Nothing prevents that -
+      # these two checks are here to notice it.
+      #
+      # `set -o pipefail` is essential: without it a failing `gh api` in the pipeline below is masked by the
+      # exit code of the `while` loop, and the run reports success while having checked nothing at all.
+      # Existing issue titles are compared locally rather than through `gh issue list --search`, whose index
+      # is updated asynchronously and treats `#` and `@` as separators - both would break the duplicate check.
+      - name: Report open pull requests from other authors
+        run: |
+          set -o pipefail
+          gh issue list --state all --limit 500 --json title --jq '.[].title' > reported.txt
+          gh api "search/issues?q=repo:microsoft/winget-pkgs+is:pr+is:open+$PACKAGE&per_page=100" \
+            --jq '.items[] | select(.user.login != env.MAINTAINER) | [.number, .user.login, .html_url] | @tsv' |
+          while IFS=$'\t' read -r number author url; do
+            title="WinGet: open pull request #$number by @$author"
+            if grep -Fxq "$title" reported.txt; then
+              continue
+            fi
+            gh issue create --title "$title" --body "$(printf '%s\n\n%s\n\n%s' \
+              "[$url]($url) submits a manifest for \`$PACKAGE\` and was not opened by @$MAINTAINER." \
+              "Check that its \`InstallerUrl\` still points at a release of this repository - the automated validation verifies the installer domain (\`github.com\`), not the repository path." \
+              "If the submission is not legitimate, comment on the pull request and contact the [moderators](https://github.com/microsoft/winget-pkgs/blob/master/doc/Moderation.md).")"
+          done
+      - name: Report merged manifest changes from other authors
+        run: |
+          set -o pipefail
+          gh issue list --state all --limit 500 --json title --jq '.[].title' > reported.txt
+          since="$(date -u -d '14 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+          gh api "repos/microsoft/winget-pkgs/commits?path=$MANIFEST_PATH&since=$since&per_page=100" \
+            --jq '.[] | select((.author.login // "") != env.MAINTAINER) | [.sha[0:8], (.author.login // .commit.author.name), .html_url] | @tsv' |
+          while IFS=$'\t' read -r sha author url; do
+            title="WinGet: manifest changed by $author in $sha"
+            if grep -Fxq "$title" reported.txt; then
+              continue
+            fi
+            gh issue create --title "$title" --body "$(printf '%s\n\n%s' \
+              "[$url]($url) changed \`$MANIFEST_PATH\` and was not authored by @$MAINTAINER." \
+              "Verify the \`InstallerUrl\` and \`InstallerSha256\` of the affected version against the corresponding release of this repository.")"
+          done
