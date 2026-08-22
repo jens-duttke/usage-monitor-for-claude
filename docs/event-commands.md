@@ -19,11 +19,11 @@ Each of these settings accepts a single command string or an array of strings to
 
 Commands only fire on **state changes** detected while the app is running. On app startup, already-exceeded thresholds trigger a desktop notification but do not run `on_threshold_command` - this prevents duplicate commands after a restart or reboot.
 
-`on_double_click_command` is the exception: it reacts to a user action, not a usage event. A single click still opens the detail popup as usual - the command only runs on a double-click. When this command is configured, opening the popup is deferred by the system double-click interval (typically about half a second) so a second click can be recognized in time; without the command set, the popup opens instantly as before.
+`on_double_click_command` is the exception: it reacts to a user action, not a usage event. A single click still opens the detail popup; only a double-click runs the command. While this command is configured, the popup opens after the system double-click interval (about half a second) so a second click can be recognized - without it, the popup opens instantly.
 
 Because a double-click is user-driven, a command that fails to start - it exits with a non-zero (error) code within the first few seconds - shows its stderr in an error dialog, so a wrong path or a broken command is not swallowed silently. If the command starts an app, that app's later exit code is ignored. The automatic reset, threshold, and startup commands stay silent - they fire in the background and must not interrupt you with dialogs.
 
-When `on_reset_command` is configured, the app briefly wakes from idle/lock pause to poll at the expected reset time so the command fires promptly - even if the computer is unattended. If the API has not applied the reset yet (server-side delay) or the network is temporarily unavailable, the app retries at regular intervals until the reset is confirmed. `on_threshold_command` does not wake from idle - thresholds are driven by active usage, so they are checked when polling resumes after the user returns. Desktop notifications that occur during idle are deferred and shown when the user returns.
+When `on_reset_command` is configured, the app wakes from idle/lock pause at the expected reset time so the command fires promptly on an unattended computer, retrying until the API confirms the reset. `on_threshold_command` does not wake from idle - thresholds follow active usage, so they are checked once polling resumes. Notifications raised while you were away are shown when you return.
 
 > [!TIP]
 > If you need a visible terminal, prefix your command with `start cmd /c`, e.g.:
@@ -32,15 +32,13 @@ When `on_reset_command` is configured, the app briefly wakes from idle/lock paus
 > ```
 
 > [!TIP]
-> Use the **Test event commands** submenu in the tray context menu to fire your configured commands with sample data. This lets you verify your command and script setup without waiting for a real event. When triggered from this menu, the command's exit code, stdout, and stderr are printed once it finishes - visible when you run the app from source (`python -m usage_monitor_for_claude`) or from the console `--verbose` attaches to the packaged EXE. If the command exits with a non-zero (error) code, its stderr is also shown in an error dialog, so a wrong path or a command that otherwise fails silently is easy to spot (event commands normally discard all output).
+> Use the **Test event commands** submenu in the tray context menu to fire your configured commands with sample data, without waiting for a real event. Commands fired this way print their exit code, stdout, and stderr - visible when you run the app from source (`python -m usage_monitor_for_claude`) or in the console `--verbose` attaches to the packaged EXE - and any non-zero exit code shows the stderr in an error dialog, however long the command ran. Event commands otherwise discard all output.
 
 ## Examples
 
 ### Launch Agent Monitor for Claude on double-click
 
-Usage Monitor for Claude tells you *how much* of your rate limits you have left. Its companion tool, [**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude), tells you *what your agents are actually doing* - a live overview of every running Claude Code agent across all your projects: which ones are working, waiting for your input, blocked, finished, or errored, refreshed every few seconds. Agents are grouped by project with the ones that need attention floated to the top, each with its estimated cost, token breakdown, model, and host - and one click brings any agent's window to the foreground. If you run more than one agent at a time, it turns "which window was that again?" into a glance at the tray.
-
-It is a single portable Windows EXE with zero configuration - it auto-detects your Claude config directory just like this app does. That makes it a natural double-click target, so the icon you already watch for your limits becomes the shortcut to your agents.
+[**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude) shows what your Claude Code agents are doing right now - which ones are working, waiting for input, or finished - grouped by project. Like this app it is a single portable EXE that needs no configuration, which makes it a practical double-click target.
 
 **Setup:**
 
@@ -96,7 +94,7 @@ To cover both cases - the reset happening with the app running, **and** the app 
 
 ### Target a specific quota variant
 
-Use `USAGE_MONITOR_VARIANT` to run a command only when a specific quota resets. This example sends a minimal Claude Code ping the moment the 5-hour session resets, so the next 5-hour session starts immediately instead of waiting for your first real message:
+Use `USAGE_MONITOR_VARIANT` to run a command only when a specific quota resets:
 
 ```json
 {
@@ -210,7 +208,7 @@ Fires whenever usage drops (not only when nearly exhausted).
 | `USAGE_MONITOR_TITLE` | `Quota Reset` | Notification title (localized) |
 | `USAGE_MONITOR_MESSAGE` | `Your quota has been reset...` | Notification message (localized) |
 
-Both quota values are included so your script can check whether you are actually unblocked. For example, the session quota may reset while the weekly quota is still at the limit. Use `USAGE_MONITOR_PREV_UTILIZATION` to filter if you only want to act on significant resets.
+Both quota values are included so your script can check whether you are actually unblocked - the session quota may reset while the weekly quota is still at the limit. `USAGE_MONITOR_PREV_UTILIZATION` lets you act only on significant resets.
 
 ### `on_threshold_command`
 
@@ -248,7 +246,7 @@ Per-quota variables are emitted for every quota field the API returns - addition
 
 ### `on_double_click_command`
 
-Fires when you double-click the tray icon. Receives the same full quota state as `on_startup_command` (from the most recent successful update), so the command can act on current usage if it wants to. Most double-click commands simply launch another program and ignore these values.
+Fires when you double-click the tray icon. Receives the same full quota state as `on_startup_command`, taken from the most recent successful update.
 
 | Variable | Example | Description |
 |---|---|---|

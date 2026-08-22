@@ -12,7 +12,7 @@ A native Windows tray app that shows your Claude usage at a glance - lightweight
 > [!TIP]
 > **Companion tool: [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)**
 >
-> Usage Monitor for Claude tells you *how much* of your rate limits you have left. Its companion tool, [**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude), tells you *what your agents are actually doing* - a live overview of every running Claude Code agent across all your projects: which ones are working, waiting for your input, blocked, finished, or errored, refreshed every few seconds. Agents are grouped by project with the ones that need attention floated to the top, each with its estimated cost, token breakdown, model, and host - and one click brings any agent's window to the foreground. If you run more than one agent at a time, it turns "which window was that again?" into a glance at the tray.
+> Usage Monitor for Claude tells you *how much* of your rate limits you have left. Its companion tool, [**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude), tells you *what your agents are actually doing*: every running Claude Code agent across all your projects, grouped by project, with the ones that need attention on top - working, waiting for input, blocked, finished, or errored, each with its cost, tokens, model, and host. One click brings an agent's window to the foreground.
 >
 > You can even [launch it with a double-click on the tray icon](docs/event-commands.md#launch-agent-monitor-for-claude-on-double-click).
 
@@ -20,12 +20,12 @@ A native Windows tray app that shows your Claude usage at a glance - lightweight
 
 - **Portable** - single EXE (~12.5 MB), no installation, no Electron, no runtime required. Download, place anywhere, run. To uninstall, delete the file
 - **Zero configuration** - authenticates through your existing Claude Code login, no API key or manual token entry needed
-- **Live tray icon** with two [configurable](docs/configuration.md#tray-icon-bars) progress bars (session + weekly by default) or, via the `icon_style` setting, both values as stacked percentages, plus [configurable tooltip](docs/configuration.md#tooltip-fields), percentage display, and theme-aware colors for light and dark taskbars
-- **Detail popup** (left-click) showing account info, dynamically detected usage bars for all active quota types (Session, Weekly, Sonnet, Opus, Fable, Cowork, and any new quotas Anthropic adds) with [configurable field selection](docs/configuration.md#popup-fields), extra usage, reset countdowns, and a stale-data indicator when values may be outdated; pin it open and move it while pinned to keep usage details visible during long sessions, and [configure a compact pinned view](docs/configuration.md#compact-pinned-view) that hides the sections and bars you do not need. Reset times follow your Windows 24-hour or 12-hour clock format automatically
-- **Claude Code versions** - the popup shows which version is installed in each environment (native CLI, VS Code, Cursor, Windsurf), making it easy to spot when your IDE extension is ahead of or behind the CLI. Run Claude Code somewhere the app cannot see it, such as WSL? Add it with the [`cli_command`](docs/configuration.md#claude-cli-command) setting and its version is listed alongside the rest
+- **Live tray icon** with two [configurable](docs/configuration.md#tray-icon-bars) progress bars (session + weekly by default), or both values as stacked percentages via `icon_style`. Plus a [configurable tooltip](docs/configuration.md#tooltip-fields), percentage display, and theme-aware colors for light and dark taskbars
+- **Detail popup** (left-click) with account info, reset countdowns, extra usage, and dynamically detected bars for every active quota type (Session, Weekly, Sonnet, Opus, Fable, Cowork, and whatever Anthropic adds next), [selectable per field](docs/configuration.md#popup-fields). A stale-data indicator flags values that may be outdated. Pin it open and drag it anywhere to keep usage visible during long sessions - optionally as a [compact view](docs/configuration.md#compact-pinned-view) with only the parts you need. Reset times follow your Windows clock format
+- **Claude Code versions** - the popup shows which version is installed in each environment (native CLI, VS Code, Cursor, Windsurf), so you can spot when your IDE extension is ahead of or behind the CLI. Installs the app cannot see, such as one inside WSL, are listed alongside the rest via the [`cli_command`](docs/configuration.md#claude-cli-command) setting
 - **Smart alerts** - configurable threshold notifications per quota type, with time-aware mode that only alerts when usage outpaces elapsed time. Reset notifications when a nearly exhausted quota refills. Extra usage can also alert on absolute spending amounts (e.g. $50 / $100 / $150 spent), the only alert available when it has no monthly limit
 - **[Event commands](docs/event-commands.md)** - run a custom shell command when a quota resets, a usage threshold is crossed, the app starts up, or you double-click the tray icon. Send push notifications to your phone, resume an AI agent, start a fresh 5-hour session automatically, play an alert sound, launch a companion tool like [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude) on double-click, or trigger any custom workflow
-- **Time marker** on each bar showing elapsed time in the current period - in the detail popup and on the tray icon bars - so you can instantly see whether your usage is ahead of or behind the clock; bars that outpace the clock turn red, in the popup and tray alike
+- **Time marker** on every bar, in the popup and on the tray icon alike, showing how much of the current period has elapsed - so you see at a glance whether your usage is ahead of or behind the clock. Bars that outpace it turn red
 - **Automatic token refresh** - when the OAuth session expires, runs `claude update` in the background to renew the token without user intervention. If a CLI update is installed, shows a notification (which you can turn off via the `notify_claude_update` setting)
 - **Adaptive polling** - speeds up during active usage, pauses when the computer is idle or locked, aligns to imminent quota resets, and backs off on rate-limit errors. Switching your Claude account refreshes the tray immediately, so it never lingers on the previous account's usage
 - **Multi-account** - monitor several Claude accounts side by side: launch one instance per account with `--config-dir="<path>"` pointing at each account's Claude config directory. Each tray icon shows its account's usage, with a `[dir-name]` tooltip prefix, per-instance settings, and its own autostart entry
@@ -51,7 +51,7 @@ This tool handles your Claude Code OAuth token, so you should be able to verify 
 ## Requirements
 
 - **Windows 10 or Windows 11** (64-bit)
-- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and logged in (CLI, VS Code extension, or JetBrains plugin - any variant works). The app reads the OAuth token that Claude Code stores locally (`~/.claude/.credentials.json`). If you have `CLAUDE_CONFIG_DIR` set, the app uses that directory instead, and the `--config-dir="<path>"` command-line parameter overrides both - useful to run one instance per Claude account (log each extra account in via Claude Code with `CLAUDE_CONFIG_DIR` pointing to its own directory first).
+- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and logged in (CLI, VS Code extension, or JetBrains plugin - any variant works). The app reads the OAuth token that Claude Code stores locally (`~/.claude/.credentials.json`), or from `CLAUDE_CONFIG_DIR` when that is set; the `--config-dir="<path>"` command-line parameter overrides both. To run one instance per Claude account, log each account in via Claude Code with `CLAUDE_CONFIG_DIR` pointing at its own directory first.
 
 > [!TIP]
 > If the token expires, the app automatically runs `claude update` to refresh it. If the token is missing entirely, the app shows a notification and a "!" icon - log in to Claude Code and the monitor picks it up automatically.
@@ -96,7 +96,7 @@ Windows may hide new tray icons by default. To keep the icon always visible:
 Each bar in the detail popup has up to four visual elements:
 
 1. **Blue fill** - how much of the limit you have used
-2. **Time dividers** - subtle gaps splitting the session bar into equal hour sections and marking local midnights on the weekly bars, visually grouping usage into hour and day segments
+2. **Time dividers** - subtle gaps splitting the session bar into equal hour sections and marking local midnights on the weekly bars
 3. **White vertical line** - how much *time* has passed in the current period. The fill turns **red** when it passes this marker, warning that you may hit the limit before the period resets.
 4. **Reset text** - when the limit resets, shown as a countdown with clock time
 
@@ -166,7 +166,7 @@ The popup UI lives in [`usage_monitor_for_claude/popup/`](usage_monitor_for_clau
 start http://localhost:8080/usage_monitor_for_claude/popup/dev.html && python -m http.server 8080
 ```
 
-This starts a local server and opens the dev preview in your default browser. Use the buttons to switch between data presets (full, minimal, error, loading) and the language dropdown to preview every locale (so you can spot strings that overflow the popup width). Test CSS/JS changes with instant feedback.
+This starts a local server and opens the dev preview in your default browser. Use the buttons to switch between data presets (full, minimal, error, loading) and the language dropdown to preview every locale, which is how you spot strings that overflow the popup width.
 
 ### Create a Release
 

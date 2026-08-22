@@ -12,11 +12,11 @@ All settings work out of the box - no configuration file is needed. To customize
 
 The app searches for this file in these locations (first match wins):
 
-1. **`$CLAUDE_CONFIG_DIR/usage-monitor-settings.json`** (only if a custom config directory is set via `--config-dir` or `CLAUDE_CONFIG_DIR` and differs from `~/.claude/`) - this lets every instance have its own settings when running one instance per Claude account
+1. **`$CLAUDE_CONFIG_DIR/usage-monitor-settings.json`** (only if a custom config directory is set via `--config-dir` or `CLAUDE_CONFIG_DIR` and differs from `~/.claude/`) - so each instance can have its own settings
 2. **Next to the EXE** (or project root when running from source)
 3. **`~/.claude/usage-monitor-settings.json`**
 
-The app never creates or modifies this file. To start, create an empty file and add keys as needed. Settings are read at startup - after editing the file, use the **Restart** option in the tray context menu to apply changes.
+The app never creates or modifies this file. Settings are read at startup - after editing the file, use the **Restart** option in the tray context menu to apply changes.
 
 ## Alert thresholds
 
@@ -51,7 +51,7 @@ When a background token refresh installs a new Claude CLI version, the app shows
 
 The popup lists the Claude Code version of the native Windows CLI and of each IDE extension it finds. Installs it cannot see - most commonly a Claude Code running inside WSL - are missing from that list. Use `cli_command` to have their versions reported as well.
 
-The value is an object mapping a display name to the base command as an array of arguments (the app appends `--version` itself). Each entry is listed in the popup under the name you give it, **in addition to** the native CLI and the IDE extensions, which keep working exactly as before.
+The value is an object mapping a display name to the base command as an array of arguments (the app appends `--version` itself). Each entry is listed in the popup under the name you give it, **in addition to** the native CLI and the IDE extensions.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -67,10 +67,8 @@ The value is an object mapping a display name to the base command as an array of
 
 An entry only appears once its command reports a version, so if it stays missing, run the command yourself in a terminal - `wsl /home/<user>/.local/bin/claude --version` has to print a version number.
 
-Two things worth knowing:
-
-- **This setting is display only.** It reports a version and nothing else. Automatic token refresh keeps using the native Windows CLI, because that is the install whose credentials this app reads - a Claude Code inside WSL keeps its own credentials there.
-- **The version is read once per app start.** A custom command has no local file whose timestamp could reveal an update, and re-running it on every refresh would start WSL every few minutes. After updating Claude Code inside WSL, restart the app to see the new version.
+- **This setting is display only.** Automatic token refresh keeps using the native Windows CLI, whose credentials this app reads.
+- **The version is read once per app start.** After updating Claude Code inside WSL, restart the app to see the new version.
 
 ## Tooltip fields
 
@@ -133,7 +131,7 @@ Must be an array of non-empty strings. Duplicates are silently removed. Unknown 
 
 Entries can be either a **section key** or a **usage field name**:
 
-**Section keys:** `account` (email and plan), `extra_usage` (paid overage bar), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When hiding leaves only the usage bars (no other section visible), the "Usage" heading is dropped automatically, since it has nothing left to distinguish the bars from.
+**Section keys:** `account` (email and plan), `extra_usage` (paid overage bar), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When nothing but the usage bars is left, the "Usage" heading is dropped automatically.
 
 **Usage field names:** any quota field, e.g. `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`. This hides that single bar in the pinned view, independent of [`popup_fields`](#popup-fields) (which controls the normal, unpinned popup).
 
@@ -169,7 +167,7 @@ Each entry can optionally include a display mode suffix using colon syntax: `"fi
 
 In `utilization` mode, each bar also shows a thin vertical marker at the elapsed-time position of the quota period - the same information as the time marker in the detail popup. When usage is ahead of the elapsed time (or fully exhausted), the bar fill switches to the warning color (`fg_warn` in [Tray icon colors](#tray-icon-colors)), matching the popup's red warning fill.
 
-**The `"numbers"` style** replaces the bars with a second percentage: the first `icon_fields` entry becomes the top row, the second the bottom row. Each row follows the same rules as the classic icon text - an exhausted quota shows `✕` (or `$` when paid extra usage is still available); when both quotas are exhausted at once, the icon collapses to a single full-size `✕`/`$` like the classic style. The time marker, the warning color, and the `:overage` mode suffix have no effect in this style, and while both quotas are at 0% the icon shows the usual idle "C". Each stacked number is rendered at the same size as the classic single percentage.
+**The `"numbers"` style** replaces the bars with a second percentage: the first `icon_fields` entry becomes the top row, the second the bottom row. Each row follows the same rules as the classic icon text - an exhausted quota shows `✕` (or `$` when paid extra usage is still available), and when both are exhausted the icon collapses to a single full-size `✕`/`$`. The time marker, the warning color, and the `:overage` suffix have no effect in this style; while both quotas are at 0% the icon shows the usual idle "C".
 
 **Example** - show session and weekly usage as two stacked percentages:
 
@@ -233,7 +231,7 @@ By default, reset times follow your Windows clock format (the 24-hour or 12-hour
 
 ## Currency
 
-The app shows extra usage amounts in the billing currency the Anthropic API reports for your account (its symbol and decimal precision), falling back to your Windows locale's currency symbol when the API does not report one. If you want a different symbol, override it here - your override always wins. Number formatting (decimal separator, symbol position) always follows your system locale.
+The app shows extra usage amounts in the billing currency the Anthropic API reports for your account (its symbol and decimal precision), falling back to your Windows locale's currency symbol when the API does not report one. An override set here always wins. Number formatting (decimal separator, symbol position) always follows your system locale.
 
 | Key | Default | Description |
 |-----|---------|-------------|

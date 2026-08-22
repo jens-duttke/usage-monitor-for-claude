@@ -137,6 +137,11 @@ Prioritize readability and auditability - users handle credentials and must be a
 - Write feature descriptions from the user's perspective - lead with the problem solved or value gained, not the implementation. Ask: "why would someone choose this tool because of this feature?"
 - Unique features (no competing tool has them) deserve a standalone bullet; convenience improvements that could be described as sub-details of an existing feature belong in that feature's description instead
 
+## User Documentation (`README.md`, `docs/`)
+- State what happens and what the user has to do - never why the code works that way. A reason belongs in a code comment or in this file; the reader of a settings page is configuring the app, not reviewing the design
+- Cut a sentence that only justifies a behavior, repeats the first half of its own sentence, or restates what another passage already said. Prefer short sentences over semicolon chains, and put the condition first ("If the command starts an app, ...") instead of building a subject out of a subordinate clause
+- Never duplicate a passage between `README.md` and `docs/` - link to the one place that owns it. A feature pitch copied into a how-to page is the common case: the how-to needs one sentence of context, not the pitch
+
 ## Changelog
 - Update `CHANGELOG.md` for every user-facing change (new features, bug fixes, behavior changes, UI changes)
 - Do not add changelog entries for internal refactors, code style changes, or documentation-only changes unless they affect the user

@@ -1,8 +1,8 @@
 # Automatic Update Check
 
-The app itself never contacts GitHub - it communicates exclusively with `api.anthropic.com`. Update checking is available as an optional PowerShell script that you run via [event commands](event-commands.md). This keeps the security model intact while giving you full control over when and how updates are checked.
+The app itself never contacts GitHub - it communicates exclusively with `api.anthropic.com`. Update checking is available as an optional PowerShell script that you run via [event commands](event-commands.md).
 
-The script queries the GitHub Releases API, compares the latest version against the running app version, and shows a Windows toast notification if a newer release exists. Clicking the notification opens the download page in your browser. If no update is available or the network is unreachable, nothing happens.
+The script queries the GitHub Releases API and shows a Windows toast notification if a newer release exists. Clicking it opens the download page in your browser.
 
 ## Setup
 
@@ -44,7 +44,7 @@ catch {
 }
 ```
 
-The app automatically sets the `USAGE_MONITOR_VERSION` environment variable for all event commands, so the script always knows the currently running version without hardcoding it.
+The app sets `USAGE_MONITOR_VERSION` for all event commands, so the script never needs a hardcoded version.
 
 ### 2. Configure the event command
 
@@ -88,8 +88,6 @@ Use the **Restart** option in the tray context menu to load the new settings.
 3. If the latest release tag is newer than `USAGE_MONITOR_VERSION`, a toast notification appears
 4. Clicking the notification opens the GitHub release page in your default browser
 5. If the request fails (no internet, API down, rate-limited), the script exits silently
-
-The script never downloads or installs anything automatically.
 
 ## Customizing the notification appearance
 
