@@ -752,12 +752,16 @@ class UsageMonitorForClaude:
         action, so a command that exits with a non-zero code surfaces its
         stderr in an error dialog (``capture_output``) instead of failing
         silently - unlike the automatic reset/threshold/startup commands.
+        The dialog is limited to failures right after the launch
+        (``report_late_failures=False``): this command usually starts an app
+        the user keeps open, and its exit code once that app closes says
+        nothing about the command being configured correctly.
         """
         if not ON_DOUBLE_CLICK_COMMAND:
             return
 
         env_vars = {'USAGE_MONITOR_EVENT': 'double_click', **self._quota_snapshot_env(self._last_response)}
-        run_event_command(ON_DOUBLE_CLICK_COMMAND, env_vars, capture_output=True)
+        run_event_command(ON_DOUBLE_CLICK_COMMAND, env_vars, capture_output=True, report_late_failures=False)
 
     def _run_reset_command(
         self, variant: str, pct: float, prev_pct: float, *, data: dict[str, Any], entry: dict[str, Any],

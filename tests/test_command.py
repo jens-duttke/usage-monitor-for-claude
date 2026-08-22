@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from usage_monitor_for_claude import command
 from usage_monitor_for_claude.command import run_event_command
 
 
@@ -240,6 +241,94 @@ class TestRunEventCommandCaptureOutput(unittest.TestCase):
         mock_thread.call_args[1]['target']()
 
         mock_ctypes.windll.user32.MessageBoxW.assert_not_called()
+
+
+class TestStartupFailureWindow(unittest.TestCase):
+    """Tests for report_late_failures, which limits the error box to startup failures."""
+
+    def _run(self, returncode: int, runtime: float, report_late_failures: bool):
+        """Run one capture_output command with a mocked runtime.
+
+        Returns the MessageBoxW mock and everything the command printed.
+        """
+        # First call is the launch timestamp, every later one the exit time, so a
+        # stray call from an unrelated thread cannot exhaust the mocked clock.
+        launch_timestamps = iter([0.0])
+
+        def fake_monotonic() -> float:
+            return next(launch_timestamps, runtime)
+
+        with (
+            patch('usage_monitor_for_claude.command.ctypes') as mock_ctypes,
+            patch('builtins.print') as mock_print,
+            patch('usage_monitor_for_claude.command.threading.Thread') as mock_thread,
+            patch('usage_monitor_for_claude.command.time.monotonic', fake_monotonic),
+            patch('usage_monitor_for_claude.command.subprocess.Popen') as mock_popen,
+        ):
+            mock_popen.return_value.communicate.return_value = ('', 'the failure detail')
+            mock_popen.return_value.returncode = returncode
+
+            run_event_command(
+                ['app.exe'], {'USAGE_MONITOR_EVENT': 'double_click'},
+                capture_output=True, report_late_failures=report_late_failures,
+            )
+            mock_thread.call_args[1]['target']()
+
+        printed = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
+
+        return mock_ctypes.windll.user32.MessageBoxW, printed
+
+    def test_late_failure_suppressed_when_late_reporting_is_off(self):
+        """An app that ran for a while and then exited non-zero raises no dialog."""
+        runtime = command._STARTUP_FAILURE_WINDOW + 60.0
+        message_box, _printed = self._run(returncode=1, runtime=runtime, report_late_failures=False)
+
+        message_box.assert_not_called()
+
+    def test_suppressed_failure_is_still_printed(self):
+        """A suppressed failure stays visible on the console - only the dialog is dropped."""
+        runtime = command._STARTUP_FAILURE_WINDOW + 60.0
+        message_box, printed = self._run(returncode=1, runtime=runtime, report_late_failures=False)
+
+        message_box.assert_not_called()
+        self.assertIn('the failure detail', printed)
+        self.assertIn('exit code: 1', printed)
+
+    def test_startup_failure_still_reported_when_late_reporting_is_off(self):
+        """A command failing right after launch (wrong path) still raises the dialog."""
+        message_box, _printed = self._run(returncode=1, runtime=0.2, report_late_failures=False)
+
+        message_box.assert_called_once()
+
+    def test_failure_at_the_window_boundary_is_reported(self):
+        """The window is inclusive - a failure exactly at the limit still reports."""
+        runtime = command._STARTUP_FAILURE_WINDOW
+        message_box, _printed = self._run(returncode=1, runtime=runtime, report_late_failures=False)
+
+        message_box.assert_called_once()
+
+    def test_late_failure_reported_by_default(self):
+        """The 'Test event commands' menu keeps the default: any non-zero exit reports."""
+        runtime = command._STARTUP_FAILURE_WINDOW + 60.0
+        message_box, _printed = self._run(returncode=1, runtime=runtime, report_late_failures=True)
+
+        message_box.assert_called_once()
+
+    def test_success_never_reports(self):
+        """A zero exit code shows no dialog, however long the command ran."""
+        runtime = command._STARTUP_FAILURE_WINDOW + 60.0
+        message_box, _printed = self._run(returncode=0, runtime=runtime, report_late_failures=False)
+
+        message_box.assert_not_called()
+
+    @patch('usage_monitor_for_claude.command.threading.Thread')
+    @patch('usage_monitor_for_claude.command.subprocess.Popen')
+    def test_no_effect_without_capture_output(self, mock_popen: MagicMock, mock_thread: MagicMock):
+        """Without capture_output the flag changes nothing - the command stays fire-and-forget."""
+        run_event_command(['app.exe'], {'USAGE_MONITOR_EVENT': 'reset'}, report_late_failures=False)
+
+        self.assertEqual(mock_popen.call_args[1]['stdout'], subprocess.DEVNULL)
+        mock_thread.assert_not_called()
 
 
 if __name__ == '__main__':

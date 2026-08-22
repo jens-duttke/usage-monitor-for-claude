@@ -3452,6 +3452,24 @@ class TestDoubleClickCommand(unittest.TestCase):
 
         self.assertTrue(mock_cmd.call_args[1].get('capture_output'))
 
+    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    def test_only_startup_failures_are_reported(self, mock_cmd):
+        """A late non-zero exit (crash, kill, replaced instance) must not raise a dialog long after the click."""
+        self.app._last_response = {'five_hour': {'utilization': 10.0}}
+
+        self.app._run_double_click_command()
+
+        self.assertFalse(mock_cmd.call_args[1].get('report_late_failures', True))
+
+    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    def test_test_menu_handler_reports_late_failures(self, mock_cmd):
+        """The 'Test event commands' menu keeps full reporting - there the exit code is the point."""
+        self.app.on_test_double_click()
+
+        self.assertTrue(mock_cmd.call_args[1].get('report_late_failures', True))
+
     @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', [])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_no_fire_when_command_unset(self, mock_cmd):
