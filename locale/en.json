@@ -50,6 +50,7 @@
     "extra_usage": "EXTRA USAGE",
     "extra_usage_spent": "{used} / {limit} spent",
     "extra_usage_spent_no_limit": "{used} spent",
+    "extra_usage_balance": "{balance} available",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Pin popup",

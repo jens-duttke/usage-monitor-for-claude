@@ -58,6 +58,7 @@
     "extra_usage": "ДОДАТКОВЕ ВИКОРИСТАННЯ",
     "extra_usage_spent": "Витрачено {used} / {limit}",
     "extra_usage_spent_no_limit": "Витрачено {used}",
+    "extra_usage_balance": "Доступно {balance}",
     "claude_code": "CLAUDE CODE",
     "changelog": "Список змін",
     "pin_popup": "Закріпити спливне вікно",

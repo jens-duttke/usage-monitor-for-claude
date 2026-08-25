@@ -58,6 +58,7 @@
     "extra_usage": "額外用量",
     "extra_usage_spent": "已用 {used} / {limit}",
     "extra_usage_spent_no_limit": "已用 {used}",
+    "extra_usage_balance": "可用 {balance}",
     "claude_code": "CLAUDE CODE",
     "changelog": "更新紀錄",
     "pin_popup": "固定彈出視窗",

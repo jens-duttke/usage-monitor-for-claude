@@ -51,6 +51,20 @@ def _usage_entries(usage: dict[str, Any]) -> list[tuple[str, dict[str, Any] | No
     return [(popup_label(key), usage.get(key), field_period(key), key) for key in fields]
 
 
+def _prepaid_balance_text(prepaid: dict[str, Any] | None) -> str:
+    """Return the rendered prepaid-credit balance line, or '' when unavailable."""
+    if not prepaid:
+        return ''
+
+    amount = prepaid.get('amount_minor')
+    if amount is None:
+        return ''
+
+    balance = format_credits(amount, prepaid.get('currency'), prepaid.get('decimal_places'))
+
+    return T['extra_usage_balance'].format(balance=balance)
+
+
 def _snapshot_to_dict(
     snap: CacheSnapshot, installations: list[dict[str, str]] | None = None, next_poll_time: float | None = None,
 ) -> dict[str, Any]:
@@ -109,6 +123,7 @@ def _snapshot_to_dict(
                 limit = extra_data.get('monthly_limit', 0) or 0
                 currency = extra_data.get('currency')
                 decimal_places = extra_data.get('decimal_places')
+                balance_text = _prepaid_balance_text(snap.prepaid)
                 if limit > 0:
                     pct = used / limit * 100
                     extra = {
@@ -119,6 +134,7 @@ def _snapshot_to_dict(
                             used=format_credits(used, currency, decimal_places),
                             limit=format_credits(limit, currency, decimal_places),
                         ),
+                        'balance_text': balance_text,
                     }
                 else:
                     # No monthly cap (e.g. uncapped pay-as-you-go credits) - show
@@ -130,6 +146,7 @@ def _snapshot_to_dict(
                         'spent_text': T['extra_usage_spent_no_limit'].format(
                             used=format_credits(used, currency, decimal_places),
                         ),
+                        'balance_text': balance_text,
                     }
 
     # Installations

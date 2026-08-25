@@ -72,3 +72,39 @@ https://api.anthropic.com/api/oauth/profile
   }
 }
 ```
+
+## /api/oauth/organizations/{org_uuid}/prepaid/credits
+
+```
+https://api.anthropic.com/api/oauth/organizations/{org_uuid}/prepaid/credits
+```
+
+`{org_uuid}` is the `organization.uuid` from the profile response. Amounts are in minor units, so `5597` with `"exponent": 2` means 55.97. The money objects nested in the tranches are `null` on this endpoint, unlike the one behind the web app.
+
+```json
+{
+  "amount": 5597,
+  "currency": "EUR",
+  "balance": {
+    "money": { "amount_minor": 5597, "currency": "EUR", "exponent": 2 },
+    "credits": null
+  },
+  "balance_credits": null,
+  "auto_reload_settings": null,
+  "expiry_policy_months": null,
+  "tranches": [],
+  "promo_tranches": [
+    {
+      "remaining_amount_minor_units": 5596,
+      "granted_amount_minor_units": 8500,
+      "currency": "EUR",
+      "expires_at": "2026-09-19T00:00:00Z",
+      "granted_at": null,
+      "remaining": null,
+      "granted": null,
+      "program_id": null
+    }
+  ],
+  "next_expires_at": "2026-09-19T00:00:00Z"
+}
+```

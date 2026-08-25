@@ -58,6 +58,7 @@
     "extra_usage": "UTILIZZO EXTRA",
     "extra_usage_spent": "{used} / {limit} speso",
     "extra_usage_spent_no_limit": "{used} speso",
+    "extra_usage_balance": "{balance} disponibile",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Fissa popup",
