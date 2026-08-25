@@ -17,13 +17,14 @@ from usage_monitor_for_claude.popup import UsagePopup, _init_config, _snapshot_t
 
 
 def _snap(
-    usage=None, profile=None, last_success_time=None,
+    usage=None, profile=None, prepaid=None, last_success_time=None,
     refreshing=False, last_error=None, version=1,
 ) -> CacheSnapshot:
     """Build a CacheSnapshot with convenient defaults."""
     return CacheSnapshot(
         usage=usage or {},
         profile=profile,
+        prepaid=prepaid,
         last_success_time=last_success_time,
         refreshing=refreshing,
         last_error=last_error,

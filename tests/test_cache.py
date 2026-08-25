@@ -989,6 +989,100 @@ class TestNullQuotaFields(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Prepaid credit balance
+# ---------------------------------------------------------------------------
+
+_PREPAID_BALANCE = {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2}
+_ORG_PROFILE = {'organization': {'uuid': 'org-uuid-1'}}
+
+
+class TestPrepaidBalance(unittest.TestCase):
+    """Tests for fetching the prepaid credit balance alongside the usage data."""
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=_PREPAID_BALANCE)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_success_stores_balance(self, _mock_fetch, mock_prepaid):
+        """A successful usage fetch stores the balance for the same cycle."""
+        cache = _make_cache()
+        cache._profile = _ORG_PROFILE
+
+        cache.update()
+
+        mock_prepaid.assert_called_once_with('org-uuid-1')
+        self.assertEqual(cache.prepaid, _PREPAID_BALANCE)
+        self.assertEqual(cache.snapshot.prepaid, _PREPAID_BALANCE)
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits')
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_unknown_org_uuid_skips_request(self, _mock_fetch, mock_prepaid):
+        """Without a profile - or without an organization uuid in it - no request is made."""
+        for profile in (None, {}, {'organization': None}, {'organization': {}}):
+            with self.subTest(profile=profile):
+                cache = _make_cache()
+                cache._profile = profile
+
+                cache.update()
+
+                mock_prepaid.assert_not_called()
+                self.assertIsNone(cache.prepaid)
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=None)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_unavailable_balance_leaves_usage_intact(self, _mock_fetch, _mock_prepaid):
+        """An unavailable balance never affects the usage result."""
+        cache = _make_cache()
+        cache._profile = _ORG_PROFILE
+
+        result = cache.update()
+
+        self.assertEqual(result.data, _SUCCESS_DATA)
+        self.assertEqual(cache.usage, _SUCCESS_DATA)
+        self.assertIsNone(cache.last_error)
+        self.assertEqual(cache.consecutive_errors, 0)
+        self.assertIsNone(cache.prepaid)
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=None)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_balance_cleared_when_no_longer_available(self, _mock_fetch, mock_prepaid):
+        """A balance that disappears is cleared instead of being shown stale."""
+        cache = _make_cache()
+        cache._profile = _ORG_PROFILE
+        cache._prepaid = _PREPAID_BALANCE
+
+        cache.update()
+
+        self.assertIsNone(cache.prepaid)
+        mock_prepaid.assert_called_once()
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=_PREPAID_BALANCE)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
+    def test_failed_usage_fetch_skips_balance(self, _mock_fetch, mock_prepaid):
+        """No balance request is made when the usage fetch failed."""
+        cache = _make_cache()
+        cache._profile = _ORG_PROFILE
+
+        cache.update()
+
+        mock_prepaid.assert_not_called()
+        self.assertIsNone(cache.prepaid)
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=_PREPAID_BALANCE)
+    @patch('usage_monitor_for_claude.cache.refresh_token')
+    @patch('usage_monitor_for_claude.cache.read_access_token', side_effect=['tok-a', 'tok-b'])
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_balance_fetched_after_recovered_auth_error(self, mock_fetch, _mock_token, _mock_refresh, mock_prepaid):
+        """The retry that recovers a 401 also stores the balance."""
+        mock_fetch.side_effect = [_AUTH_ERROR_DATA, _SUCCESS_DATA]
+        cache = _make_cache()
+        cache._profile = _ORG_PROFILE
+
+        cache.update()
+
+        mock_prepaid.assert_called_once_with('org-uuid-1')
+        self.assertEqual(cache.prepaid, _PREPAID_BALANCE)
+
+
+# ---------------------------------------------------------------------------
 # ensure_profile token-change re-fetch
 # ---------------------------------------------------------------------------
 

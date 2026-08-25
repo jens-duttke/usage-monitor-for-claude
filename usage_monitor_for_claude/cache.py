@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .api import fetch_profile, fetch_usage, read_access_token
+from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, read_access_token
 from .claude_cli import RefreshResult, refresh_token
 from .settings import MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
 
@@ -30,6 +30,7 @@ class CacheSnapshot:
 
     usage: dict[str, Any]
     profile: dict[str, Any] | None
+    prepaid: dict[str, Any] | None
     last_success_time: float | None
     refreshing: bool
     last_error: str | None
@@ -74,6 +75,7 @@ class UsageCache:
         self._usage_token: str | None = None
         self._profile: dict[str, Any] | None = None
         self._profile_token: str | None = None
+        self._prepaid: dict[str, Any] | None = None
         self._last_success_time: float | None = None
         self._refreshing = False
         self._last_error: str | None = None
@@ -92,6 +94,11 @@ class UsageCache:
     @property
     def profile(self) -> dict[str, Any] | None:
         return self._profile
+
+    @property
+    def prepaid(self) -> dict[str, Any] | None:
+        """Prepaid credit balance from the last successful fetch, or None."""
+        return self._prepaid
 
     @property
     def last_success_time(self) -> float | None:
@@ -126,6 +133,7 @@ class UsageCache:
             return CacheSnapshot(
                 usage=self._usage,
                 profile=self._profile,
+                prepaid=self._prepaid,
                 last_success_time=self._last_success_time,
                 refreshing=self._refreshing,
                 last_error=self._last_error,
@@ -283,8 +291,26 @@ class UsageCache:
         pct_5h = (data.get('five_hour') or {}).get('utilization')
         pct_7d = (data.get('seven_day') or {}).get('utilization')
         log.info('fetch_usage -> OK (5h: %s%%, 7d: %s%%)', pct_5h if pct_5h is not None else '?', pct_7d if pct_7d is not None else '?')
-        self._record_success(data, token_before)
+        self._record_success(data, token_before, self._fetch_prepaid_balance())
         return UpdateResult(data=data, token=token_before)
+
+    def _fetch_prepaid_balance(self) -> dict[str, Any] | None:
+        """Fetch the prepaid credit balance of the current organization.
+
+        Runs in the same cycle as the usage fetch, so it inherits the
+        cooldown, the 429 backoff and the adaptive cadence of
+        ``_update_locked`` instead of needing throttling of its own.  The
+        balance is supplementary: without a known organization uuid, or on
+        any failure, it stays None and the usage result is unaffected.
+        """
+        org_uuid = ((self._profile or {}).get('organization') or {}).get('uuid')
+        if not org_uuid:
+            return None
+
+        prepaid = fetch_prepaid_credits(org_uuid)
+        log.debug('fetch_prepaid_credits -> %s', 'OK' if prepaid else 'unavailable')
+
+        return prepaid
 
     def _apply_rate_limit_backoff(self, data: dict[str, Any]) -> None:
         """Arm the 429 backoff window from a rate-limited error response.
@@ -320,7 +346,7 @@ class UsageCache:
                 error += f'\n{server_msg}'
             self._last_error = error
 
-    def _record_success(self, data: dict[str, Any], token: str | None) -> None:
+    def _record_success(self, data: dict[str, Any], token: str | None, prepaid: dict[str, Any] | None) -> None:
         """Apply common state updates after a successful API response.
 
         Parameters
@@ -329,6 +355,9 @@ class UsageCache:
             Successful API response.
         token : str or None
             Access token that was in effect when the request was sent.
+        prepaid : dict or None
+            Prepaid credit balance fetched in the same cycle, or None when
+            unavailable.
         """
         # _usage is always reassigned (never mutated in place), so existing
         # CacheSnapshot references remain valid after this update.
@@ -340,6 +369,7 @@ class UsageCache:
             self._last_failed_token = None
             self._usage = data
             self._usage_token = token
+            self._prepaid = prepaid
             self._refreshing = False
             self._version += 1
 
@@ -387,7 +417,7 @@ class UsageCache:
         data = fetch_usage()
         if 'error' not in data:
             log.info('retry -> OK')
-            self._record_success(data, current_token)
+            self._record_success(data, current_token, self._fetch_prepaid_balance())
             return result, data
 
         log.warning('retry -> error: %s', data['error'])
