@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Feature request or idea
+    url: https://github.com/jens-duttke/usage-monitor-for-claude/discussions/categories/ideas
+    about: Suggest a feature, or upvote and comment on an existing idea. Feature requests are handled in Discussions, not Issues.
+  - name: Question or usage help
+    url: https://github.com/jens-duttke/usage-monitor-for-claude/discussions
+    about: Ask about setup, configuration, or how something works.
