@@ -87,12 +87,17 @@ pip install -r requirements.txt
 python3 -m usage_monitor_for_claude
 ```
 
-To start it again later, activate the environment first:
+To start it again later, use the launcher - it needs no activated environment and works from any
+directory:
 
 ```bash
-cd usage-monitor-for-claude
-source .venv/bin/activate
-python3 -m usage_monitor_for_claude
+~/usage-monitor-for-claude/usage-monitor-for-claude
+```
+
+Symlink it once to get a global command, available in any shell and in your desktop's run dialog:
+
+```bash
+ln -s ~/usage-monitor-for-claude/usage-monitor-for-claude ~/.local/bin/usage-monitor-for-claude
 ```
 
 Enable **Start at login** from the tray menu and the app takes care of the rest.
