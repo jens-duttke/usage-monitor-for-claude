@@ -10,7 +10,6 @@ any string interpolation in the command itself.
 """
 from __future__ import annotations
 
-import ctypes
 import os
 import subprocess
 import sys
@@ -20,6 +19,7 @@ import traceback
 from pathlib import Path
 
 from . import __version__
+from .platforms import no_window_kwargs, show_error_box
 
 __all__ = ['run_event_command']
 
@@ -86,7 +86,7 @@ def run_event_command(
                 subprocess.Popen(
                     command, shell=True, env=env, cwd=working_dir,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    **no_window_kwargs(),
                 )
         except Exception:
             traceback.print_exc()
@@ -105,7 +105,7 @@ def _launch_and_report(command: str, env: dict[str, str], working_dir: Path, rep
         command, shell=True, env=env, cwd=working_dir,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, errors='replace',
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        **no_window_kwargs(),
     )
     started_at = time.monotonic()
 
@@ -136,4 +136,4 @@ def _show_error_box(command: str, returncode: int, stderr: str) -> None:
     """Show an error message box reporting a failed command and its stderr."""
     detail = stderr.strip() or '(no error output on stderr)'
     message = f'The event command exited with code {returncode}:\n\n{command}\n\n{detail}'
-    ctypes.windll.user32.MessageBoxW(0, message[:2000], 'Usage Monitor for Claude - Event Command Failed', 0x10)
+    show_error_box(message, 'Usage Monitor for Claude - Event Command Failed')

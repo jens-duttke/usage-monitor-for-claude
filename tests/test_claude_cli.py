@@ -13,6 +13,7 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from usage_monitor_for_claude.platforms import no_window_kwargs
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude import claude_cli
@@ -170,7 +171,7 @@ class TestCliVersion(unittest.TestCase):
         mock_run.assert_called_once_with(
             [str(path), '--version'],
             capture_output=True, text=True, encoding='utf-8', errors='replace',
-            timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=10, **no_window_kwargs(),
         )
 
     @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
@@ -516,7 +517,7 @@ class TestCommandVersion(unittest.TestCase):
         mock_run.assert_called_once_with(
             ['wsl', '/home/user/.local/bin/claude', '--version'],
             capture_output=True, text=True, encoding='utf-8', errors='replace',
-            timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+            timeout=10, **no_window_kwargs(),
         )
 
     @patch('usage_monitor_for_claude.claude_cli.subprocess.run')
@@ -737,24 +738,43 @@ class TestRunCli(unittest.TestCase):
     the mechanism they are about.
     """
 
+    def _run_with_locale_codec(self):
+        """Run the UTF-8 child while decoding with a codec that cannot read it."""
+        return subprocess.run(
+            [sys.executable, '-c', _UTF8_CHILD],
+            capture_output=True, text=True, encoding='cp950', timeout=30,
+            **no_window_kwargs(),
+        )
+
+    @unittest.skipUnless(sys.platform == 'win32', 'only Windows drains pipes on reader threads')
     def test_locale_codec_loses_the_captured_stream(self):
         """Reproduces #80: a locale codec that cannot decode UTF-8 drops the output.
 
         Naming cp950 explicitly reproduces the reporter's Traditional Chinese
-        system on any machine.  Both streams come back as None even though
-        capture_output was set, and that None is what the crash concatenated.
+        system on any machine.  Windows drains the pipes on reader threads, so
+        the decode failure dies there: both streams come back as None even
+        though capture_output was set, and that None is what the crash
+        concatenated.
         """
         # The decode failure surfaces as an uncaught exception in subprocess's
         # reader thread; silence its traceback to keep the test output readable.
         with patch('threading.excepthook', lambda args: None):
-            proc = subprocess.run(
-                [sys.executable, '-c', _UTF8_CHILD],
-                capture_output=True, text=True, encoding='cp950', timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+            proc = self._run_with_locale_codec()
         self.assertEqual(proc.returncode, 0)
         self.assertIsNone(proc.stdout)
         self.assertIsNone(proc.stderr)
+
+    @unittest.skipIf(sys.platform == 'win32', 'POSIX decodes on the calling thread')
+    def test_locale_codec_raises_on_posix(self):
+        """The same misuse loses the output on POSIX too, just louder.
+
+        POSIX drains the pipes with a selector on the calling thread, so the
+        decode failure propagates instead of being swallowed into a None
+        stream.  Either way the captured output is gone, which is why
+        ``_run_cli`` pins UTF-8 rather than trusting the ambient codec.
+        """
+        with self.assertRaises(UnicodeDecodeError):
+            self._run_with_locale_codec()
 
     def test_pinned_codec_keeps_the_same_output(self):
         """_run_cli decodes the very output the locale codec drops."""

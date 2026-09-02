@@ -22,39 +22,14 @@ def setUpModule():
     unittest.addModuleCleanup(patcher.stop)
 
 
-class TestWatchThemeChange(unittest.TestCase):
-    """Tests for watch_theme_change() - the registry-based theme watcher."""
+def _real_font():
+    """Return a real PIL font for rendering tests."""
+    from PIL import ImageFont
 
-    @patch('ctypes.windll.advapi32.RegNotifyChangeKeyValue')
-    @patch.object(tray_icon_mod, 'winreg')
-    def test_callback_exception_does_not_end_watcher(self, mock_winreg, mock_notify):
-        """A transient callback failure (e.g. re-render error during an Explorer
-        restart) must not end theme watching for the rest of the session."""
-        mock_winreg.OpenKey.return_value.__enter__.return_value = 1234
-        mock_notify.side_effect = [0, 0, 1]  # two theme changes, then watcher exit
-
-        calls = []
-
-        def callback():
-            calls.append(1)
-            if len(calls) == 1:
-                raise RuntimeError('transient render failure')
-
-        tray_icon_mod.watch_theme_change(callback)
-
-        self.assertEqual(len(calls), 2)
-
-    @patch('ctypes.windll.advapi32.RegNotifyChangeKeyValue')
-    @patch.object(tray_icon_mod, 'winreg')
-    def test_watcher_exits_when_notify_fails(self, mock_winreg, mock_notify):
-        """A failing RegNotifyChangeKeyValue ends the watcher without callbacks."""
-        mock_winreg.OpenKey.return_value.__enter__.return_value = 1234
-        mock_notify.return_value = 1
-
-        callback = MagicMock()
-        tray_icon_mod.watch_theme_change(callback)
-
-        callback.assert_not_called()
+    try:
+        return ImageFont.truetype('arial.ttf', 20)
+    except OSError:
+        return ImageFont.load_default()
 
 
 class TestOverageBarEndState(unittest.TestCase):
@@ -108,155 +83,6 @@ class TestIconGlyphNearExhaustion(unittest.TestCase):
         img = tray_icon_mod.create_icon_image(100.0, 10.0)
         reference = tray_icon_mod.create_icon_image(99.0, 10.0)
         self.assertNotEqual(img.tobytes(), reference.tobytes())
-
-
-class TestLoadFont(unittest.TestCase):
-    """Tests for load_font()."""
-
-    def setUp(self):
-        tray_icon_mod.load_font.cache_clear()
-
-    def tearDown(self):
-        tray_icon_mod.load_font.cache_clear()
-
-    @patch.object(tray_icon_mod, 'ImageFont')
-    @patch.dict('os.environ', {'WINDIR': r'C:\Windows'})
-    def test_loads_arial_bold_for_normal_text(self, mock_image_font):
-        """Default call loads Arial Bold font."""
-        mock_font = MagicMock()
-        mock_image_font.truetype.return_value = mock_font
-
-        result = tray_icon_mod.load_font(42)
-
-        self.assertIs(result, mock_font)
-        mock_image_font.truetype.assert_called_once_with(r'C:\Windows\Fonts\arialbd.ttf', 42)
-
-    @patch.object(tray_icon_mod, 'ImageFont')
-    @patch.dict('os.environ', {'WINDIR': r'C:\Windows'})
-    def test_loads_segoe_symbol_for_symbol_text(self, mock_image_font):
-        """symbol=True loads Segoe UI Symbol font."""
-        mock_font = MagicMock()
-        mock_image_font.truetype.return_value = mock_font
-
-        result = tray_icon_mod.load_font(36, symbol=True)
-
-        self.assertIs(result, mock_font)
-        mock_image_font.truetype.assert_called_once_with(r'C:\Windows\Fonts\seguisym.ttf', 36)
-
-    @patch.object(tray_icon_mod, 'ImageFont')
-    @patch.dict('os.environ', {'WINDIR': r'C:\Windows'})
-    def test_falls_back_to_default_when_all_fail(self, mock_image_font):
-        """Falls back to load_default() when no TrueType font found."""
-        mock_image_font.truetype.side_effect = OSError
-        mock_default = MagicMock()
-        mock_image_font.load_default.return_value = mock_default
-
-        result = tray_icon_mod.load_font(42)
-
-        self.assertIs(result, mock_default)
-        mock_image_font.load_default.assert_called_once()
-
-    @patch.object(tray_icon_mod, 'ImageFont')
-    @patch.dict('os.environ', {'WINDIR': r'C:\Windows'})
-    def test_tries_fallback_names_on_failure(self, mock_image_font):
-        """Tries alternative font names when first attempt fails."""
-        mock_font = MagicMock()
-        mock_image_font.truetype.side_effect = [OSError, mock_font]
-
-        result = tray_icon_mod.load_font(42)
-
-        self.assertIs(result, mock_font)
-        self.assertEqual(mock_image_font.truetype.call_count, 2)
-        mock_image_font.truetype.assert_called_with('arialbd.ttf', 42)
-
-    @patch.object(tray_icon_mod, 'ImageFont')
-    @patch.dict('os.environ', {'WINDIR': r'C:\Windows'})
-    def test_lru_cache_returns_same_instance(self, mock_image_font):
-        """Cached: same size returns same font object without second truetype call."""
-        mock_font = MagicMock()
-        mock_image_font.truetype.return_value = mock_font
-
-        first = tray_icon_mod.load_font(42)
-        second = tray_icon_mod.load_font(42)
-
-        self.assertIs(first, second)
-        mock_image_font.truetype.assert_called_once()
-
-    @patch.object(tray_icon_mod, 'ImageFont')
-    @patch.dict('os.environ', {'WINDIR': r'C:\Windows'})
-    def test_different_sizes_cached_separately(self, mock_image_font):
-        """Different sizes produce separate cache entries."""
-        mock_image_font.truetype.return_value = MagicMock()
-
-        tray_icon_mod.load_font(36)
-        tray_icon_mod.load_font(42)
-
-        self.assertEqual(mock_image_font.truetype.call_count, 2)
-
-    @patch.object(tray_icon_mod, 'ImageFont')
-    @patch.dict('os.environ', {}, clear=True)
-    def test_uses_default_windir_when_not_set(self, mock_image_font):
-        """Falls back to C:\\Windows when WINDIR is not set."""
-        mock_font = MagicMock()
-        mock_image_font.truetype.return_value = mock_font
-
-        tray_icon_mod.load_font(42)
-
-        mock_image_font.truetype.assert_called_once_with(r'C:\Windows\Fonts\arialbd.ttf', 42)
-
-
-class TestTaskbarUsesLightTheme(unittest.TestCase):
-    """Tests for taskbar_uses_light_theme()."""
-
-    @patch.object(tray_icon_mod, 'winreg')
-    def test_returns_true_for_light_theme(self, mock_winreg):
-        """Registry value 1 means light theme."""
-        mock_key = MagicMock()
-        mock_winreg.OpenKey.return_value.__enter__ = MagicMock(return_value=mock_key)
-        mock_winreg.OpenKey.return_value.__exit__ = MagicMock(return_value=False)
-        mock_winreg.QueryValueEx.return_value = (1, 4)
-
-        self.assertTrue(tray_icon_mod.taskbar_uses_light_theme())
-
-    @patch.object(tray_icon_mod, 'winreg')
-    def test_returns_false_for_dark_theme(self, mock_winreg):
-        """Registry value 0 means dark theme."""
-        mock_key = MagicMock()
-        mock_winreg.OpenKey.return_value.__enter__ = MagicMock(return_value=mock_key)
-        mock_winreg.OpenKey.return_value.__exit__ = MagicMock(return_value=False)
-        mock_winreg.QueryValueEx.return_value = (0, 4)
-
-        self.assertFalse(tray_icon_mod.taskbar_uses_light_theme())
-
-    @patch.object(tray_icon_mod, 'winreg')
-    def test_returns_false_on_os_error(self, mock_winreg):
-        """OSError (missing key, permissions) defaults to dark."""
-        mock_winreg.OpenKey.side_effect = OSError
-
-        self.assertFalse(tray_icon_mod.taskbar_uses_light_theme())
-
-    @patch.object(tray_icon_mod, 'winreg')
-    def test_reads_correct_registry_path(self, mock_winreg):
-        """Opens the Personalize registry key."""
-        mock_winreg.OpenKey.return_value.__enter__ = MagicMock()
-        mock_winreg.OpenKey.return_value.__exit__ = MagicMock(return_value=False)
-        mock_winreg.QueryValueEx.return_value = (0, 4)
-
-        tray_icon_mod.taskbar_uses_light_theme()
-
-        mock_winreg.OpenKey.assert_called_once_with(
-            mock_winreg.HKEY_CURRENT_USER, tray_icon_mod.THEME_REG_KEY,
-        )
-
-
-def _real_font():
-    """Return a real PIL font for rendering tests."""
-    from PIL import ImageFont
-
-    try:
-        return ImageFont.truetype('arial.ttf', 20)
-    except OSError:
-        return ImageFont.load_default()
 
 
 class TestCreateIconImage(unittest.TestCase):

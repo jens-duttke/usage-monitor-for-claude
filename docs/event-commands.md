@@ -1,6 +1,10 @@
 # Event Commands
 
-Run a custom shell command when a quota resets, a usage threshold is crossed, the app starts, or you double-click the tray icon. Commands run asynchronously and do not block the app. Event details are passed as environment variables so your command or script can use them directly.
+Run a custom shell command when a quota resets, a usage threshold is crossed, the app starts, or you trigger your quick action from the tray icon. Commands run asynchronously and do not block the app. Event details are passed as environment variables so your command or script can use them directly.
+
+The examples on this page use Windows PowerShell. They work the same way on Linux with the shell of your choice - only the commands themselves differ (`paplay` or `notify-send` instead of `Media.SoundPlayer`).
+
+How you trigger the quick action depends on the system. On Windows it is a double-click on the tray icon. On Linux the desktop panel handles that click itself and never passes it to the app, so the tray menu carries a **Run Quick Action** entry instead. Both run the same command with the same environment variables.
 
 ## Settings
 
@@ -11,7 +15,7 @@ Add these keys to your [`usage-monitor-settings.json`](configuration.md). After 
 | `on_reset_command` | *(none)* | Shell command (or array of commands) to run when a quota resets (usage drops) |
 | `on_startup_command` | *(none)* | Shell command (or array of commands) to run once after the first successful API update following app start |
 | `on_threshold_command` | *(none)* | Shell command (or array of commands) to run when usage crosses a configured alert threshold |
-| `on_double_click_command` | *(none)* | Shell command (or array of commands) to run when you double-click the tray icon |
+| `quick_action_command` | *(none)* | Shell command (or array of commands) to run when you trigger the quick action |
 
 Commands run with the same privileges as the app and **without a visible window** - no console pops up and no focus is stolen. This is ideal for background tasks like sending notifications, playing sounds, or running headless commands (e.g. `claude -p "..."`). Relative paths in commands are resolved relative to the executable's folder (or the project root when running from source).
 
@@ -19,9 +23,12 @@ Each of these settings accepts a single command string or an array of strings to
 
 Commands only fire on **state changes** detected while the app is running. On app startup, already-exceeded thresholds trigger a desktop notification but do not run `on_threshold_command` - this prevents duplicate commands after a restart or reboot.
 
-`on_double_click_command` is the exception: it reacts to a user action, not a usage event. A single click still opens the detail popup; only a double-click runs the command. While this command is configured, the popup opens after the system double-click interval (about half a second) so a second click can be recognized - without it, the popup opens instantly.
+`quick_action_command` is the exception: it reacts to you, not to a usage event. On Windows a single click still opens the detail popup and only a double-click runs the command; while a quick action is configured, the popup opens after the system double-click interval (about half a second) so a second click can be recognized - without it, the popup opens instantly.
 
-Because a double-click is user-driven, a command that fails to start - it exits with a non-zero (error) code within the first few seconds - shows its stderr in an error dialog, so a wrong path or a broken command is not swallowed silently. If the command starts an app, that app's later exit code is ignored. The automatic reset, threshold, and startup commands stay silent - they fire in the background and must not interrupt you with dialogs.
+> [!NOTE]
+> This setting was called `on_double_click_command` in earlier versions. That name still works, so existing settings files need no change. When both are present, `quick_action_command` decides.
+
+Because the quick action is user-driven, a command that fails to start - it exits with a non-zero (error) code within the first few seconds - shows its stderr in an error dialog, so a wrong path or a broken command is not swallowed silently. If the command starts an app, that app's later exit code is ignored. The automatic reset, threshold, and startup commands stay silent - they fire in the background and must not interrupt you with dialogs.
 
 When `on_reset_command` is configured, the app wakes from idle/lock pause at the expected reset time so the command fires promptly on an unattended computer, retrying until the API confirms the reset. `on_threshold_command` does not wake from idle - thresholds follow active usage, so they are checked once polling resumes. Notifications raised while you were away are shown when you return.
 
@@ -36,9 +43,9 @@ When `on_reset_command` is configured, the app wakes from idle/lock pause at the
 
 ## Examples
 
-### Launch Agent Monitor for Claude on double-click
+### Launch Agent Monitor for Claude as your quick action
 
-[**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude) shows what your Claude Code agents are doing right now - which ones are working, waiting for input, or finished - grouped by project. Like this app it is a single portable EXE that needs no configuration, which makes it a practical double-click target.
+[**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude) shows what your Claude Code agents are doing right now - which ones are working, waiting for input, or finished - grouped by project. Like this app it is a single portable EXE that needs no configuration, which makes it a practical quick action.
 
 **Setup:**
 
@@ -48,14 +55,14 @@ When `on_reset_command` is configured, the app wakes from idle/lock pause at the
 
 ```json
 {
-  "on_double_click_command": "AgentMonitorForClaude.exe"
+  "quick_action_command": "AgentMonitorForClaude.exe"
 }
 ```
 
-Now a single click still opens the usage popup, and a double-click opens Agent Monitor for Claude.
+Now a single click still opens the usage popup, and your quick action opens Agent Monitor for Claude.
 
 > [!TIP]
-> If you keep the EXE somewhere else, use its full path instead, e.g. `"on_double_click_command": "C:\\Tools\\AgentMonitorForClaude.exe"`.
+> If you keep the EXE somewhere else, use its full path instead, e.g. `"quick_action_command": "C:\\Tools\\AgentMonitorForClaude.exe"`.
 
 ### Resume a Claude Code session when the quota resets
 
@@ -244,13 +251,13 @@ Fires once after the first successful API update following app start (also after
 
 Per-quota variables are emitted for every quota field the API returns - additional variants like `USAGE_MONITOR_UTILIZATION_SEVEN_DAY_SONNET` follow the same pattern. An empty `USAGE_MONITOR_RESETS_AT_*` indicates that the quota has no active window (either never used, or the previous window has expired).
 
-### `on_double_click_command`
+### `quick_action_command`
 
-Fires when you double-click the tray icon. Receives the same full quota state as `on_startup_command`, taken from the most recent successful update.
+Fires when you trigger the quick action. Receives the same full quota state as `on_startup_command`, taken from the most recent successful update.
 
 | Variable | Example | Description |
 |---|---|---|
-| `USAGE_MONITOR_EVENT` | `double_click` | Event type |
+| `USAGE_MONITOR_EVENT` | `quick_action` | Event type |
 | `USAGE_MONITOR_UTILIZATION_FIVE_HOUR` | `0` | Current session (5h) usage (integer) |
 | `USAGE_MONITOR_RESETS_AT_FIVE_HOUR` | `2025-01-15T18:00:00Z` | When the 5h session resets, or empty if no session is active |
 | `USAGE_MONITOR_UTILIZATION_SEVEN_DAY` | `42` | Current weekly (7d) usage (integer) |
@@ -258,4 +265,4 @@ Fires when you double-click the tray icon. Receives the same full quota state as
 | `USAGE_MONITOR_EXTRA_USED` | `$8.20` | Amount spent (only set when extra usage is enabled) |
 | `USAGE_MONITOR_EXTRA_LIMIT` | `$10.00` | Monthly limit (only set when extra usage is enabled) |
 
-Per-quota variables are emitted for every quota field the API returns, following the same pattern as `on_startup_command`. If you double-click before the first successful update, only `USAGE_MONITOR_EVENT` is set.
+Per-quota variables are emitted for every quota field the API returns, following the same pattern as `on_startup_command`. If you trigger it before the first successful update, only `USAGE_MONITOR_EVENT` is set.

@@ -1,6 +1,6 @@
 """
-Single-Instance Guard
-======================
+Windows Single-Instance Guard
+==============================
 
 Prevents multiple instances from running simultaneously using a named
 Win32 mutex.  The holder's PID and version are stored in page-file-backed
@@ -14,9 +14,10 @@ import ctypes.wintypes
 import os
 import struct
 
-from . import __version__
-from .i18n import T
-from .instance_id import config_dir_suffix
+from .. import __version__
+from ..i18n import T
+from ..instance_id import config_dir_suffix
+from .win32 import ask_yes_no, show_topmost_error
 
 __all__ = ['ensure_single_instance', 'release_instance_lock']
 
@@ -188,18 +189,13 @@ def ensure_single_instance() -> bool:
     # treat it as "already running".  Any other NULL failure is unexpected -
     # fail closed rather than run a second, unguarded instance.
     if not _mutex_handle and last_error != _ERROR_ACCESS_DENIED:
-        ctypes.windll.user32.MessageBoxW(
-            None, f'Failed to create the single-instance mutex (Windows error {last_error}).',
-            T['popup_title'], 0x10,  # MB_ICONERROR
+        show_topmost_error(
+            f'Failed to create the single-instance mutex (Windows error {last_error}).',
+            T['popup_title'],
         )
         return False
 
     # Another instance is running - ask the user.
-    MB_YESNO = 0x04
-    MB_ICONQUESTION = 0x20
-    MB_TOPMOST = 0x40000
-    IDYES = 6
-
     holder_pid, running_version = _read_holder_info()
 
     title = T['popup_title']
@@ -210,11 +206,7 @@ def ensure_single_instance() -> bool:
         running_version=running_version or '?',
     )
 
-    answer = ctypes.windll.user32.MessageBoxW(
-        None, message, title,
-        MB_YESNO | MB_ICONQUESTION | MB_TOPMOST,
-    )
-    if answer != IDYES:
+    if not ask_yes_no(message, title):
         if _mutex_handle:
             _kernel32.CloseHandle(_mutex_handle)
         _mutex_handle = None
@@ -242,7 +234,7 @@ def ensure_single_instance() -> bool:
         if _mutex_handle:
             _kernel32.CloseHandle(_mutex_handle)
         _mutex_handle = None
-        ctypes.windll.user32.MessageBoxW(None, T['replace_failed'], title, 0x10 | MB_TOPMOST)  # MB_ICONERROR
+        show_topmost_error(T['replace_failed'], title)
         return False
 
     _store_holder_info()

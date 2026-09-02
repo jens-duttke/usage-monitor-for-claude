@@ -15,6 +15,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .platforms import no_window_kwargs
 from .settings import CLI_COMMAND
 
 
@@ -290,7 +291,7 @@ def _run_cli(command: list[str], timeout: int) -> subprocess.CompletedProcess[st
     proc = subprocess.run(
         command,
         capture_output=True, text=True, encoding='utf-8', errors='replace',
-        timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW,
+        timeout=timeout, **no_window_kwargs(),
     )
 
     # A missing stream means the output was lost, not that it was empty.  An

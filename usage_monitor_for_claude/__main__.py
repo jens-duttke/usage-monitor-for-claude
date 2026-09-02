@@ -1,7 +1,6 @@
 """Entry point for ``python -m usage_monitor_for_claude``."""
 from __future__ import annotations
 
-import ctypes
 import logging
 import os
 import subprocess
@@ -10,20 +9,28 @@ import traceback
 from pathlib import Path
 
 from usage_monitor_for_claude.instance_id import parse_config_dir
+from usage_monitor_for_claude.platforms import (
+    no_window_kwargs, prepare_gui_environment, set_dpi_awareness, show_error_box,
+)
 
 _verbose = '--verbose' in sys.argv
 
 # --config-dir selects which Claude account to monitor. It must be
-# resolved into CLAUDE_CONFIG_DIR before any other package import:
-# api, settings, verbose and i18n all read the variable at import or
+# resolved into CLAUDE_CONFIG_DIR before any package import that reads the
+# variable: api, settings, verbose and i18n all read it at import or
 # first-use time. Keep every other package import below this block.
+#
+# instance_id and platforms are the only exceptions, imported above because
+# this block needs them. Neither reads CLAUDE_CONFIG_DIR at import time, and
+# platforms cannot start doing so - settings imports platforms, so the
+# reverse would be a cycle.
 _config_dir = parse_config_dir(sys.argv)
 if _config_dir is not None:
     _config_path = Path(_config_dir)
     if not _config_path.is_dir():
-        ctypes.windll.user32.MessageBoxW(
-            0, f'--config-dir directory does not exist:\n{_config_dir}',
-            'Usage Monitor for Claude - Error', 0x10,
+        show_error_box(
+            f'--config-dir directory does not exist:\n{_config_dir}',
+            'Usage Monitor for Claude - Error',
         )
         sys.exit(1)
     os.environ['CLAUDE_CONFIG_DIR'] = str(_config_path.resolve())
@@ -34,15 +41,11 @@ if _verbose and getattr(sys, 'frozen', False):
     from usage_monitor_for_claude.verbose import setup_console
     setup_console()
 
-# Per-Monitor V2 must be set before pywebview's legacy SetProcessDPIAware() call,
-# which only sets SYSTEM_DPI_AWARE and breaks native menu hover at high DPI.
-# The API exists only from Windows 10 1703; ctypes raises AttributeError for a
-# missing export, which must not kill startup - pywebview's legacy call is the
-# fallback on older systems.
-try:
-    ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_ssize_t(-4))
-except AttributeError:
-    pass
+# Both must be settled before pywebview creates any window: DPI awareness
+# cannot be changed once a window exists, and the GUI toolkit reads its
+# backend from the environment as it loads.
+set_dpi_awareness()
+prepare_gui_environment()
 
 if _verbose:
     from usage_monitor_for_claude.verbose import print_startup_diagnostics
@@ -51,8 +54,8 @@ if _verbose:
 import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from usage_monitor_for_claude.app import UsageMonitorForClaude, crash_log
-from usage_monitor_for_claude.notification_identity import register_notification_identity
-from usage_monitor_for_claude.single_instance import ensure_single_instance, release_instance_lock
+from usage_monitor_for_claude.platforms import register_notification_identity
+from usage_monitor_for_claude.platforms.instance import ensure_single_instance, release_instance_lock
 
 if _verbose:
     logging.basicConfig(
@@ -135,15 +138,10 @@ try:
             # instance extracts to a fresh temp directory instead
             # of reusing the current (soon-to-be-deleted) one.
             env = {k: v for k, v in os.environ.items() if not k.startswith(('_PYI_', '_MEI'))}
-            subprocess.Popen(
-                [sys.executable, *passthrough_args],
-                env=env,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+            subprocess.Popen([sys.executable, *passthrough_args], env=env, **no_window_kwargs())
         else:
             subprocess.Popen(
-                [sys.executable, '-m', 'usage_monitor_for_claude', *passthrough_args],
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                [sys.executable, '-m', 'usage_monitor_for_claude', *passthrough_args], **no_window_kwargs(),
             )
 except Exception:
     crash_log(traceback.format_exc())

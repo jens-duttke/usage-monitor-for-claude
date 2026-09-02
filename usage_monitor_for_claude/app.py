@@ -6,9 +6,7 @@ System tray application class with adaptive polling and event handling.
 """
 from __future__ import annotations
 
-import ctypes
 import math
-import sys
 import threading
 import time
 import traceback
@@ -19,33 +17,30 @@ from typing import Any
 import pystray  # type: ignore[import-untyped]  # no type stubs available
 
 from .api import api_headers, read_access_token
-from .autostart import is_autostart_enabled, set_autostart, sync_autostart_path
 from .cache import UsageCache
 from .claude_cli import PROJECT_URL
 from .command import run_event_command
-from .idle import get_idle_seconds, is_workstation_locked
 from .instance_id import effective_config_dir, is_default_config_dir
+from .platforms import (
+    autostart_supported, get_idle_seconds, install_tray_click_handler, is_autostart_enabled,
+    is_workstation_locked, set_autostart, show_error_box, sync_autostart_path,
+    taskbar_uses_light_theme, watch_theme_change,
+)
 from .settings import (
     ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_PAUSE, NOTIFY_CLAUDE_UPDATE,
-    ON_DOUBLE_CLICK_COMMAND, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND,
-    POLL_ERROR, POLL_FAST, POLL_FAST_EXTRA, POLL_INTERVAL, get_alert_thresholds,
+    ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND, POLL_ERROR, POLL_FAST, POLL_FAST_EXTRA,
+    POLL_INTERVAL, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
 from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, parse_field_name, popup_label
 from .i18n import T
 from .popup import UsagePopup
-from .tray_icon import create_icon_image, create_status_image, taskbar_uses_light_theme, watch_theme_change
+from .tray_icon import create_icon_image, create_status_image
 
 __all__ = ['UsageMonitorForClaude', 'crash_log']
 
 # Seconds after a reset at which to place the confirming poll.  A small buffer
 # absorbs minor timing differences (clocks, caches, server-side propagation).
 RESET_BUFFER = 5
-
-# Win32 tray mouse messages, delivered by the shell as the WM_NOTIFY lParam.
-# pystray natively acts only on WM_LBUTTONUP; WM_LBUTTONDBLCLK drives the
-# optional double-click command.
-WM_LBUTTONUP = 0x0202
-WM_LBUTTONDBLCLK = 0x0203
 
 
 def _future_iso(**kwargs: float) -> str:
@@ -149,11 +144,15 @@ class UsageMonitorForClaude:
             title=self._tooltip_prefix + T['loading'],
             menu=pystray.Menu(
                 pystray.MenuItem(T['menu_show'], self.on_show_popup, default=True),
+                pystray.MenuItem(
+                    T['menu_quick_action'], self.on_run_quick_action,
+                    visible=self._quick_action_menu_visible,
+                ),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(
                     T['autostart'], self.on_toggle_autostart,
                     checked=lambda item: is_autostart_enabled(),
-                    visible=getattr(sys, 'frozen', False),
+                    visible=autostart_supported(),
                 ),
                 pystray.MenuItem(T['test_commands'], pystray.Menu(
                     pystray.MenuItem(T['test_reset_5h'], self.on_test_reset_5h, enabled=bool(ON_RESET_COMMAND)),
@@ -161,8 +160,8 @@ class UsageMonitorForClaude:
                     pystray.MenuItem(T['test_threshold_5h'], self.on_test_threshold_5h, enabled=bool(ON_THRESHOLD_COMMAND)),
                     pystray.MenuItem(T['test_threshold_7d'], self.on_test_threshold_7d, enabled=bool(ON_THRESHOLD_COMMAND)),
                     pystray.MenuItem(T['test_startup'], self.on_test_startup, enabled=bool(ON_STARTUP_COMMAND)),
-                    pystray.MenuItem(T['test_double_click'], self.on_test_double_click, enabled=bool(ON_DOUBLE_CLICK_COMMAND)),
-                ), enabled=bool(ON_RESET_COMMAND or ON_STARTUP_COMMAND or ON_THRESHOLD_COMMAND or ON_DOUBLE_CLICK_COMMAND)),
+                    pystray.MenuItem(T['test_quick_action'], self.on_test_quick_action, enabled=bool(QUICK_ACTION_COMMAND)),
+                ), enabled=bool(ON_RESET_COMMAND or ON_STARTUP_COMMAND or ON_THRESHOLD_COMMAND or QUICK_ACTION_COMMAND)),
                 pystray.MenuItem(T['restart'], self.on_restart),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(T['menu_project'], self.on_open_project),
@@ -171,17 +170,22 @@ class UsageMonitorForClaude:
             ),
         )
 
-        # Double-click support.  pystray fires the default action (the popup) on
-        # every left-button release, so a double-click command requires deferring
-        # that single click by the system double-click interval and cancelling it
-        # when a second click arrives.  Only wired up when a command is
-        # configured, so the default single-click behavior is otherwise untouched.
-        self._click_lock = threading.Lock()
-        self._single_click_timer: threading.Timer | None = None
-        self._swallow_next_up = False
-        if ON_DOUBLE_CLICK_COMMAND:
-            self._double_click_seconds = ctypes.windll.user32.GetDoubleClickTime() / 1000.0
-            self._install_double_click_handler()
+        # Only wired up when a command is configured, so the platform's own
+        # single-click behavior is otherwise untouched.  Not every platform
+        # can offer this - a StatusNotifierItem is driven by the panel, not by
+        # this process - so the result is reported rather than assumed.
+        self.double_click_installed = False
+        if QUICK_ACTION_COMMAND:
+            self.double_click_installed = install_tray_click_handler(
+                self.icon, self.on_show_popup, self._run_quick_action,
+            )
+            if not self.double_click_installed:
+                # Printed rather than shown: not worth a dialog on every start,
+                # and the command is still reachable from the menu entry that
+                # appears in exactly this case.  Visible with --verbose, which
+                # is where someone looks when the double-click stopped working.
+                print('A quick action is configured, but this system does not report tray double-clicks. '
+                      'Use the tray menu entry instead.')
 
     # Menu actions
 
@@ -261,9 +265,27 @@ class UsageMonitorForClaude:
             'USAGE_MONITOR_RESETS_AT_SEVEN_DAY': _future_iso(days=3),
         }, capture_output=True)
 
-    def on_test_double_click(self, icon: Any = None, item: Any = None) -> None:
-        run_event_command(ON_DOUBLE_CLICK_COMMAND, {
-            'USAGE_MONITOR_EVENT': 'double_click',
+    def _quick_action_menu_visible(self, item: Any = None) -> bool:
+        """Whether the menu needs to offer the quick action.
+
+        Only where the tray cannot report a double-click itself, so a
+        configured quick action stays reachable instead of being dead.
+        pystray resolves this when the menu opens, which is after the click
+        handler had its chance to install.
+        """
+        return bool(QUICK_ACTION_COMMAND) and not self.double_click_installed
+
+    def on_run_quick_action(self, icon: Any = None, item: Any = None) -> None:
+        """Run the configured quick action from the menu.
+
+        The menu is the only route to it on a desktop whose panel handles the
+        tray click itself and never passes it to the application.
+        """
+        self._run_quick_action()
+
+    def on_test_quick_action(self, icon: Any = None, item: Any = None) -> None:
+        run_event_command(QUICK_ACTION_COMMAND, {
+            'USAGE_MONITOR_EVENT': 'quick_action',
             'USAGE_MONITOR_UTILIZATION_FIVE_HOUR': '30',
             'USAGE_MONITOR_RESETS_AT_FIVE_HOUR': _future_iso(hours=3),
             'USAGE_MONITOR_UTILIZATION_SEVEN_DAY': '55',
@@ -319,65 +341,6 @@ class UsageMonitorForClaude:
             self._popup_open = False
 
     # Double-click handling
-
-    def _install_double_click_handler(self) -> None:
-        """Replace pystray's tray-message handler with a double-click-aware one.
-
-        Locates the ``WM_NOTIFY`` entry in pystray's handler table by identity
-        and swaps in :meth:`_on_tray_message`, keeping the original handler for
-        right-click and every other message.
-        """
-        self._pystray_on_notify = self.icon._on_notify
-        for code, handler in self.icon._message_handlers.items():
-            if handler == self._pystray_on_notify:
-                self.icon._message_handlers[code] = self._on_tray_message
-                break
-
-    def _on_tray_message(self, wparam: int, lparam: int) -> int:
-        """Dispatch a tray mouse message, adding double-click handling.
-
-        A left-button release schedules the popup after the double-click
-        interval; a double-click cancels that pending popup and runs the
-        configured command instead.  The trailing release that follows every
-        double-click is swallowed so it does not schedule a second popup.  All
-        other messages (right-click menu, etc.) fall through to pystray's own
-        handler.
-        """
-        if lparam == WM_LBUTTONUP:
-            with self._click_lock:
-                if self._swallow_next_up:
-                    self._swallow_next_up = False
-                    return 0
-                if self._single_click_timer is not None:
-                    self._single_click_timer.cancel()
-                self._single_click_timer = threading.Timer(self._double_click_seconds, self._fire_single_click)
-                self._single_click_timer.daemon = True
-                self._single_click_timer.start()
-            return 0
-
-        if lparam == WM_LBUTTONDBLCLK:
-            with self._click_lock:
-                self._swallow_next_up = True
-                if self._single_click_timer is not None:
-                    self._single_click_timer.cancel()
-                    self._single_click_timer = None
-            self._run_double_click_command()
-            return 0
-
-        return self._pystray_on_notify(wparam, lparam)
-
-    def _fire_single_click(self) -> None:
-        """Open the popup once the double-click interval passes without a second click.
-
-        Bails out if the timer was cleared meanwhile - a double-click that
-        arrived right as the timer fired cancels it here, so the popup never
-        opens for a completed double-click.
-        """
-        with self._click_lock:
-            if self._single_click_timer is None:
-                return
-            self._single_click_timer = None
-        self.on_show_popup()
 
     # Tray rendering
 
@@ -743,13 +706,13 @@ class UsageMonitorForClaude:
         env_vars = {'USAGE_MONITOR_EVENT': 'startup', **self._quota_snapshot_env(data)}
         run_event_command(ON_STARTUP_COMMAND, env_vars)
 
-    def _run_double_click_command(self) -> None:
-        """Run the user-configured double-click command if set.
+    def _run_quick_action(self) -> None:
+        """Run the user-configured quick action if set.
 
         Receives the latest quota state (from the most recent successful
         update) so the command can act on current usage, mirroring the
-        startup command's environment.  A double-click is a user-driven
-        action, so a command that exits with a non-zero code surfaces its
+        startup command's environment.  The quick action is user-driven, so
+        a command that exits with a non-zero code surfaces its
         stderr in an error dialog (``capture_output``) instead of failing
         silently - unlike the automatic reset/threshold/startup commands.
         The dialog is limited to failures right after the launch
@@ -757,11 +720,11 @@ class UsageMonitorForClaude:
         the user keeps open, and its exit code once that app closes says
         nothing about the command being configured correctly.
         """
-        if not ON_DOUBLE_CLICK_COMMAND:
+        if not QUICK_ACTION_COMMAND:
             return
 
-        env_vars = {'USAGE_MONITOR_EVENT': 'double_click', **self._quota_snapshot_env(self._last_response)}
-        run_event_command(ON_DOUBLE_CLICK_COMMAND, env_vars, capture_output=True, report_late_failures=False)
+        env_vars = {'USAGE_MONITOR_EVENT': 'quick_action', **self._quota_snapshot_env(self._last_response)}
+        run_event_command(QUICK_ACTION_COMMAND, env_vars, capture_output=True, report_late_failures=False)
 
     def _run_reset_command(
         self, variant: str, pct: float, prev_pct: float, *, data: dict[str, Any], entry: dict[str, Any],
@@ -1063,7 +1026,7 @@ class UsageMonitorForClaude:
         """Called by pystray in a separate thread once the tray icon is set up."""
         try:
             icon.visible = True
-            if getattr(sys, 'frozen', False):
+            if autostart_supported():
                 sync_autostart_path()
             if not api_headers():
                 icon.notify(f"{T['warn_no_token']}\n{T['warn_login']}", T['popup_title'])
@@ -1078,4 +1041,4 @@ class UsageMonitorForClaude:
 
 def crash_log(msg: str) -> None:
     """Show a crash message box (for windowless EXE builds)."""
-    ctypes.windll.user32.MessageBoxW(0, msg[:2000], 'Usage Monitor for Claude - Error', 0x10)
+    show_error_box(msg, 'Usage Monitor for Claude - Error')

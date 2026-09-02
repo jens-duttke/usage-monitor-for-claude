@@ -7,12 +7,18 @@ Unit tests for the command module: subprocess execution with environment variabl
 from __future__ import annotations
 
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from usage_monitor_for_claude import command
+from usage_monitor_for_claude.platforms import no_window_kwargs
 from usage_monitor_for_claude.command import run_event_command
+
+# A frozen build's executable, written the way the running platform does.
+_FROZEN_EXECUTABLE = str(Path('C:/Program Files/MyApp/app.exe') if sys.platform == 'win32'
+                         else Path('/opt/MyApp/app'))
 
 
 class TestRunEventCommand(unittest.TestCase):
@@ -77,7 +83,7 @@ class TestRunEventCommand(unittest.TestCase):
         run_event_command(['test'], {'USAGE_MONITOR_EVENT': 'reset'})
 
         kwargs = mock_popen.call_args[1]
-        self.assertEqual(kwargs['creationflags'], subprocess.CREATE_NO_WINDOW)
+        self.assertEqual({k: kwargs.get(k) for k in no_window_kwargs()}, no_window_kwargs())
 
     @patch('usage_monitor_for_claude.command.subprocess.Popen')
     def test_empty_list_skipped(self, mock_popen: MagicMock):
@@ -125,12 +131,12 @@ class TestRunEventCommand(unittest.TestCase):
     def test_cwd_set_to_executable_dir_when_frozen(self, mock_sys: MagicMock, mock_popen: MagicMock):
         """Working directory is set to the executable's folder when frozen."""
         mock_sys.frozen = True
-        mock_sys.executable = 'C:\\Program Files\\MyApp\\app.exe'
+        mock_sys.executable = _FROZEN_EXECUTABLE
 
         run_event_command(['test'], {'USAGE_MONITOR_EVENT': 'reset'})
 
         kwargs = mock_popen.call_args[1]
-        self.assertEqual(kwargs['cwd'], Path('C:\\Program Files\\MyApp'))
+        self.assertEqual(kwargs['cwd'], Path(_FROZEN_EXECUTABLE).parent)
 
     @patch('usage_monitor_for_claude.command.subprocess.Popen')
     def test_multiple_commands_all_executed(self, mock_popen: MagicMock):
@@ -166,7 +172,7 @@ class TestRunEventCommandCaptureOutput(unittest.TestCase):
         self.assertEqual(kwargs['stdout'], subprocess.PIPE)
         self.assertEqual(kwargs['stderr'], subprocess.PIPE)
         self.assertTrue(kwargs['text'])
-        self.assertEqual(kwargs['creationflags'], subprocess.CREATE_NO_WINDOW)
+        self.assertEqual({k: kwargs.get(k) for k in no_window_kwargs()}, no_window_kwargs())
 
     @patch('usage_monitor_for_claude.command.threading.Thread')
     @patch('usage_monitor_for_claude.command.subprocess.Popen')
@@ -177,11 +183,11 @@ class TestRunEventCommandCaptureOutput(unittest.TestCase):
         self.assertTrue(mock_thread.call_args[1]['daemon'])
         mock_thread.return_value.start.assert_called_once()
 
-    @patch('usage_monitor_for_claude.command.ctypes')
+    @patch('usage_monitor_for_claude.command.show_error_box')
     @patch('builtins.print')
     @patch('usage_monitor_for_claude.command.threading.Thread')
     @patch('usage_monitor_for_claude.command.subprocess.Popen')
-    def test_capture_output_prints_streams_and_exit_code(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, _ctypes: MagicMock):
+    def test_capture_output_prints_streams_and_exit_code(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, _box: MagicMock):
         """Once the command exits, its stdout, stderr, and exit code are printed."""
         mock_popen.return_value.communicate.return_value = ('hello out', 'boom err')
         mock_popen.return_value.returncode = 9
@@ -196,11 +202,11 @@ class TestRunEventCommandCaptureOutput(unittest.TestCase):
         self.assertIn('boom err', printed)
         self.assertIn('9', printed)
 
-    @patch('usage_monitor_for_claude.command.ctypes')
+    @patch('usage_monitor_for_claude.command.show_error_box')
     @patch('builtins.print')
     @patch('usage_monitor_for_claude.command.threading.Thread')
     @patch('usage_monitor_for_claude.command.subprocess.Popen')
-    def test_capture_output_reports_empty_streams(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, _ctypes: MagicMock):
+    def test_capture_output_reports_empty_streams(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, _box: MagicMock):
         """Empty output still reports (no crash), marking streams as empty."""
         mock_popen.return_value.communicate.return_value = ('', '')
         mock_popen.return_value.returncode = 0
@@ -211,11 +217,11 @@ class TestRunEventCommandCaptureOutput(unittest.TestCase):
         printed = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
         self.assertIn('(empty)', printed)
 
-    @patch('usage_monitor_for_claude.command.ctypes')
+    @patch('usage_monitor_for_claude.command.show_error_box')
     @patch('builtins.print')
     @patch('usage_monitor_for_claude.command.threading.Thread')
     @patch('usage_monitor_for_claude.command.subprocess.Popen')
-    def test_capture_output_shows_error_box_on_nonzero_exit(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, mock_ctypes: MagicMock):
+    def test_capture_output_shows_error_box_on_nonzero_exit(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, mock_box: MagicMock):
         """A non-zero exit code raises an error message box containing stderr."""
         mock_popen.return_value.communicate.return_value = ('', 'the failure detail')
         mock_popen.return_value.returncode = 2
@@ -223,16 +229,16 @@ class TestRunEventCommandCaptureOutput(unittest.TestCase):
         run_event_command(['bad'], {'USAGE_MONITOR_EVENT': 'reset'}, capture_output=True)
         mock_thread.call_args[1]['target']()
 
-        mock_ctypes.windll.user32.MessageBoxW.assert_called_once()
-        box_message = mock_ctypes.windll.user32.MessageBoxW.call_args[0][1]
+        mock_box.assert_called_once()
+        box_message = mock_box.call_args[0][0]
         self.assertIn('the failure detail', box_message)
         self.assertIn('2', box_message)
 
-    @patch('usage_monitor_for_claude.command.ctypes')
+    @patch('usage_monitor_for_claude.command.show_error_box')
     @patch('builtins.print')
     @patch('usage_monitor_for_claude.command.threading.Thread')
     @patch('usage_monitor_for_claude.command.subprocess.Popen')
-    def test_capture_output_no_error_box_on_success(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, mock_ctypes: MagicMock):
+    def test_capture_output_no_error_box_on_success(self, mock_popen: MagicMock, mock_thread: MagicMock, mock_print: MagicMock, mock_box: MagicMock):
         """A zero exit code shows no error box."""
         mock_popen.return_value.communicate.return_value = ('done', '')
         mock_popen.return_value.returncode = 0
@@ -240,7 +246,7 @@ class TestRunEventCommandCaptureOutput(unittest.TestCase):
         run_event_command(['ok'], {'USAGE_MONITOR_EVENT': 'reset'}, capture_output=True)
         mock_thread.call_args[1]['target']()
 
-        mock_ctypes.windll.user32.MessageBoxW.assert_not_called()
+        mock_box.assert_not_called()
 
 
 class TestStartupFailureWindow(unittest.TestCase):
@@ -259,7 +265,7 @@ class TestStartupFailureWindow(unittest.TestCase):
             return next(launch_timestamps, runtime)
 
         with (
-            patch('usage_monitor_for_claude.command.ctypes') as mock_ctypes,
+            patch('usage_monitor_for_claude.command.show_error_box') as mock_box,
             patch('builtins.print') as mock_print,
             patch('usage_monitor_for_claude.command.threading.Thread') as mock_thread,
             patch('usage_monitor_for_claude.command.time.monotonic', fake_monotonic),
@@ -276,7 +282,7 @@ class TestStartupFailureWindow(unittest.TestCase):
 
         printed = '\n'.join(str(call.args[0]) for call in mock_print.call_args_list)
 
-        return mock_ctypes.windll.user32.MessageBoxW, printed
+        return mock_box, printed
 
     def test_late_failure_suppressed_when_late_reporting_is_off(self):
         """An app that ran for a while and then exited non-zero raises no dialog."""

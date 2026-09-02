@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.app import (
-    POLL_FAST, RESET_BUFFER, WM_LBUTTONDBLCLK, WM_LBUTTONUP, UsageMonitorForClaude, _align_to_reset,
+    POLL_FAST, RESET_BUFFER, UsageMonitorForClaude, _align_to_reset,
 )
 from usage_monitor_for_claude.cache import UpdateResult
 from usage_monitor_for_claude.claude_cli import RefreshResult
@@ -3415,7 +3415,7 @@ class TestStartupCommand(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestDoubleClickCommand(unittest.TestCase):
-    """Tests for on_double_click_command execution and its env snapshot."""
+    """Tests for quick-action execution and its env snapshot."""
 
     def setUp(self):
         self.app = _make_app()
@@ -3423,7 +3423,7 @@ class TestDoubleClickCommand(unittest.TestCase):
     def tearDown(self):
         _cleanup(self.app)
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_fires_with_current_quota_snapshot(self, mock_cmd):
         """Double-click command fires with env vars from the latest response."""
@@ -3432,79 +3432,79 @@ class TestDoubleClickCommand(unittest.TestCase):
             'seven_day': {'utilization': 55.0, 'resets_at': '2025-01-20T12:00:00Z'},
         }
 
-        self.app._run_double_click_command()
+        self.app._run_quick_action()
 
         mock_cmd.assert_called_once()
         cmd, env = mock_cmd.call_args[0]
         self.assertEqual(cmd, ['run.exe'])
-        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'double_click')
+        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'quick_action')
         self.assertEqual(env['USAGE_MONITOR_UTILIZATION_FIVE_HOUR'], '30')
         self.assertEqual(env['USAGE_MONITOR_RESETS_AT_FIVE_HOUR'], '2025-01-15T18:00:00Z')
         self.assertEqual(env['USAGE_MONITOR_UTILIZATION_SEVEN_DAY'], '55')
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_captures_output_so_failures_surface(self, mock_cmd):
         """A double-click is user-driven, so it requests output capture (error dialog on failure)."""
         self.app._last_response = {'five_hour': {'utilization': 10.0}}
 
-        self.app._run_double_click_command()
+        self.app._run_quick_action()
 
         self.assertTrue(mock_cmd.call_args[1].get('capture_output'))
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_only_startup_failures_are_reported(self, mock_cmd):
         """A late non-zero exit (crash, kill, replaced instance) must not raise a dialog long after the click."""
         self.app._last_response = {'five_hour': {'utilization': 10.0}}
 
-        self.app._run_double_click_command()
+        self.app._run_quick_action()
 
         self.assertFalse(mock_cmd.call_args[1].get('report_late_failures', True))
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_test_menu_handler_reports_late_failures(self, mock_cmd):
         """The 'Test event commands' menu keeps full reporting - there the exit code is the point."""
-        self.app.on_test_double_click()
+        self.app.on_test_quick_action()
 
         self.assertTrue(mock_cmd.call_args[1].get('report_late_failures', True))
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', [])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', [])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_no_fire_when_command_unset(self, mock_cmd):
-        """No command runs when ON_DOUBLE_CLICK_COMMAND is empty."""
+        """No command runs when QUICK_ACTION_COMMAND is empty."""
         self.app._last_response = {'five_hour': {'utilization': 30.0}}
 
-        self.app._run_double_click_command()
+        self.app._run_quick_action()
 
         mock_cmd.assert_not_called()
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_empty_response_emits_only_event(self, mock_cmd):
         """Double-clicking before any data yields only the event var."""
         self.app._last_response = {}
 
-        self.app._run_double_click_command()
+        self.app._run_quick_action()
 
         env = mock_cmd.call_args[0][1]
-        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'double_click')
+        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'quick_action')
         self.assertNotIn('USAGE_MONITOR_UTILIZATION_FIVE_HOUR', env)
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_error_response_emits_only_event(self, mock_cmd):
         """An error response contributes no quota vars."""
         self.app._last_response = {'error': 'server down', 'auth_error': True}
 
-        self.app._run_double_click_command()
+        self.app._run_quick_action()
 
         env = mock_cmd.call_args[0][1]
-        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'double_click')
+        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'quick_action')
         self.assertFalse([k for k in env if k.startswith('USAGE_MONITOR_UTILIZATION')])
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_extra_usage_env_vars_when_enabled(self, mock_cmd):
         """Extra usage credit vars are included when enabled."""
@@ -3513,132 +3513,138 @@ class TestDoubleClickCommand(unittest.TestCase):
             'extra_usage': {'is_enabled': True, 'used_credits': 8.20, 'monthly_limit': 10.0},
         }
 
-        self.app._run_double_click_command()
+        self.app._run_quick_action()
 
         env = mock_cmd.call_args[0][1]
         self.assertIn('USAGE_MONITOR_EXTRA_USED', env)
         self.assertIn('USAGE_MONITOR_EXTRA_LIMIT', env)
         self.assertNotIn('USAGE_MONITOR_UTILIZATION_EXTRA_USAGE', env)
 
-    @patch('usage_monitor_for_claude.app.ON_DOUBLE_CLICK_COMMAND', ['run.exe'])
+    @patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', ['run.exe'])
     @patch('usage_monitor_for_claude.app.run_event_command')
     def test_test_menu_handler_passes_expected_env(self, mock_cmd):
-        """on_test_double_click passes the documented sample env vars."""
-        self.app.on_test_double_click()
+        """on_test_quick_action passes the documented sample env vars."""
+        self.app.on_test_quick_action()
 
         mock_cmd.assert_called_once()
         cmd, env = mock_cmd.call_args[0]
         self.assertEqual(cmd, ['run.exe'])
-        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'double_click')
+        self.assertEqual(env['USAGE_MONITOR_EVENT'], 'quick_action')
         self.assertEqual(env['USAGE_MONITOR_UTILIZATION_FIVE_HOUR'], '30')
         self.assertEqual(env['USAGE_MONITOR_UTILIZATION_SEVEN_DAY'], '55')
         self.assertNotEqual(env['USAGE_MONITOR_RESETS_AT_FIVE_HOUR'], '')
 
 
 # ---------------------------------------------------------------------------
-# Double-click detection (_on_tray_message)
+# Tray double-click wiring
 # ---------------------------------------------------------------------------
 
-class TestDoubleClickDetection(unittest.TestCase):
-    """Tests for _on_tray_message single/double-click dispatch."""
+class TestAutostartWiring(unittest.TestCase):
+    """Tests for offering and maintaining the autostart entry."""
 
-    def setUp(self):
-        self.app = _make_app()
-        self.app._double_click_seconds = 0.5
-        self.app._pystray_on_notify = MagicMock()
+    def _ready(self, supported):
+        """Run the tray-ready hook with autostart support forced either way."""
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
 
-    def tearDown(self):
-        if self.app._single_click_timer is not None:
-            self.app._single_click_timer.cancel()
-        _cleanup(self.app)
+        icon = MagicMock()
+        with patch('usage_monitor_for_claude.app.autostart_supported', return_value=supported), \
+             patch('usage_monitor_for_claude.app.sync_autostart_path') as mock_sync, \
+             patch('usage_monitor_for_claude.app.api_headers', return_value={'x': 'y'}), \
+             patch('usage_monitor_for_claude.app.threading.Thread'), \
+             patch.object(app, 'poll_loop'):
+            app._on_icon_ready(icon)
 
-    @patch('usage_monitor_for_claude.app.threading.Timer')
-    def test_single_release_schedules_deferred_popup(self, mock_timer):
-        """A left-button release schedules the popup after the double-click interval."""
-        self.app._on_tray_message(0, WM_LBUTTONUP)
+        return mock_sync
 
-        mock_timer.assert_called_once_with(0.5, self.app._fire_single_click)
-        mock_timer.return_value.start.assert_called_once()
+    def test_moved_installation_is_synced_where_autostart_works(self):
+        """A stale entry - moved executable, recreated environment - is rewritten on start."""
+        self._ready(supported=True).assert_called_once()
 
-    @patch('usage_monitor_for_claude.app.threading.Timer')
-    def test_double_click_cancels_popup_and_runs_command(self, mock_timer):
-        """A double-click cancels the pending popup and runs the command."""
-        with patch.object(self.app, '_run_double_click_command') as mock_cmd:
-            self.app._on_tray_message(0, WM_LBUTTONUP)
-            self.app._on_tray_message(0, WM_LBUTTONDBLCLK)
-
-        mock_timer.return_value.cancel.assert_called_once()
-        mock_cmd.assert_called_once()
-
-    @patch('usage_monitor_for_claude.app.threading.Timer')
-    def test_trailing_release_after_double_click_swallowed(self, mock_timer):
-        """The release that follows a double-click does not schedule a second popup."""
-        with patch.object(self.app, '_run_double_click_command'):
-            self.app._on_tray_message(0, WM_LBUTTONUP)      # first click's release
-            self.app._on_tray_message(0, WM_LBUTTONDBLCLK)  # second click
-            self.app._on_tray_message(0, WM_LBUTTONUP)      # trailing release
-
-        self.assertEqual(mock_timer.call_count, 1)
-
-    @patch('usage_monitor_for_claude.app.threading.Timer')
-    def test_single_click_after_double_click_schedules_again(self, mock_timer):
-        """A genuine single click after a completed double-click still schedules the popup."""
-        with patch.object(self.app, '_run_double_click_command'):
-            self.app._on_tray_message(0, WM_LBUTTONUP)
-            self.app._on_tray_message(0, WM_LBUTTONDBLCLK)
-            self.app._on_tray_message(0, WM_LBUTTONUP)      # swallowed trailing release
-            self.app._on_tray_message(0, WM_LBUTTONUP)      # new single click
-
-        self.assertEqual(mock_timer.call_count, 2)
-
-    def test_other_message_falls_through_to_pystray(self):
-        """Non-left-button messages delegate to pystray's original handler."""
-        wm_rbuttonup = 0x0205
-        self.app._on_tray_message(7, wm_rbuttonup)
-
-        self.app._pystray_on_notify.assert_called_once_with(7, wm_rbuttonup)
-
-    def test_fire_single_click_opens_popup(self):
-        """The deferred callback opens the popup and clears the timer reference."""
-        self.app._single_click_timer = MagicMock()
-        with patch.object(self.app, 'on_show_popup') as mock_popup:
-            self.app._fire_single_click()
-
-        mock_popup.assert_called_once()
-        self.assertIsNone(self.app._single_click_timer)
-
-    def test_fire_single_click_noop_after_cancel(self):
-        """A fired-but-cancelled timer callback does not open the popup."""
-        self.app._single_click_timer = None  # a double-click cancelled it just as it fired
-        with patch.object(self.app, 'on_show_popup') as mock_popup:
-            self.app._fire_single_click()
-
-        mock_popup.assert_not_called()
+    def test_no_sync_where_autostart_is_unavailable(self):
+        """Without a usable autostart entry there is nothing to keep in sync."""
+        self._ready(supported=False).assert_not_called()
 
 
-class TestInstallDoubleClickHandler(unittest.TestCase):
-    """Tests for _install_double_click_handler swapping pystray's message handler."""
+class TestDoubleClickWiring(unittest.TestCase):
+    """Tests for wiring the optional double-click command to the tray icon."""
 
-    def setUp(self):
-        self.app = _make_app()
+    def _build(self, command, installed):
+        """Construct an app with the given configuration.
 
-    def tearDown(self):
-        _cleanup(self.app)
+        The settings patch stays active for the whole test: the menu
+        resolves its visibility when it opens, not when it is built.
+        """
+        command_patch = patch('usage_monitor_for_claude.app.QUICK_ACTION_COMMAND', command)
+        command_patch.start()
+        self.addCleanup(command_patch.stop)
 
-    def test_replaces_notify_handler_only(self):
-        """The WM_NOTIFY entry is replaced with _on_tray_message; other entries stay."""
-        original_notify = MagicMock(name='on_notify')
-        other_handler = MagicMock(name='other')
-        fake_icon = MagicMock()
-        fake_icon._on_notify = original_notify
-        fake_icon._message_handlers = {0x40B: original_notify, 0x0002: other_handler}
-        self.app.icon = fake_icon
+        with patch('usage_monitor_for_claude.app.pystray'), \
+             patch('usage_monitor_for_claude.app.create_icon_image'), \
+             patch('usage_monitor_for_claude.app.taskbar_uses_light_theme', return_value=False), \
+             patch('usage_monitor_for_claude.app.install_tray_click_handler', return_value=installed) as mock_install, \
+             patch('builtins.print') as mock_print:
+            app = UsageMonitorForClaude()
 
-        self.app._install_double_click_handler()
+        return app, mock_install, mock_print
 
-        self.assertEqual(fake_icon._message_handlers[0x40B], self.app._on_tray_message)
-        self.assertIs(fake_icon._message_handlers[0x0002], other_handler)
-        self.assertIs(self.app._pystray_on_notify, original_notify)
+    def test_no_command_leaves_default_click_untouched(self):
+        """Without a configured command the platform's own single click must stay as it is."""
+        app, mock_install, _print = self._build(command=[], installed=True)
+
+        mock_install.assert_not_called()
+        self.assertFalse(app.double_click_installed)
+
+    def test_command_wires_the_handler(self):
+        """A configured command installs the handler and records that it worked."""
+        app, mock_install, mock_print = self._build(command=['notepad'], installed=True)
+
+        mock_install.assert_called_once()
+        self.assertTrue(app.double_click_installed)
+        mock_print.assert_not_called()
+
+    def test_unsupported_platform_is_reported(self):
+        """A command that can never fire must not fail silently."""
+        app, _install, mock_print = self._build(command=['xdg-open .'], installed=False)
+
+        self.assertFalse(app.double_click_installed)
+        mock_print.assert_called_once()
+        self.assertIn('double-click', mock_print.call_args[0][0])
+
+    def test_menu_entry_hidden_when_double_click_works(self):
+        """A working double-click makes the menu entry redundant."""
+        app, _install, _print = self._build(command=['notepad'], installed=True)
+
+        self.assertFalse(app._quick_action_menu_visible())
+
+    def test_menu_entry_shown_when_double_click_unavailable(self):
+        """The command stays reachable where the tray cannot report a double-click."""
+        app, _install, _print = self._build(command=['xdg-open .'], installed=False)
+
+        self.assertTrue(app._quick_action_menu_visible())
+
+    def test_menu_entry_hidden_without_a_command(self):
+        """Nothing configured means nothing to offer."""
+        app, _install, _print = self._build(command=[], installed=False)
+
+        self.assertFalse(app._quick_action_menu_visible())
+
+    def test_menu_entry_runs_the_configured_command(self):
+        """The menu entry runs the same command a double-click would."""
+        app, _install, _print = self._build(command=['xdg-open .'], installed=False)
+
+        with patch.object(app, '_run_quick_action') as mock_run:
+            app.on_run_quick_action()
+
+        mock_run.assert_called_once()
+
+    def test_handler_receives_both_actions(self):
+        """The single click opens the popup, the double click runs the command."""
+        app, mock_install, _print = self._build(command=['notepad'], installed=True)
+
+        _icon, on_single, on_double = mock_install.call_args[0]
+        self.assertEqual(on_single, app.on_show_popup)
+        self.assertEqual(on_double, app._run_quick_action)
 
 
 if __name__ == '__main__':

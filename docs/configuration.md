@@ -20,7 +20,7 @@ The app never creates or modifies this file. Settings are read at startup - afte
 
 ## Alert thresholds
 
-Configure usage percentage thresholds that trigger Windows notifications. Session and weekly quotas have separate thresholds since their time horizons differ significantly. Set to an empty array `[]` to disable alerts for a specific quota type.
+Configure usage percentage thresholds that trigger desktop notifications. Session and weekly quotas have separate thresholds since their time horizons differ significantly. Set to an empty array `[]` to disable alerts for a specific quota type.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -41,7 +41,7 @@ Threshold lookup uses a fallback chain: exact match (e.g. `alert_thresholds_seve
 
 ## Update notification
 
-When a background token refresh installs a new Claude CLI version, the app shows a Windows notification reporting the version change. Set this to `false` to suppress that notification.
+When a background token refresh installs a new Claude CLI version, the app shows a desktop notification reporting the version change. Set this to `false` to suppress that notification.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -49,7 +49,7 @@ When a background token refresh installs a new Claude CLI version, the app shows
 
 ## Claude CLI command
 
-The popup lists the Claude Code version of the native Windows CLI and of each IDE extension it finds. Installs it cannot see - most commonly a Claude Code running inside WSL - are missing from that list. Use `cli_command` to have their versions reported as well.
+The popup lists the Claude Code version of the natively installed CLI and of each IDE extension it finds. Installs it cannot see - most commonly a Claude Code running inside WSL - are missing from that list. Use `cli_command` to have their versions reported as well.
 
 The value is an object mapping a display name to the base command as an array of arguments (the app appends `--version` itself). Each entry is listed in the popup under the name you give it, **in addition to** the native CLI and the IDE extensions.
 
@@ -67,7 +67,7 @@ The value is an object mapping a display name to the base command as an array of
 
 An entry only appears once its command reports a version, so if it stays missing, run the command yourself in a terminal - `wsl /home/<user>/.local/bin/claude --version` has to print a version number.
 
-- **This setting is display only.** Automatic token refresh keeps using the native Windows CLI, whose credentials this app reads.
+- **This setting is display only.** Automatic token refresh keeps using the natively installed CLI, whose credentials this app reads.
 - **The version is read once per app start.** After updating Claude Code inside WSL, restart the app to see the new version.
 
 ## Tooltip fields
@@ -202,7 +202,7 @@ Run a shell command when a usage event occurs. See [Event Commands](event-comman
 | `on_reset_command` | *(none)* | Shell command (or array of commands) to run when a quota resets (usage drops) |
 | `on_startup_command` | *(none)* | Shell command (or array of commands) to run once after the first successful API update following app start |
 | `on_threshold_command` | *(none)* | Shell command (or array of commands) to run when usage crosses a configured alert threshold |
-| `on_double_click_command` | *(none)* | Shell command (or array of commands) to run when you double-click the tray icon (e.g. launch [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)); a single click still opens the popup |
+| `quick_action_command` | *(none)* | Shell command (or array of commands) to run when you trigger the quick action (e.g. launch [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)). Triggered by a double-click on the tray icon, or by the **Run Quick Action** menu entry where the desktop keeps the click. Formerly `on_double_click_command`, which still works |
 
 ## Polling intervals
 
@@ -223,15 +223,15 @@ Run a shell command when a usage event occurs. See [Event Commands](event-comman
 
 ## Time Format
 
-By default, reset times follow your Windows clock format (the 24-hour or 12-hour / AM-PM setting from your regional preferences), so no configuration is needed. Set this key to override the auto-detected format.
+By default, reset times follow your system's clock format (the 24-hour or 12-hour / AM-PM setting from your regional preferences), so no configuration is needed. Set this key to override the auto-detected format.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `time_format` | *(auto-detected from Windows)* | Clock format for reset times: `"24h"` (e.g. `14:30`) or `"12h"` (e.g. `2:30 PM`) |
+| `time_format` | *(auto-detected from your system)* | Clock format for reset times: `"24h"` (e.g. `14:30`) or `"12h"` (e.g. `2:30 PM`) |
 
 ## Currency
 
-The app shows extra usage amounts in the billing currency the Anthropic API reports for your account (its symbol and decimal precision), falling back to your Windows locale's currency symbol when the API does not report one. An override set here always wins. Number formatting (decimal separator, symbol position) always follows your system locale.
+The app shows extra usage amounts in the billing currency the Anthropic API reports for your account (its symbol and decimal precision), falling back to your system locale's currency symbol when the API does not report one. An override set here always wins. Number formatting (decimal separator, symbol position) always follows your system locale.
 
 | Key | Default | Description |
 |-----|---------|-------------|

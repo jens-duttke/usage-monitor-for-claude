@@ -1,6 +1,7 @@
 # Privacy Policy
 
 **Usage Monitor for Claude** is a local desktop application that monitors your Claude API usage.
+It runs on Windows and Linux.
 
 ## Data Collection
 
@@ -14,22 +15,35 @@ data. No other network connections are made.
 ## Credentials
 
 The application reads your existing Claude OAuth token from the local Claude CLI configuration file
-(`~/.claude/.credentials.json`). This token is:
+(`~/.claude/.credentials.json`, the same path on both platforms). This token is:
 
 - Used solely in HTTP Authorization headers to authenticate with the Anthropic API
 - Never logged, stored elsewhere, copied, or transmitted to any third party
 
 ## Local Storage
 
-The application does not write any files. All usage data is kept in memory only and discarded when
-the application closes. An optional settings file (`usage-monitor-settings.json`) is read-only.
+All usage data is kept in memory only and discarded when the application closes. An optional
+settings file (`usage-monitor-settings.json`) is read-only. The complete list of what the
+application changes on your system follows - there is nothing else.
 
-Two values are written to the Windows registry, both under `HKEY_CURRENT_USER`:
+**On Windows** no files are written at all. Two values are written to the registry, both under
+`HKEY_CURRENT_USER`:
 
 - `Software\Classes\AppUserModelId\JensDuttke.UsageMonitorForClaude` - the display name and icon
   shown in the header of the application's notifications. Re-registered on every start.
 - `Software\Microsoft\Windows\CurrentVersion\Run` - the autostart entry. Written only when you
   enable autostart from the tray menu, removed when you disable it again.
+
+**On Linux** the registry has no equivalent, so the same two concerns need files:
+
+- `~/.config/autostart/usage-monitor-for-claude.desktop` - the autostart entry. Written only when
+  you enable autostart from the tray menu, removed when you disable it again.
+- `$XDG_RUNTIME_DIR/usage-monitor-for-claude.lock` - a lock file that prevents a second instance
+  from running. It holds the process id and version, is created with owner-only permissions
+  (`0600`), and lives in the session's runtime directory, which the system clears at logout.
+
+Monitoring a second Claude account (`--config-dir`) adds a suffix to those names, so each account
+gets its own entry.
 
 ## Claude Code Installation
 

@@ -9,12 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linux support** - the app now runs on Linux as well as Windows. The tray icon, detail popup, smart alerts, event commands, autostart and the single-instance guard all work there; see the [README](README.md#linux) for the packages it needs
+- On Linux, the detail popup opens from the tray menu instead of a left-click, because a tray icon is drawn and driven by the desktop panel there, which handles the click itself and never passes it to the application. For the same reason there is no double-click to react to: when a quick action is configured, the tray menu offers a **Run Quick Action** entry instead, so it stays reachable
+- On Linux the app needs two files where Windows uses the registry: the autostart entry (`~/.config/autostart/`, written only when you enable autostart) and a lock file in the session's runtime directory that keeps a second instance from starting - [PRIVACY.md](PRIVACY.md) lists everything the app touches, per platform
 - [WinGet](https://learn.microsoft.com/windows/package-manager/) is now documented as an alternative way to install and update the app (`winget install jens-duttke.usage-monitor-for-claude`), together with a note on what the community repository verifies about a package and what it does not - the direct download stays the authoritative source
 - Every release now lists the SHA256 of `UsageMonitorForClaude.exe`, so a download can be verified against the official release page - including the file WinGet installs, independently of its validation pipeline
 
+### Changed
+
+- The autostart menu entry is now called **Start at login** instead of "Start with Windows" - it describes what happens on both systems, and both write their entry for the login, not for boot
+- **Breaking:** The quick action (formerly the double-click command) now passes `USAGE_MONITOR_EVENT=quick_action` to its command instead of `double_click`. Only scripts that branch on that variable are affected; a script that simply runs when invoked needs no change
+- The `on_double_click_command` setting is now called `quick_action_command`, and the tray menu names it **Run Quick Action** - the old name described one system's input method for something that is triggered differently elsewhere. Existing settings files keep working: `on_double_click_command` is still read, and `quick_action_command` wins when both are present
+
 ### Fixed
 
-- The double-click command no longer raises a "command failed" dialog when an app it started exits with an error later on - only a command that fails to start is reported, which is what the dialog is for
+- The quick action no longer raises a "command failed" dialog when an app it started exits with an error later on - only a command that fails to start is reported, which is what the dialog is for
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.21.0...HEAD)
 

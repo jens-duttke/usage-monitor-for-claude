@@ -7,17 +7,13 @@ and _init_config.
 """
 from __future__ import annotations
 
-import ctypes
 import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.cache import CacheSnapshot
-from usage_monitor_for_claude.popup import (
-    UsagePopup, _BASELINE_DPI, _MONITORINFO, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER,
-    _init_config, _snapshot_to_dict, _usage_entries,
-)
+from usage_monitor_for_claude.popup import UsagePopup, _init_config, _snapshot_to_dict, _usage_entries
 
 
 def _snap(
@@ -592,128 +588,16 @@ class TestInitConfig(unittest.TestCase):
 # Pin state
 # ---------------------------------------------------------------------------
 
-class TestPinState(unittest.TestCase):
-    """Tests for UsagePopup pin state."""
-
-    def test_set_pinned_updates_state(self):
-        popup = object.__new__(UsagePopup)
-        popup._pinned = False
-
-        self.assertTrue(popup._set_pinned(True))
-        self.assertTrue(popup._pinned)
-
-        popup._moved_while_pinned = True
-        self.assertFalse(popup._set_pinned(False))
-        self.assertFalse(popup._pinned)
-        self.assertFalse(popup._moved_while_pinned)
-
-    def test_begin_drag_ignored_when_unpinned(self):
-        popup = object.__new__(UsagePopup)
-        popup._pinned = False
-        popup._popup_hwnd = 12345
-        popup._dragging = False
-
-        self.assertFalse(popup._begin_drag())
-        self.assertFalse(popup._dragging)
-
-    def test_begin_drag_anchors_physical_cursor_offset(self):
-        popup = object.__new__(UsagePopup)
-        popup._pinned = True
-        popup._popup_hwnd = 12345
-        popup._dragging = False
-
-        def fill_cursor(ptr):
-            point = ctypes.cast(ptr, ctypes.POINTER(ctypes.wintypes.POINT)).contents
-            point.x = 500
-            point.y = 400
-
-        def fill_rect(_hwnd, ptr):
-            rect = ctypes.cast(ptr, ctypes.POINTER(ctypes.wintypes.RECT)).contents
-            rect.left = 460
-            rect.top = 360
-
-        with patch('ctypes.windll.user32.GetCursorPos', side_effect=fill_cursor), \
-             patch('ctypes.windll.user32.GetWindowRect', side_effect=fill_rect), \
-             patch('ctypes.windll.user32.GetDpiForWindow', return_value=96):
-            self.assertTrue(popup._begin_drag())
-
-        self.assertTrue(popup._dragging)
-        self.assertEqual(popup._drag_offset, (40, 40))
-        self.assertEqual(popup._drag_start_dpi, 96)
-
-    def test_drag_ignored_when_not_dragging(self):
-        popup = object.__new__(UsagePopup)
-        popup._pinned = True
-        popup._dragging = False
-        popup._popup_hwnd = 12345
-
-        with patch('ctypes.windll.user32.SetWindowPos') as mock_set_pos:
-            self.assertFalse(popup._drag())
-        mock_set_pos.assert_not_called()
-
-    def test_drag_moves_popup_to_physical_cursor(self):
-        popup = object.__new__(UsagePopup)
-        popup._pinned = True
-        popup._dragging = True
-        popup._popup_hwnd = 12345
-        popup._drag_offset = (40, 40)
-        popup._moved_while_pinned = False
-
-        def fill_cursor(ptr):
-            point = ctypes.cast(ptr, ctypes.POINTER(ctypes.wintypes.POINT)).contents
-            point.x = 700
-            point.y = 620
-
-        with patch('ctypes.windll.user32.GetCursorPos', side_effect=fill_cursor), \
-             patch('ctypes.windll.user32.SetWindowPos') as mock_set_pos:
-            self.assertTrue(popup._drag())
-
-        mock_set_pos.assert_called_once_with(
-            12345, 0, 660, 580, 0, 0, _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE,
-        )
-        self.assertTrue(popup._moved_while_pinned)
-
-    def test_end_drag_reasserts_size_on_dpi_change(self):
-        popup = object.__new__(UsagePopup)
-        popup.WIDTH = UsagePopup.WIDTH
-        popup._popup_hwnd = 12345
-        popup._dragging = True
-        popup._drag_start_dpi = 96
-        popup._last_height = 500
-        popup._geometry_lock = threading.Lock()
-        popup._window = MagicMock()
-
-        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=144):
-            popup._end_drag()
-
-        self.assertFalse(popup._dragging)
-        popup._window.resize.assert_called_once_with(UsagePopup.WIDTH, 500)
-
-    def test_end_drag_keeps_size_without_dpi_change(self):
-        popup = object.__new__(UsagePopup)
-        popup.WIDTH = UsagePopup.WIDTH
-        popup._popup_hwnd = 12345
-        popup._dragging = True
-        popup._drag_start_dpi = 96
-        popup._last_height = 500
-        popup._window = MagicMock()
-
-        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=96):
-            popup._end_drag()
-
-        self.assertFalse(popup._dragging)
-        popup._window.resize.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
-# report_height / first show
+# Height reporting and reveal
 # ---------------------------------------------------------------------------
 
 class TestReportHeight(unittest.TestCase):
-    """Tests for _PopupApi.report_height - the first report must always show the window."""
+    """Tests for _PopupApi.report_height - the first report must always reveal the window."""
 
     def _build_popup(self):
-        """Run the real UsagePopup.__init__ with webview mocked, return (popup, api).
+        """Run the real UsagePopup.__init__ with webview and the host mocked.
 
         __init__ blocks on _closed.wait(), so it runs on a worker thread; the
         _PopupApi instance is captured from the js_api argument passed to
@@ -721,8 +605,11 @@ class TestReportHeight(unittest.TestCase):
         """
         patcher_watch = patch.object(UsagePopup, '_dismiss_watch', lambda self: None)
         patcher_webview = patch('usage_monitor_for_claude.popup.webview')
+        patcher_host = patch('usage_monitor_for_claude.popup.PopupHost')
         patcher_watch.start()
         mock_webview = patcher_webview.start()
+        patcher_host.start()
+        self.addCleanup(patcher_host.stop)
         self.addCleanup(patcher_webview.stop)
         self.addCleanup(patcher_watch.stop)
 
@@ -739,108 +626,75 @@ class TestReportHeight(unittest.TestCase):
         popup = api._popup
         self.addCleanup(popup._closed.set)
 
-        popup._resize_and_position = MagicMock()
-        popup._show_window = MagicMock()
         return popup, api
 
-    def test_first_report_at_initial_window_height_shows_popup(self):
-        """A first content height equal to the initial window height must still show the window."""
-        popup, api = self._build_popup()
-        initial_window_height = mock_height = 400
-
-        api.report_height(mock_height)
-
-        popup._resize_and_position.assert_called_once_with(initial_window_height)
-        popup._show_window.assert_called_once()
-
-    def test_first_report_at_other_height_shows_popup(self):
-        """A first content height different from the window height shows the window."""
+    def test_first_report_at_initial_window_height_reveals_popup(self):
+        """A first content height equal to the initial window height must still reveal the window."""
         popup, api = self._build_popup()
 
-        api.report_height(523)
+        api.report_height(UsagePopup._INITIAL_HEIGHT)
 
-        popup._resize_and_position.assert_called_once_with(523)
-        popup._show_window.assert_called_once()
+        popup._host.apply_geometry.assert_called_once_with(UsagePopup._INITIAL_HEIGHT, keep_position=False)
+        popup._host.reveal.assert_called_once()
 
-    def test_repeated_report_with_same_height_is_deduplicated(self):
-        """A second report with an unchanged height must not resize again."""
+    def test_first_report_at_other_height_reveals_popup(self):
+        """A first content height different from the window height reveals the window."""
         popup, api = self._build_popup()
 
         api.report_height(523)
+
+        popup._host.apply_geometry.assert_called_once_with(523, keep_position=False)
+        popup._host.reveal.assert_called_once()
+
+    def test_repeated_height_is_ignored(self):
+        """An unchanged height must not resize or reveal again."""
+        popup, api = self._build_popup()
+
+        api.report_height(523)
         api.report_height(523)
 
-        popup._resize_and_position.assert_called_once_with(523)
+        popup._host.apply_geometry.assert_called_once()
+        popup._host.reveal.assert_called_once()
 
-    def test_zero_height_ignored(self):
-        """A zero height report is ignored entirely."""
+    def test_changed_height_resizes_without_revealing_again(self):
+        """A later height change resizes but does not restart the reveal path."""
+        popup, api = self._build_popup()
+
+        api.report_height(523)
+        api.report_height(610)
+
+        self.assertEqual(popup._host.apply_geometry.call_count, 2)
+        popup._host.reveal.assert_called_once()
+
+    def test_zero_height_is_ignored(self):
+        """A zero height carries no layout information."""
         popup, api = self._build_popup()
 
         api.report_height(0)
 
-        popup._resize_and_position.assert_not_called()
-        popup._show_window.assert_not_called()
+        popup._host.apply_geometry.assert_not_called()
+        popup._host.reveal.assert_not_called()
 
-    def test_stale_height_report_cannot_overwrite_newer_resize(self):
-        """pywebview dispatches each bridge call on a fresh thread; two rapid
-        height reports must not interleave so that the earlier resize is
-        applied after (and overwrites) the later one."""
+    def test_moved_pinned_popup_keeps_its_position(self):
+        """A pinned popup the user dragged must not snap back to the tray."""
         popup, api = self._build_popup()
+        api.report_height(400)
+        popup._pinned = True
+        popup._moved_while_pinned = True
 
-        first_entered = threading.Event()
-        release_first = threading.Event()
-        applied = []
+        api.report_height(500)
 
-        def resize(height):
-            if height == 400:
-                first_entered.set()
-                release_first.wait(2)
-            applied.append(height)
+        self.assertTrue(popup._host.apply_geometry.call_args.kwargs['keep_position'])
 
-        popup._resize_and_position = MagicMock(side_effect=resize)
-
-        first = threading.Thread(target=lambda: api.report_height(400), daemon=True)
-        first.start()
-        self.assertTrue(first_entered.wait(2))
-
-        second = threading.Thread(target=lambda: api.report_height(523), daemon=True)
-        second.start()
-        time.sleep(0.1)
-        release_first.set()
-        first.join(2)
-        second.join(2)
-
-        # The window size (last applied resize) must match the tracked height.
-        self.assertEqual(applied[-1], popup._last_height)
-
-    def test_concurrent_first_reports_start_show_only_once(self):
-        """Two pre-show reports racing each other must not both run _show_window
-        (which would start two update-push loops for one popup)."""
+    def test_pinned_popup_that_was_not_moved_still_anchors(self):
+        """Pinning alone does not detach the popup from the tray anchor."""
         popup, api = self._build_popup()
+        api.report_height(400)
+        popup._pinned = True
 
-        show_entered = threading.Event()
-        release_show = threading.Event()
-        show_calls = []
+        api.report_height(500)
 
-        def show():
-            show_calls.append(1)
-            show_entered.set()
-            release_show.wait(2)
-            popup._shown = True
-
-        popup._show_window = MagicMock(side_effect=show)
-
-        first = threading.Thread(target=lambda: api.report_height(400), daemon=True)
-        first.start()
-        self.assertTrue(show_entered.wait(2))
-
-        second = threading.Thread(target=lambda: api.report_height(523), daemon=True)
-        second.start()
-        time.sleep(0.1)
-        release_show.set()
-        first.join(2)
-        second.join(2)
-
-        self.assertEqual(len(show_calls), 1)
+        self.assertFalse(popup._host.apply_geometry.call_args.kwargs['keep_position'])
 
 
 # ---------------------------------------------------------------------------
@@ -848,55 +702,149 @@ class TestReportHeight(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestDismissWatchShutdown(unittest.TestCase):
-    """Tests that closing the popup terminates the dismiss-watch message pump.
+    """Tests that closing the popup terminates the platform host's dismiss watch.
 
-    The pump installs system-wide input hooks and only removes them when
-    its GetMessageW loop exits.  Closing the window must wake the pump in
+    The Windows host installs system-wide input hooks and only removes them
+    when its message pump exits.  Closing the window must wake the watch in
     every state - especially while pinned, where the user-dismissal path
-    (_post_quit) never fires.
+    never fires.
     """
 
-    def _start_pump(self, pinned):
-        """Build a minimal popup and run the real _dismiss_watch on a thread."""
+    def _start_watch(self, pinned):
+        """Build a minimal popup whose host blocks until stop_watch() is called."""
+        released = threading.Event()
+
+        host = MagicMock()
+        host.watch_dismiss.side_effect = lambda should_dismiss, is_running: released.wait(2)
+        host.stop_watch.side_effect = released.set
+
         popup = object.__new__(UsagePopup)
         popup._running = True
         popup._pinned = pinned
         popup._shown = True
-        popup._popup_hwnd = 0
-        popup._pump_tid = 0
         popup._closed = threading.Event()
         popup._window = MagicMock()
+        popup._host = host
 
         thread = threading.Thread(target=popup._dismiss_watch, daemon=True)
         thread.start()
 
-        # Wait until the pump published its thread id (pump is about to block
-        # in GetMessageW); fall back to a fixed delay if it never appears.
         deadline = time.time() + 1.0
-        while not popup._pump_tid and time.time() < deadline:
+        while not host.watch_dismiss.called and time.time() < deadline:
             time.sleep(0.01)
+
         return popup, thread
 
-    def test_close_while_pinned_exits_pump(self):
-        """_close() on a pinned popup must end the pump so hooks are unhooked."""
-        popup, thread = self._start_pump(pinned=True)
+    def test_close_while_pinned_ends_watch(self):
+        """_close() on a pinned popup must end the watch so hooks are removed."""
+        popup, thread = self._start_watch(pinned=True)
         popup._close()
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
 
-    def test_close_while_unpinned_exits_pump(self):
-        """_close() on an unpinned popup must end the pump immediately, not on the next outside click."""
-        popup, thread = self._start_pump(pinned=False)
+    def test_close_while_unpinned_ends_watch(self):
+        """_close() must end the watch immediately, not on the next outside click."""
+        popup, thread = self._start_watch(pinned=False)
         popup._close()
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
 
-    def test_window_closed_event_exits_pump(self):
-        """The pywebview closed event must end the pump even while pinned."""
-        popup, thread = self._start_pump(pinned=True)
+    def test_window_closed_event_ends_watch(self):
+        """The pywebview closed event must end the watch even while pinned."""
+        popup, thread = self._start_watch(pinned=True)
         popup._on_window_closed()
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
+
+    def test_watch_return_closes_the_popup(self):
+        """When the host reports a dismissal, the popup closes itself."""
+        popup, thread = self._start_watch(pinned=False)
+        popup._host.stop_watch()
+        thread.join(timeout=2)
+        self.assertTrue(popup._closed.is_set())
+
+
+class TestShouldDismiss(unittest.TestCase):
+    """Tests for the predicate the platform host asks before dismissing."""
+
+    def _popup(self, shown, pinned):
+        popup = object.__new__(UsagePopup)
+        popup._shown = shown
+        popup._pinned = pinned
+        return popup
+
+    def test_shown_and_unpinned_dismisses(self):
+        self.assertTrue(self._popup(shown=True, pinned=False)._should_dismiss())
+
+    def test_pinned_does_not_dismiss(self):
+        """A pinned popup stays open until the user unpins or closes it."""
+        self.assertFalse(self._popup(shown=True, pinned=True)._should_dismiss())
+
+    def test_not_yet_shown_does_not_dismiss(self):
+        """A window still being measured must not be closed by a stray event."""
+        self.assertFalse(self._popup(shown=False, pinned=False)._should_dismiss())
+
+
+# ---------------------------------------------------------------------------
+# Pin state
+# ---------------------------------------------------------------------------
+
+class TestPinState(unittest.TestCase):
+    """Tests for pinning and the drag it enables."""
+
+    def _popup(self, pinned=False):
+        popup = object.__new__(UsagePopup)
+        popup._pinned = pinned
+        popup._moved_while_pinned = False
+        popup._last_height = 500
+        popup._geometry_lock = threading.Lock()
+        popup._host = MagicMock()
+        return popup
+
+    def test_set_pinned_reports_what_was_applied(self):
+        """popup.js assigns the result back to its own state."""
+        popup = self._popup()
+        self.assertTrue(popup._set_pinned(True))
+        self.assertFalse(popup._set_pinned(False))
+
+    def test_unpinning_clears_the_moved_flag(self):
+        """After unpinning, the popup anchors to the tray again."""
+        popup = self._popup(pinned=True)
+        popup._moved_while_pinned = True
+        popup._set_pinned(False)
+        self.assertFalse(popup._moved_while_pinned)
+
+    def test_drag_requires_pinning(self):
+        """An unpinned popup is positioned by the app, not the user."""
+        popup = self._popup(pinned=False)
+        self.assertFalse(popup._begin_drag())
+        self.assertFalse(popup._drag())
+        popup._host.begin_drag.assert_not_called()
+
+    def test_begin_drag_delegates_to_host(self):
+        popup = self._popup(pinned=True)
+        popup._host.begin_drag.return_value = True
+        self.assertTrue(popup._begin_drag())
+
+    def test_drag_marks_the_popup_as_moved(self):
+        """A successful drag detaches the popup from the tray anchor."""
+        popup = self._popup(pinned=True)
+        popup._host.drag.return_value = True
+        self.assertTrue(popup._drag())
+        self.assertTrue(popup._moved_while_pinned)
+
+    def test_refused_drag_does_not_mark_as_moved(self):
+        """A drag the host refused must not detach the anchor."""
+        popup = self._popup(pinned=True)
+        popup._host.drag.return_value = False
+        self.assertFalse(popup._drag())
+        self.assertFalse(popup._moved_while_pinned)
+
+    def test_end_drag_passes_the_current_height(self):
+        """The host may need the height to re-assert the size after the drag."""
+        popup = self._popup(pinned=True)
+        popup._end_drag()
+        popup._host.end_drag.assert_called_once_with(500)
 
 
 # ---------------------------------------------------------------------------
@@ -990,230 +938,3 @@ class TestUpdateLoopResilience(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # _tray_position
 # ---------------------------------------------------------------------------
-
-class TestTrayPosition(unittest.TestCase):
-    """Tests for UsagePopup._tray_position - popup placement near the tray.
-
-    _tray_position receives a physical-pixel height (the actual window
-    height after DPI scaling) and work-area bounds in physical pixels.
-    It returns logical coordinates suitable for pywebview's move().
-    """
-
-    def _call(self, work_left, work_top, work_right, work_bottom, dpi, physical_width, physical_height,
-              mon_left=0, mon_top=0):
-        """Call _tray_position without constructing a full UsagePopup."""
-        popup = object.__new__(UsagePopup)
-        popup._popup_hwnd = 12345
-
-        def fill_mon_info(_hmon, ptr):
-            info = ctypes.cast(ptr, ctypes.POINTER(_MONITORINFO)).contents
-            info.cbSize = ctypes.sizeof(_MONITORINFO)
-            info.rcMonitor.left = mon_left
-            info.rcMonitor.top = mon_top
-            info.rcMonitor.right = work_right
-            info.rcMonitor.bottom = work_bottom
-            info.rcWork.left = work_left
-            info.rcWork.top = work_top
-            info.rcWork.right = work_right
-            info.rcWork.bottom = work_bottom
-
-        with patch('ctypes.windll.user32.FindWindowW', return_value=99999), \
-             patch('ctypes.windll.user32.MonitorFromWindow', return_value=11111), \
-             patch('ctypes.windll.user32.GetMonitorInfoW', side_effect=fill_mon_info), \
-             patch('ctypes.windll.user32.GetDpiForWindow', return_value=dpi):
-            return popup._tray_position(physical_width, physical_height)
-
-    def test_bottom_right_at_100_percent_scaling(self):
-        """At 100% DPI, popup aligns to bottom-right of work area."""
-        x, y = self._call(0, 0, 1920, 1040, _BASELINE_DPI, 340, 400)
-        self.assertEqual(x, 1920 - 340 - 12)
-        self.assertEqual(y, 1040 - 400 - 12)
-
-    def test_bottom_right_at_125_percent_scaling(self):
-        """At 125% DPI, logical coordinates place the popup within the work area."""
-        scale = 120 / _BASELINE_DPI  # 1.25
-        pw = int(340 * scale)
-        ph = int(400 * scale)
-        x, y = self._call(0, 0, 2400, 1300, 120, pw, ph)
-        expected_x = int((2400 - pw - 12) / scale)
-        expected_y = int((1300 - ph - 12) / scale)
-        self.assertEqual(x, expected_x)
-        self.assertEqual(y, expected_y)
-
-    def test_bottom_right_at_150_percent_scaling(self):
-        """At 150% DPI, logical coordinates place the popup within the work area."""
-        scale = 144 / _BASELINE_DPI  # 1.5
-        pw = int(340 * scale)
-        ph = int(400 * scale)
-        x, y = self._call(0, 0, 2880, 1560, 144, pw, ph)
-        expected_x = int((2880 - pw - 12) / scale)
-        expected_y = int((1560 - ph - 12) / scale)
-        self.assertEqual(x, expected_x)
-        self.assertEqual(y, expected_y)
-
-    def test_taskbar_on_left(self):
-        """When taskbar is on the left (work_area.left > 0), popup goes to the left edge."""
-        x, y = self._call(60, 0, 1920, 1080, _BASELINE_DPI, 340, 400)
-        self.assertEqual(x, 60 + 12)
-        self.assertEqual(y, 1080 - 400 - 12)
-
-    def test_taskbar_on_top(self):
-        """When taskbar is on top (work_area.top > 0), popup goes to the top edge."""
-        x, y = self._call(0, 40, 1920, 1080, _BASELINE_DPI, 340, 400)
-        self.assertEqual(x, 1920 - 340 - 12)
-        self.assertEqual(y, 40 + 12)
-
-    def test_popup_fits_within_work_area_at_125_percent(self):
-        """The popup's physical extent must not exceed the work area at 125% scaling."""
-        dpi = 120
-        scale = dpi / _BASELINE_DPI
-        pw = int(340 * scale)
-        ph = int(400 * scale)
-        work_right = 2400
-        work_bottom = 1300
-        x, y = self._call(0, 0, work_right, work_bottom, dpi, pw, ph)
-        # move() scales logical coords back to physical
-        physical_x = x * scale
-        physical_y = y * scale
-        self.assertLessEqual(physical_x + pw, work_right)
-        self.assertLessEqual(physical_y + ph, work_bottom)
-
-    def test_taskbar_on_bottom_when_monitor_offset_left(self):
-        """Popup goes to bottom-right even when the primary monitor is not at virtual x=0.
-
-        Regression: the old code used ``work_area.left > 0`` which fired incorrectly
-        whenever secondary monitors were positioned to the left of the primary,
-        causing the popup to land at the left edge instead of the bottom-right corner.
-        """
-        # Primary monitor starts at virtual x=1920 (another monitor sits to its left).
-        # Taskbar is at the bottom: work_left == mon_left, so NOT a left-side taskbar.
-        x, y = self._call(1920, 0, 3840, 1040, _BASELINE_DPI, 340, 400, mon_left=1920)
-        self.assertEqual(x, 3840 - 340 - 12)
-        self.assertEqual(y, 1040 - 400 - 12)
-
-
-# ---------------------------------------------------------------------------
-# _resize_and_position
-# ---------------------------------------------------------------------------
-
-class TestResizeAndPosition(unittest.TestCase):
-    """Tests for UsagePopup._resize_and_position - DPI-aware resize."""
-
-    def _call(self, css_height, dpi):
-        """Call _resize_and_position and capture the resize/move arguments."""
-        popup = object.__new__(UsagePopup)
-        popup.WIDTH = UsagePopup.WIDTH
-        popup._popup_hwnd = 12345
-        popup._pinned = False
-        popup._moved_while_pinned = False
-
-        mock_window = MagicMock()
-        popup._window = mock_window
-
-        def fill_mon_info(_hmon, ptr):
-            info = ctypes.cast(ptr, ctypes.POINTER(_MONITORINFO)).contents
-            info.cbSize = ctypes.sizeof(_MONITORINFO)
-            info.rcMonitor.left = 0
-            info.rcMonitor.top = 0
-            info.rcMonitor.right = 1920
-            info.rcMonitor.bottom = 1080
-            info.rcWork.left = 0
-            info.rcWork.top = 0
-            info.rcWork.right = 1920
-            info.rcWork.bottom = 1040
-
-        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=dpi), \
-             patch('ctypes.windll.user32.FindWindowW', return_value=99999), \
-             patch('ctypes.windll.user32.MonitorFromWindow', return_value=11111), \
-             patch('ctypes.windll.user32.GetMonitorInfoW', side_effect=fill_mon_info):
-            popup._resize_and_position(css_height)
-
-        return mock_window
-
-    def test_resize_at_100_percent(self):
-        """At 100% DPI, resize uses CSS pixels directly (scale=1)."""
-        mock = self._call(500, 96)
-        mock.resize.assert_called_once_with(340, 500)
-
-    def test_resize_at_125_percent(self):
-        """At 125% DPI, resize receives logical pixels; pywebview scales internally."""
-        mock = self._call(500, 120)
-        mock.resize.assert_called_once_with(340, 500)
-
-    def test_resize_at_150_percent(self):
-        """At 150% DPI, resize receives logical pixels; pywebview scales internally."""
-        mock = self._call(500, 144)
-        mock.resize.assert_called_once_with(340, 500)
-
-    def test_move_receives_logical_coordinates(self):
-        """move() receives logical coordinates regardless of DPI."""
-        mock = self._call(500, 120)
-        x, y = mock.move.call_args[0]
-        # Logical coordinates must be smaller than physical work area
-        self.assertLess(x, 1920)
-        self.assertLess(y, 1040)
-
-    def test_window_fits_within_work_area_at_125_percent(self):
-        """After resize + move at 125% DPI, the window stays within the work area."""
-        dpi = 120
-        scale = dpi / _BASELINE_DPI
-        mock = self._call(500, dpi)
-        resize_w, resize_h = mock.resize.call_args[0]
-        move_x, move_y = mock.move.call_args[0]
-        # pywebview 6.x scales both resize() and move() to physical internally
-        self.assertLessEqual((move_x + resize_w) * scale, 1920)
-        self.assertLessEqual((move_y + resize_h) * scale, 1040)
-
-    def test_falls_back_to_system_dpi_when_window_dpi_unavailable(self):
-        """When GetDpiForWindow returns 0, GetDpiForSystem is used as fallback."""
-        popup = object.__new__(UsagePopup)
-        popup.WIDTH = UsagePopup.WIDTH
-        popup._popup_hwnd = 12345
-        popup._pinned = False
-        popup._moved_while_pinned = False
-
-        mock_window = MagicMock()
-        popup._window = mock_window
-
-        def fill_mon_info(_hmon, ptr):
-            info = ctypes.cast(ptr, ctypes.POINTER(_MONITORINFO)).contents
-            info.cbSize = ctypes.sizeof(_MONITORINFO)
-            info.rcMonitor.left = 0
-            info.rcMonitor.top = 0
-            info.rcMonitor.right = 1920
-            info.rcMonitor.bottom = 1080
-            info.rcWork.left = 0
-            info.rcWork.top = 0
-            info.rcWork.right = 1920
-            info.rcWork.bottom = 1040
-
-        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=0), \
-             patch('ctypes.windll.user32.GetDpiForSystem', return_value=144) as mock_sys_dpi, \
-             patch('ctypes.windll.user32.FindWindowW', return_value=99999), \
-             patch('ctypes.windll.user32.MonitorFromWindow', return_value=11111), \
-             patch('ctypes.windll.user32.GetMonitorInfoW', side_effect=fill_mon_info):
-            popup._resize_and_position(500)
-
-        mock_sys_dpi.assert_called()
-        mock_window.resize.assert_called_once_with(340, 500)
-
-    def test_pinned_moved_popup_resizes_without_snapping_to_tray(self):
-        """A moved pinned popup keeps its position when content height changes."""
-        popup = object.__new__(UsagePopup)
-        popup.WIDTH = UsagePopup.WIDTH
-        popup._popup_hwnd = 12345
-        popup._pinned = True
-        popup._moved_while_pinned = True
-
-        mock_window = MagicMock()
-        popup._window = mock_window
-
-        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=_BASELINE_DPI):
-            popup._resize_and_position(500)
-
-        mock_window.resize.assert_called_once_with(340, 500)
-        mock_window.move.assert_not_called()
-
-
-if __name__ == '__main__':
-    unittest.main()

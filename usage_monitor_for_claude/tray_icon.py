@@ -2,26 +2,18 @@
 Tray Icon
 ==========
 
-Creates system tray icons and detects the Windows taskbar theme.
+Renders the system tray icon.  Font loading and theme detection live in
+:mod:`usage_monitor_for_claude.platforms`; this module stays purely
+about drawing.
 """
 from __future__ import annotations
 
-import ctypes
-import functools
-import os
-import winreg
-from typing import Callable
+from PIL import Image, ImageDraw
 
-from PIL import Image, ImageDraw, ImageFont
-
+from .platforms import load_font
 from .settings import ICON_DARK, ICON_LIGHT, ICON_STYLE
 
-__all__ = ['load_font', 'taskbar_uses_light_theme', 'watch_theme_change', 'create_icon_image', 'create_status_image']
-
-# Theme registry
-THEME_REG_KEY = r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
-THEME_REG_VALUE = 'SystemUsesLightTheme'
-REG_NOTIFY_CHANGE_LAST_SET = 0x00000004
+__all__ = ['create_icon_image', 'create_status_image']
 
 TRANSPARENT = (0, 0, 0, 0)
 
@@ -33,56 +25,6 @@ MARKER_WIDTH = 4
 
 # Row height for the 'numbers' icon style - two rows split the canvas evenly.
 NUMBER_ROW_HEIGHT = 32
-
-
-@functools.lru_cache(maxsize=None)
-def load_font(size: int, symbol: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Load font at given size. Use symbol=True for Unicode glyphs not in Arial."""
-    windir = os.environ.get('WINDIR', 'C:\\Windows')
-    if symbol:
-        names = (f'{windir}\\Fonts\\seguisym.ttf', 'seguisym.ttf')
-    else:
-        names = (f'{windir}\\Fonts\\arialbd.ttf', 'arialbd.ttf', f'{windir}\\Fonts\\arial.ttf', 'arial.ttf')
-    for name in names:
-        try:
-            return ImageFont.truetype(name, size)
-        except OSError:
-            continue
-
-    return ImageFont.load_default()
-
-
-def taskbar_uses_light_theme() -> bool:
-    """Return True if the Windows taskbar uses the light theme.
-
-    Reads ``SystemUsesLightTheme`` from the Personalize registry key.
-    Returns False (dark) if the value cannot be read.
-    """
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, THEME_REG_KEY) as key:
-            value, _ = winreg.QueryValueEx(key, THEME_REG_VALUE)
-            return bool(value)
-    except OSError:
-        return False
-
-
-def watch_theme_change(callback: Callable[[], None]) -> None:
-    """Block the current thread and call *callback* whenever the taskbar theme changes.
-
-    Uses ``RegNotifyChangeKeyValue`` to sleep until the registry key
-    is modified, avoiding any polling.  Designed to run in a daemon thread.
-    """
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, THEME_REG_KEY, 0, winreg.KEY_READ) as key:
-        while True:
-            if ctypes.windll.advapi32.RegNotifyChangeKeyValue(int(key), False, REG_NOTIFY_CHANGE_LAST_SET, None, False) != 0:
-                return
-            try:
-                callback()
-            except Exception:
-                # A transient callback failure (icon re-render, Shell_NotifyIcon
-                # during an Explorer restart) must not end theme watching for
-                # the rest of the session.
-                pass
 
 
 def create_icon_image(

@@ -4,10 +4,18 @@ Apply Python best practices and clean code principles. Only change code relevant
 Prioritize readability and auditability - users handle credentials and must be able to verify the code is safe at a glance.
 
 ## Platform
-- Windows-only application - no `sys.platform` checks or cross-platform guards needed
-- Windows APIs (`ctypes.windll`, `winreg`) can be used unconditionally
+- Windows and Linux are both supported. macOS is not - a community fork covers it
+- **No module outside `usage_monitor_for_claude/platforms/` may import `ctypes.windll`, `winreg`, `fcntl`, `gi`, or use `subprocess.CREATE_NO_WINDOW`.** Everything OS-specific lives behind the platform layer; the rest of the package must import cleanly on both systems
+- `platforms/__init__.py` dispatches on `sys.platform` and re-exports one API from `win32.py` or `linux.py`. That dispatch is the *only* place a platform check belongs
+- Three concerns are big enough to get their own file pair plus a dispatch module, because they pull in dependencies the platform package must stay free of (`pystray`, `pywebview`) or would close an import cycle: `instance.py` (`instance_win32.py`/`instance_linux.py`) and `popup.py` (`popup_win32.py`/`popup_linux.py`)
+- `instance.py` must not be imported from `platforms/__init__.py`: the guard needs `i18n`, which imports `settings`, which imports the platform package
+- **`platforms/linux.py` must import without any GUI toolkit present.** `gi` is imported inside the functions that need it, and every helper degrades to a documented fallback when the session bus or GTK is unavailable. The Linux virtual environment needs `--system-site-packages` to run the app at all, so it *does* see PyGObject and cannot prove this by accident - `TestImportsWithoutPyGObject` stages the absence in a subprocess instead. Keep it a subprocess: a mock would only prove the mock
+- A Linux capability that has no counterpart (notification identity, tray double-click, DPI awareness) is an explicit no-op or returns `False` with a docstring saying why - never a silent omission
+- `prepare_gui_environment()` defaults `GDK_BACKEND` to `x11` on Linux and runs before pywebview is imported. Wayland refuses client-side window placement, so the popup could not reach its anchor; `setdefault` leaves an explicit choice alone
+- Whether the tray menu offers autostart comes from `autostart_supported()`, not from `sys.frozen`. Windows needs a packaged build (a Run value holding only the interpreter path starts Python, not the app); Linux writes both the interpreter and `Path=` into the `.desktop` entry, so a source checkout starts just as reliably
 
-## Popup Window & DPI
+## Popup Window & DPI (Windows host)
+- Everything in this section describes `platforms/popup_win32.py`. `popup.py` itself owns only the data flow
 - The popup uses pywebview with a WinForms host window and Edge WebView2
 - pywebview 6.x `resize()` **and** `move()` both expect **logical pixels** (pywebview applies DPI scaling internally for both)
 - `_tray_position()` still receives physical pixel dimensions (needed to calculate position against Win32 physical coordinates) and returns **logical coordinates** for `move()` - never change this to physical
@@ -16,15 +24,28 @@ Prioritize readability and auditability - users handle credentials and must be a
 - The pinned-popup drag (`_begin_drag`/`_drag`/`_end_drag`) deliberately uses raw `SetWindowPos` with **physical** cursor coordinates (`GetCursorPos` minus the grab offset captured on mouse-down), not pywebview's `move()`. Reason: `move()` and JS `screenX` deltas are scaled by a single monitor's DPI, which jumps at a monitor boundary and makes the cursor drift off the window and the size break. After a drag that crosses a DPI boundary, `_end_drag` re-asserts the size once via `resize()` against the destination monitor's DPI. Do not collapse this back to `move()` - it reintroduces the mixed-DPI drift
 - The taskbar icon is hidden via Win32 extended styles (`WS_EX_TOOLWINDOW` + remove `WS_EX_APPWINDOW`). Do **not** use WinForms `ShowInTaskbar = False` - it recreates the native window handle, which crashes WebView2 from background threads
 
-## Tray Icon Interaction
-- pystray has no native double-click support (it fires the default menu item on every `WM_LBUTTONUP`). Double-click is added only when `on_double_click_command` is set: `_install_double_click_handler()` swaps the `WM_NOTIFY` entry in pystray's private `_message_handlers` table (matched by identity against `icon._on_notify`) for `_on_tray_message`. This reaches into pystray internals - if a pystray upgrade renames `_message_handlers`/`_on_notify`, this is where it breaks
+## Popup Window (Linux host)
+- `platforms/popup_linux.py`. Four properties of pywebview's GTK backend shape it, and **each one is silent when violated** - every pywebview call still reports success:
+  - `Window.show()` does **not** map a window created with `hidden=True`. The GTK window must be mapped with `show_all()` + `present()`. `window.x`/`window.width` still report the requested values, so only the X server tells the truth (`map_state`)
+  - A `move()` on an unmapped window is **discarded**, and the compositor then places the window by its own policy. The move must follow the map
+  - Without `GdkWindow.focus()` the compositor's focus-stealing prevention leaves a frameless keep-above window unfocused, so `focus-out-event` never fires and the popup could never dismiss itself
+  - **No GTK signal handler may call a blocking pywebview API.** Handlers run on the main loop, and pywebview waits for that same loop - the whole session deadlocks. `_on_loaded` therefore hands off to a worker thread
+- `resizable=True` is mandatory: GTK ignores `resize()` on a non-resizable window, so the content-driven height would never apply. WebKitGTK also needs a real `file://` URI - handed a bare path it stays on `about:blank` and the injected `init()` fails with a ReferenceError. Both live in the host's `WINDOW_KWARGS` and `popup_url()`
+- Dismissal is `focus-out-event` plus `key-press-event`, not global hooks - Wayland has no equivalent of `WH_MOUSE_LL`, and none is needed once the window holds focus
+- There is no DPI arithmetic: GTK reports and consumes logical pixels on both sides
+- StatusNotifierItem never reports where the panel drew the icon - no protocol carries that - so the popup anchors to the work-area corner instead of the icon
+
+## Tray Icon Interaction (Windows)
+- pystray has no native double-click support (it fires the default menu item on every `WM_LBUTTONUP`). Double-click is added only when a quick action is configured: `_install_double_click_handler()` swaps the `WM_NOTIFY` entry in pystray's private `_message_handlers` table (matched by identity against `icon._on_notify`) for `_on_tray_message`. This reaches into pystray internals - if a pystray upgrade renames `_message_handlers`/`_on_notify`, this is where it breaks
 - With a command configured, the single click (popup) is deferred by `GetDoubleClickTime()` via a `threading.Timer` and cancelled when the second click arrives; the trailing `WM_LBUTTONUP` that always follows a `WM_LBUTTONDBLCLK` is swallowed via `_swallow_next_up`. All tray-message state is guarded by `_click_lock`, and `_fire_single_click()` re-checks the timer under the lock so a double-click landing exactly as the timer fires still suppresses the popup
-- When no `on_double_click_command` is set, the handler is **not** installed - pystray's instant single-click popup must stay untouched (no double-click delay). Do not make the deferral unconditional
+- When no quick action is configured, the handler is **not** installed - pystray's instant single-click popup must stay untouched (no double-click delay). Do not make the deferral unconditional
 - `WM_NOTIFY` and other message handlers (right-click menu) must still fall through to the saved `_pystray_on_notify`
+- The whole mechanism lives in `platforms/win32.install_tray_click_handler()`, which reports whether the swap succeeded. Linux returns `False`: a StatusNotifierItem is drawn and driven by the panel, `HAS_DEFAULT_ACTION` is `False`, and no button event ever reaches the process. `app.py` records the result in `double_click_installed` rather than assuming it worked
+- A configured command must never be unreachable. Where the swap did not happen, the tray menu shows a **Run Quick Action** entry instead, kept in sync by `_quick_action_menu_visible()` - pystray resolves that predicate when the menu opens, which is after the install attempt. It also covers a Windows build where a pystray upgrade broke the swap, so that failure degrades into a menu entry rather than a dead setting
 
 ## Event Commands
-- Event commands run fire-and-forget with output discarded (`run_event_command` in `command.py`). User-driven actions - the "Test event commands" menu handlers and `on_double_click_command` - pass `capture_output=True`, which captures stdout/stderr, prints them, and raises an error message box when the command exits non-zero, so a wrong path is not swallowed silently. Automatic events (`on_reset_command`, `on_threshold_command`, `on_startup_command`) must stay silent (no `capture_output`) - a background event must never pop a dialog. A new event command belongs on whichever side matches: user-driven surfaces failures, automatic stays silent
-- The double-click command additionally passes `report_late_failures=False`, which limits the error box to a non-zero exit within `_STARTUP_FAILURE_WINDOW` seconds of the launch. The box exists to catch a broken configuration (wrong path, bad arguments), and that shows up immediately; this command typically launches an app the user keeps open, whose own exit code minutes or hours later says nothing about the configuration - it crashed, was killed from the Task Manager, or a second instance of itself replaced it. A late failure is still printed, just not shown. The "Test event commands" menu keeps the default (`True`): there the exit code is the whole point of running the command, so a long-running command's failure must still surface
+- Event commands run fire-and-forget with output discarded (`run_event_command` in `command.py`). User-driven actions - the "Test event commands" menu handlers and the quick action - pass `capture_output=True`, which captures stdout/stderr, prints them, and raises an error message box when the command exits non-zero, so a wrong path is not swallowed silently. Automatic events (`on_reset_command`, `on_threshold_command`, `on_startup_command`) must stay silent (no `capture_output`) - a background event must never pop a dialog. A new event command belongs on whichever side matches: user-driven surfaces failures, automatic stays silent
+- The quick action (`quick_action_command`, formerly `on_double_click_command` and still readable under that name via `settings._quick_action_command()`) additionally passes `report_late_failures=False`, which limits the error box to a non-zero exit within `_STARTUP_FAILURE_WINDOW` seconds of the launch. The box exists to catch a broken configuration (wrong path, bad arguments), and that shows up immediately; this command typically launches an app the user keeps open, whose own exit code minutes or hours later says nothing about the configuration - it crashed, was killed from the Task Manager, or a second instance of itself replaced it. A late failure is still printed, just not shown. The "Test event commands" menu keeps the default (`True`): there the exit code is the whole point of running the command, so a long-running command's failure must still surface
 - `capture_output` waits for the command on a daemon thread, so the caller (a tray/menu/poll thread) is never blocked, even when the command launches a long-running app
 
 ## Claude CLI
@@ -63,11 +84,12 @@ Prioritize readability and auditability - users handle credentials and must be a
 - All URLs and API endpoints as top-level constants - no dynamic URL construction
 - Network communication exclusively with `api.anthropic.com` - no other destinations
 - Credentials used only in HTTP Authorization headers - never log, store, or transmit elsewhere
-- No file write operations - the app writes no files. The only system state it changes is two `HKCU` registry values: the notification identity (`notification_identity.py`) and the autostart entry (`autostart.py`). Any new persistent write needs a matching update in `README.md` and `PRIVACY.md` - the "writes no files" claim is part of the audit story and must never become inaccurate
+- The app writes no files **on Windows**, where the only system state it changes is two `HKCU` registry values: the notification identity and the autostart entry (both in `platforms/win32.py`). On Linux the same two concerns need files: the autostart entry is an XDG `.desktop` file in `~/.config/autostart/`, and the single-instance guard holds a `0600` lock file in `$XDG_RUNTIME_DIR`. Nothing else is ever written
+- Any new persistent write needs a matching update in `README.md` and `PRIVACY.md`, per platform. The list of what the app touches is part of the audit story and must never become inaccurate
+- Security-critical code (credentials, API calls) isolated in `api.py` - the only module handling credentials. It is platform-neutral and must stay that way
 - No `eval()`, `exec()`, `compile()`, or dynamic imports - no dynamic code execution
 - No obfuscation - no base64-encoded strings, no encoded URLs or tokens
 - Modular package architecture in `usage_monitor_for_claude/` - small focused modules are easier to audit than one large file
-- Security-critical code (credentials, API calls) isolated in `api.py` - the only module handling credentials
 - Pure data files (translations, config) stay separate - they contain no logic or credential access
 - Minimal, well-known dependencies only (e.g., requests, Pillow, pystray)
 

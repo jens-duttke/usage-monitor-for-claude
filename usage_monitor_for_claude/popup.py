@@ -3,13 +3,15 @@ Popup Window
 =============
 
 Dark-themed HTML popup window showing account info and usage bars.
-Uses pywebview with Edge WebView2 for smooth CSS transitions and
-flexible layout.
+
+This module owns the data flow: what the popup shows, how a cache snapshot
+becomes the payload for the JavaScript side, and when an update is pushed.
+Everything about the window itself - styles, transparency while measuring,
+anchoring, dismissal and the pinned drag - belongs to the platform host in
+:mod:`usage_monitor_for_claude.platforms.popup`.
 """
 from __future__ import annotations
 
-import ctypes
-import ctypes.wintypes
 import json
 import threading
 import time
@@ -23,29 +25,10 @@ from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
 from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
 from .i18n import T
+from .platforms.popup import WINDOW_KWARGS, PopupHost, popup_url
 from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
-_BASELINE_DPI = 96
-_GWL_EXSTYLE = -20
-_WS_EX_APPWINDOW = 0x00040000
-_WS_EX_TOOLWINDOW = 0x00000080
-_WS_EX_LAYERED = 0x00080000
-_LWA_ALPHA = 0x00000002
-_SWP_NOSIZE = 0x0001
-_SWP_NOZORDER = 0x0004
-_SWP_NOACTIVATE = 0x0010
-_WM_QUIT = 0x0012
-
-
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [
-        ('cbSize', ctypes.wintypes.DWORD),
-        ('rcMonitor', ctypes.wintypes.RECT),
-        ('rcWork', ctypes.wintypes.RECT),
-        ('dwFlags', ctypes.wintypes.DWORD),
-    ]
-
 
 __all__ = ['UsagePopup']
 
@@ -227,24 +210,11 @@ class _PopupApi:
         self._popup._end_drag()
 
     def report_height(self, height: int) -> None:
-        """Called by JS ResizeObserver when content height changes.
-
-        pywebview dispatches every bridge call on a fresh thread, so two
-        rapid reports could interleave and apply the earlier resize after
-        the later one, or both start the show path.  The geometry lock
-        serializes the whole check-resize-show sequence.
-        """
+        """Called by JS ResizeObserver when content height changes."""
         if not height:
             return
 
-        popup = self._popup
-        with popup._geometry_lock:
-            if height == popup._last_height:
-                return
-            popup._last_height = height
-            popup._resize_and_position(height)
-            if not popup._shown:
-                popup._show_window()
+        self._popup._apply_height(height)
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +226,7 @@ class UsagePopup:
 
     WIDTH = 340
     _CHECK_MS = 2000
+    _INITIAL_HEIGHT = 400
 
     def __init__(self, app: UsageMonitorForClaude) -> None:
         """Create and display a popup window with usage details.
@@ -272,211 +243,95 @@ class UsagePopup:
         self._running = True
         self._pinned = False
         self._moved_while_pinned = False
-        self._dragging = False
-        self._drag_offset = (0, 0)
-        self._drag_start_dpi = 0
+        self._shown = False
         self._closed = threading.Event()
-        self._popup_hwnd = 0
-        self._pump_tid = 0
         # Serializes the resize/show geometry path across pywebview's
         # per-call bridge threads.
         self._geometry_lock = threading.Lock()
-        initial_height = 400
-        # 0 means "no height reported yet": the first ResizeObserver report
-        # must always count as a change so the window gets resized,
-        # positioned, and shown even when the content is exactly
-        # initial_height tall.
+        # 0 means "no height reported yet": the first report must always count
+        # as a change so the window gets resized, positioned and shown even
+        # when the content is exactly _INITIAL_HEIGHT tall.
         self._last_height = 0
-        snap = app.cache.snapshot
-        self._last_version = snap.version
-
-        api = _PopupApi(self)
+        self._last_version = app.cache.snapshot.version
 
         self._window = webview.create_window(
-            '', url=str(_POPUP_DIR / 'popup.html'),
-            width=self.WIDTH, height=initial_height,
-            resizable=False, frameless=True, shadow=False,
-            easy_drag=False,
+            '', url=popup_url(_POPUP_DIR / 'popup.html'),
+            width=self.WIDTH, height=self._INITIAL_HEIGHT,
+            frameless=True, easy_drag=False,
             on_top=True, hidden=True,
             background_color=BG,
-            js_api=api,
+            js_api=_PopupApi(self),
+            **WINDOW_KWARGS,
         )
-        self._shown = False
+        self._host = PopupHost(self._window, self.WIDTH)
         self._window.events.loaded += self._on_loaded
         self._window.events.closed += self._on_window_closed
         threading.Thread(target=self._dismiss_watch, daemon=True).start()
         self._closed.wait()
 
     def _on_loaded(self) -> None:
-        """Inject config and show the window transparently for layout."""
+        """Hand initialisation to a worker thread.
+
+        The GTK backend delivers this event on its main loop, where every
+        pywebview call blocks waiting for that same loop.  Initialising
+        inline would deadlock the session.
+        """
+        threading.Thread(target=self._initialise, daemon=True).start()
+
+    def _initialise(self) -> None:
+        """Inject the config, then size and show the window."""
         config = _init_config(self.app.cache.snapshot, next_poll_time=self.app._next_poll_time)
         self._window.evaluate_js(f'init({json.dumps(config)})')
 
-        self._popup_hwnd = self._window.native.Handle.ToInt32()
+        self._host.prepare()
 
-        # Hide the taskbar icon and enable layered mode for opacity control.
-        # WinForms sets WS_EX_APPWINDOW by default, which forces a taskbar
-        # button even when WS_EX_TOOLWINDOW is present - both must be fixed.
-        # WS_EX_LAYERED is needed for SetLayeredWindowAttributes (opacity).
-        ex_style = ctypes.windll.user32.GetWindowLongW(self._popup_hwnd, _GWL_EXSTYLE)
-        ctypes.windll.user32.SetWindowLongW(
-            self._popup_hwnd, _GWL_EXSTYLE,
-            (ex_style | _WS_EX_TOOLWINDOW | _WS_EX_LAYERED) & ~_WS_EX_APPWINDOW,
-        )
+        # The height is read here rather than waited for: popup.js reports it
+        # through a ResizeObserver guarded by the pywebview bridge, and that
+        # observer's single firing can precede the bridge being ready.  A
+        # later report of the same height is a no-op.
+        height = int(self._window.evaluate_js('document.body.scrollHeight') or 0)
+        if height:
+            self._apply_height(height)
 
-        # Show fully transparent so JS can layout and report the real height
-        ctypes.windll.user32.SetLayeredWindowAttributes(self._popup_hwnd, 0, 0, _LWA_ALPHA)
-        self._window.show()
+    def _apply_height(self, height: int) -> None:
+        """Resize and position for *height*, revealing the window the first time.
 
-    def _show_window(self) -> None:
-        """Make the popup visible after the first resize positioned it correctly."""
-        # Remove the layered style to restore normal rendering
-        ex_style = ctypes.windll.user32.GetWindowLongW(self._popup_hwnd, _GWL_EXSTYLE)
-        ctypes.windll.user32.SetWindowLongW(self._popup_hwnd, _GWL_EXSTYLE, ex_style & ~_WS_EX_LAYERED)
-        self._shown = True
-        threading.Thread(target=self._update_loop, daemon=True).start()
+        pywebview dispatches every bridge call on a fresh thread, so two rapid
+        reports could interleave and apply the earlier resize after the later
+        one, or both start the reveal path.  The geometry lock serializes the
+        whole check-resize-reveal sequence.
+        """
+        with self._geometry_lock:
+            if height == self._last_height:
+                return
+
+            self._last_height = height
+            self._host.apply_geometry(height, keep_position=self._pinned and self._moved_while_pinned)
+
+            if self._shown:
+                return
+
+            self._shown = True
+            self._host.reveal()
+            threading.Thread(target=self._update_loop, daemon=True).start()
 
     def _dismiss_watch(self) -> None:
-        """Close the popup on click-outside, Escape, or focus change.
-
-        Combines three Win32 mechanisms in a single message pump:
-
-        * ``WH_MOUSE_LL`` - catches clicks outside the popup bounds
-        * ``WH_KEYBOARD_LL`` - catches Escape even without focus
-        * ``EVENT_SYSTEM_FOREGROUND`` - catches Alt-Tab, browser open, etc.
-
-        The foreground hook uses a short delay to ride out the brief
-        focus bounce that WebView2 causes between its host and renderer
-        process on every click inside the content area.
-        """
-        this_thread = ctypes.windll.kernel32.GetCurrentThreadId()
-
-        # Force creation of this thread's message queue before publishing the
-        # thread id, so a WM_QUIT posted by _post_pump_quit() from another
-        # thread cannot be lost in the queue-creation window.
-        msg = ctypes.wintypes.MSG()
-        ctypes.windll.user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)  # PM_NOREMOVE
-        self._pump_tid = this_thread
-
-        def _post_quit() -> None:
-            if self._shown and not self._pinned:
-                ctypes.windll.user32.PostThreadMessageW(this_thread, _WM_QUIT, 0, 0)
-
-        # -- Shared argtypes for CallNextHookEx --
-        _call_next = ctypes.windll.user32.CallNextHookEx
-        _call_next.argtypes = [ctypes.wintypes.HANDLE, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM]
-        _call_next.restype = ctypes.c_long
-
-        # -- Mouse hook: click outside popup bounds --
-        class MSLLHOOKSTRUCT(ctypes.Structure):
-            _fields_ = [('pt', ctypes.wintypes.POINT), ('mouseData', ctypes.wintypes.DWORD),
-                         ('flags', ctypes.wintypes.DWORD), ('time', ctypes.wintypes.DWORD),
-                         ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))]
-
-        @ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
-        def mouse_proc(code, wparam, lparam):
-            if code >= 0 and wparam == 0x0201:  # WM_LBUTTONDOWN
-                popup_hwnd = self._popup_hwnd
-                if popup_hwnd:
-                    rect = ctypes.wintypes.RECT()
-                    ctypes.windll.user32.GetWindowRect(popup_hwnd, ctypes.byref(rect))
-                    info = ctypes.cast(lparam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-                    if not (rect.left <= info.pt.x <= rect.right and rect.top <= info.pt.y <= rect.bottom):
-                        _post_quit()
-            return _call_next(None, code, wparam, lparam)
-
-        # -- Keyboard hook: Escape key --
-        class KBDLLHOOKSTRUCT(ctypes.Structure):
-            _fields_ = [('vkCode', ctypes.wintypes.DWORD), ('scanCode', ctypes.wintypes.DWORD),
-                         ('flags', ctypes.wintypes.DWORD), ('time', ctypes.wintypes.DWORD),
-                         ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong))]
-
-        @ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
-        def kb_proc(code, wparam, lparam):
-            if code >= 0 and wparam == 0x0100:  # WM_KEYDOWN
-                info = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                if info.vkCode == 0x1B:  # VK_ESCAPE
-                    _post_quit()
-            return _call_next(None, code, wparam, lparam)
-
-        # -- Foreground event with delayed check --
-        WINEVENT_CALLBACK = ctypes.WINFUNCTYPE(
-            None, ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD, ctypes.wintypes.HWND,
-            ctypes.wintypes.LONG, ctypes.wintypes.LONG, ctypes.wintypes.DWORD, ctypes.wintypes.DWORD,
-        )
-
-        _fg_timer: threading.Timer | None = None
-
-        def _delayed_fg_check() -> None:
-            """Check if focus is still outside the popup after the delay."""
-            popup_hwnd = self._popup_hwnd
-            if not popup_hwnd or not self._shown:
-                return
-            fg = ctypes.windll.user32.GetForegroundWindow()
-            if fg == popup_hwnd:
-                return
-            if ctypes.windll.user32.IsChild(popup_hwnd, fg):
-                return
-            if ctypes.windll.user32.GetAncestor(fg, 3) == popup_hwnd:  # GA_ROOTOWNER
-                return
-            _post_quit()
-
-        @WINEVENT_CALLBACK
-        def fg_proc(_hook, _event, hwnd, _id_obj, _id_child, _thread, _time):
-            nonlocal _fg_timer
-            popup_hwnd = self._popup_hwnd
-            if not popup_hwnd:
-                return
-            # Quick accept: focus moved to a child/owned window of our popup
-            if ctypes.windll.user32.IsChild(popup_hwnd, hwnd):
-                return
-            if ctypes.windll.user32.GetAncestor(hwnd, 3) == popup_hwnd:  # GA_ROOTOWNER
-                return
-            # Delay the dismiss to ride out WebView2's focus bounce
-            # between host and renderer process on content clicks.
-            if _fg_timer is not None:
-                _fg_timer.cancel()
-            _fg_timer = threading.Timer(0.2, _delayed_fg_check)
-            _fg_timer.daemon = True
-            _fg_timer.start()
-
-        mouse_hook = ctypes.windll.user32.SetWindowsHookExW(14, mouse_proc, None, 0)  # WH_MOUSE_LL
-        kb_hook = ctypes.windll.user32.SetWindowsHookExW(13, kb_proc, None, 0)  # WH_KEYBOARD_LL
-        # EVENT_SYSTEM_FOREGROUND with WINEVENT_SKIPOWNPROCESS
-        fg_hook = ctypes.windll.user32.SetWinEventHook(0x0003, 0x0003, None, fg_proc, 0, 0, 0x0002)
-
-        try:
-            while self._running and ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-                pass
-        finally:
-            if _fg_timer is not None:
-                _fg_timer.cancel()
-            ctypes.windll.user32.UnhookWindowsHookEx(mouse_hook)
-            ctypes.windll.user32.UnhookWindowsHookEx(kb_hook)
-            ctypes.windll.user32.UnhookWinEvent(fg_hook)
-            self._pump_tid = 0
-
+        """Close the popup once the platform host reports a dismissal."""
+        self._host.watch_dismiss(self._should_dismiss, lambda: self._running)
         self._close()
 
-    def _post_pump_quit(self) -> None:
-        """Wake the dismiss-watch pump so it can remove its hooks and exit.
-
-        The pump blocks inside ``GetMessageW`` and re-checks ``_running``
-        only after a message arrives, so setting the flag alone is not
-        enough - especially while pinned, where the user-dismissal path
-        (``_post_quit``) never posts.
-        """
-        if self._pump_tid:
-            ctypes.windll.user32.PostThreadMessageW(self._pump_tid, _WM_QUIT, 0, 0)
+    def _should_dismiss(self) -> bool:
+        """Whether a dismissal gesture should close the popup right now."""
+        return self._shown and not self._pinned
 
     def _on_window_closed(self) -> None:
         self._running = False
-        self._post_pump_quit()
+        self._host.stop_watch()
         self._closed.set()
 
     def _close(self) -> None:
         self._running = False
-        self._post_pump_quit()
+        self._host.stop_watch()
         try:
             self._window.destroy()
         except Exception:
@@ -484,68 +339,36 @@ class UsagePopup:
         self._closed.set()
 
     def _set_pinned(self, pinned: bool) -> bool:
+        """Apply the pin state and report what was applied.
+
+        popup.js assigns the returned value back to its own state, so this
+        must report reality rather than a constant.
+        """
         self._pinned = bool(pinned)
         if not self._pinned:
             self._moved_while_pinned = False
+
         return self._pinned
 
     def _begin_drag(self) -> bool:
-        """Anchor the cursor to the window for a pinned-popup drag.
-
-        Records the physical offset between the cursor and the window's
-        top-left corner.  Dragging is then done entirely in physical
-        screen coordinates, which keeps the cursor anchored even across
-        monitors with different DPI scaling, where logical-pixel deltas
-        would jump at the boundary.
-        """
-        if not self._pinned or not self._popup_hwnd:
+        if not self._pinned:
             return False
 
-        cursor = ctypes.wintypes.POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor))
-        rect = ctypes.wintypes.RECT()
-        ctypes.windll.user32.GetWindowRect(self._popup_hwnd, ctypes.byref(rect))
-        self._drag_offset = (cursor.x - rect.left, cursor.y - rect.top)
-        self._drag_start_dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
-        self._dragging = True
-        return True
+        return self._host.begin_drag()
 
     def _drag(self) -> bool:
-        """Reposition the popup so the cursor keeps its initial grab offset.
-
-        Each step computes the absolute window position from the current
-        physical cursor position, so out-of-order calls converge on the
-        right spot instead of accumulating drift.
-        """
-        if not self._dragging or not self._pinned or not self._popup_hwnd:
+        if not self._pinned:
             return False
 
-        cursor = ctypes.wintypes.POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(cursor))
-        x = cursor.x - self._drag_offset[0]
-        y = cursor.y - self._drag_offset[1]
-        ctypes.windll.user32.SetWindowPos(self._popup_hwnd, 0, x, y, 0, 0, _SWP_NOSIZE | _SWP_NOZORDER | _SWP_NOACTIVATE)
-        self._moved_while_pinned = True
-        return True
+        moved = self._host.drag()
+        if moved:
+            self._moved_while_pinned = True
+
+        return moved
 
     def _end_drag(self) -> None:
-        """Finish a drag and correct the size after a cross-monitor DPI change.
-
-        Crossing a monitor boundary triggers Windows' Per-Monitor-V2
-        rescale, which can race with pywebview's size handling and leave
-        the popup mis-sized.  Re-asserting the size once, against the
-        destination monitor's DPI, makes the final dimensions
-        deterministic.  Position is preserved by ``resize``'s default
-        top-left fix point.
-        """
-        self._dragging = False
-        if not self._popup_hwnd:
-            return
-
-        current_dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
-        if current_dpi != self._drag_start_dpi:
-            with self._geometry_lock:
-                self._window.resize(self.WIDTH, self._last_height)
+        with self._geometry_lock:
+            self._host.end_drag(self._last_height)
 
     def _update_loop(self) -> None:
         """Poll for data changes and push updates to the popup."""
@@ -575,67 +398,3 @@ class UsagePopup:
                 # a pinned popup can live for days.  The destroyed-window
                 # case exits via the _running flag on the next iteration.
                 continue
-
-    def _tray_position(self, physical_width: int, physical_height: int) -> tuple[int, int]:
-        """Calculate popup position near the system tray.
-
-        Parameters
-        ----------
-        physical_width : int
-            Actual window width in physical pixels.
-        physical_height : int
-            Actual window height in physical pixels.
-
-        Returns
-        -------
-        tuple[int, int]
-            Logical (x, y) coordinates.  Callers that need physical pixels
-            must multiply by the DPI scale factor.
-        """
-        tray_hwnd = ctypes.windll.user32.FindWindowW('Shell_TrayWnd', None)
-        hmon = ctypes.windll.user32.MonitorFromWindow(tray_hwnd, 2)  # MONITOR_DEFAULTTONEAREST
-
-        mon_info = _MONITORINFO()
-        mon_info.cbSize = ctypes.sizeof(_MONITORINFO)
-        ctypes.windll.user32.GetMonitorInfoW(hmon, ctypes.byref(mon_info))
-        mon = mon_info.rcMonitor
-        work = mon_info.rcWork
-
-        dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
-        scale = dpi / _BASELINE_DPI
-
-        margin = 12
-
-        if work.left > mon.left:    # left-side taskbar
-            x = work.left + margin
-        else:
-            x = work.right - physical_width - margin
-
-        if work.top > mon.top:      # top taskbar
-            y = work.top + margin
-        else:
-            y = work.bottom - physical_height - margin
-
-        return int(x / scale), int(y / scale)
-
-    def _resize_and_position(self, height: int) -> None:
-        """Resize the window and reposition it near the system tray.
-
-        The first call happens while the window is still transparent
-        (opacity 0), so separate resize/move calls cause no visible jump.
-
-        pywebview 6.x ``resize()`` applies DPI scaling internally (consistent
-        with ``move()``), so both expect logical pixels.  Physical dimensions
-        are still computed for ``_tray_position``, which needs them to
-        calculate the correct logical position against the physical work-area
-        coordinates returned by Win32.
-        """
-        dpi = ctypes.windll.user32.GetDpiForWindow(self._popup_hwnd) or ctypes.windll.user32.GetDpiForSystem()
-        scale = dpi / _BASELINE_DPI
-        physical_width = int(self.WIDTH * scale)
-        physical_height = int(height * scale)
-        self._window.resize(self.WIDTH, height)
-        if self._pinned and self._moved_while_pinned:
-            return
-        x, y = self._tray_position(physical_width, physical_height)
-        self._window.move(x, y)
