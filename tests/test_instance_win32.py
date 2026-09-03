@@ -148,11 +148,12 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 6  # IDYES
+        mock_ask = MagicMock(return_value=True)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
@@ -172,18 +173,20 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 6  # IDYES
+        mock_ask = MagicMock(return_value=True)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
         self.assertFalse(result)
         mock_store.assert_not_called()
         # Duplicate dialog plus the replacement-failed error box
-        self.assertEqual(mock_user32.MessageBoxW.call_count, 2)
+        mock_ask.assert_called_once()
+        mock_error.assert_called_once()
 
     @patch(f'{MODULE}._terminate_pid')
     @patch(f'{MODULE}._read_holder_info', return_value=(99999, '1.9.0'))
@@ -196,11 +199,12 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.side_effect = [42, 0]
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 6  # IDYES
+        mock_ask = MagicMock(return_value=True)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
@@ -217,12 +221,13 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 6  # IDYES
+        mock_ask = MagicMock(return_value=True)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._read_holder_info', side_effect=[(99999, '1.9.0'), (None, None)]), \
              patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
@@ -240,12 +245,13 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 6  # IDYES
+        mock_ask = MagicMock(return_value=True)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._read_holder_info', side_effect=[(99999, '1.9.0'), (55555, '1.9.1')]), \
              patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
@@ -264,11 +270,12 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 6  # IDYES
+        mock_ask = MagicMock(return_value=True)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
@@ -284,11 +291,12 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 7  # IDNO
+        mock_ask = MagicMock(return_value=False)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
@@ -302,15 +310,16 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 7  # IDNO
+        mock_ask = MagicMock(return_value=False)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             ensure_single_instance()
 
-        title = mock_user32.MessageBoxW.call_args[0][2]
+        title = mock_ask.call_args[0][1]
         self.assertIn('v1.9.0', title)
 
     @patch(f'{MODULE}._read_holder_info', return_value=(99999, None))
@@ -321,15 +330,16 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 42
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 7  # IDNO
+        mock_ask = MagicMock(return_value=False)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             ensure_single_instance()
 
-        message = mock_user32.MessageBoxW.call_args[0][1]
+        message = mock_ask.call_args[0][0]
         self.assertIn('?', message)
 
     @patch(f'{MODULE}._store_holder_info')
@@ -343,16 +353,17 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 0  # NULL: open denied
 
-        mock_user32 = MagicMock()
-        mock_user32.MessageBoxW.return_value = 7  # IDNO
+        mock_ask = MagicMock(return_value=False)
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
         self.assertFalse(result)
-        mock_user32.MessageBoxW.assert_called_once()
+        mock_ask.assert_called_once()
         mock_store.assert_not_called()
 
     @patch(f'{MODULE}._terminate_pid')
@@ -365,10 +376,12 @@ class TestEnsureSingleInstance(unittest.TestCase):
         mock_kernel32 = MagicMock()
         mock_kernel32.CreateMutexW.return_value = 0
 
-        mock_user32 = MagicMock()
+        mock_ask = MagicMock()
+        mock_error = MagicMock()
 
         with patch(f'{MODULE}._kernel32', mock_kernel32), \
-             patch(f'{MODULE}.ctypes.windll.user32', mock_user32):
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
             from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
             result = ensure_single_instance()
 
