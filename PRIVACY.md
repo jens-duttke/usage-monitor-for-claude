@@ -12,6 +12,11 @@ This application does **not** collect, store, or transmit any personal data.
 The application communicates exclusively with `api.anthropic.com` to retrieve your current API usage
 data. No other network connections are made.
 
+The server certificate is verified against the Windows certificate store, the same store your browser
+uses. A proxy that your organization has installed with its own root certificate can therefore inspect
+this connection, as it does in the browser. Windows performs this check itself, as it does for any other
+application, and may download a missing certificate authority certificate in the process.
+
 ## Credentials
 
 The application reads your existing Claude OAuth token from the local Claude CLI configuration file

@@ -199,6 +199,17 @@ class TestFetchUsage(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.api.requests.get')
     @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_certificate_error(self, _mock_headers, mock_get):
+        """SSLError returns certificate_error, not the generic connection_error it subclasses."""
+        import requests
+        mock_get.side_effect = requests.exceptions.SSLError()
+
+        result = fetch_usage()
+
+        self.assertEqual(result, {'error': EN['certificate_error']})
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
     def test_401_returns_auth_error(self, _mock_headers, mock_get):
         """HTTP 401 returns auth_error with flag."""
         import requests
@@ -382,6 +393,21 @@ class TestFetchUsageRateLimit(unittest.TestCase):
         result = fetch_usage()
 
         self.assertEqual(result['server_message'], 'Internal server error')
+
+
+# ---------------------------------------------------------------------------
+# Certificate verification
+# ---------------------------------------------------------------------------
+
+class TestCertificateVerification(unittest.TestCase):
+    """Tests for the Windows certificate store integration."""
+
+    def test_windows_certificate_store_is_active(self):
+        """Importing the API module routes TLS verification through the Windows certificate store."""
+        import ssl
+        import truststore
+
+        self.assertIs(ssl.SSLContext, truststore.SSLContext)
 
 
 # ---------------------------------------------------------------------------

@@ -20,11 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The autostart menu entry is now called **Start at login** instead of "Start with Windows" - it describes what happens on both systems, and both write their entry for the login, not for boot
 - **Breaking:** The quick action (formerly the double-click command) now passes `USAGE_MONITOR_EVENT=quick_action` to its command instead of `double_click`. Only scripts that branch on that variable are affected; a script that simply runs when invoked needs no change
 - The `on_double_click_command` setting is now called `quick_action_command`, and the tray menu names it **Run Quick Action** - the old name described one system's input method for something that is triggered differently elsewhere. Existing settings files keep working: `on_double_click_command` is still read, and `quick_action_command` wins when both are present
+- A failed certificate check is now reported as such instead of as a generic "could not connect" error, so the cause is visible in the popup
 
 ### Fixed
 
 - The quick action no longer raises a "command failed" dialog when an app it started exits with an error later on - only a command that fails to start is reported, which is what the dialog is for
 - The `on_reset_command` event command now runs after a quota reset - previously it was silently skipped whenever the reset quota had no new window yet, which is the usual state right after a reset, so in practice the command never ran (thanks to [@cimenta](https://github.com/cimenta) for reporting [#86](https://github.com/jens-duttke/usage-monitor-for-claude/issues/86))
+- [Corporate proxies that inspect TLS](https://github.com/jens-duttke/usage-monitor-for-claude/issues/85) no longer block the connection to the Anthropic API - the server certificate is now verified against the Windows certificate store, so a proxy root certificate your organization installed is trusted just like in your browser (thanks to [@tommapson](https://github.com/tommapson) for the report and the diagnosis)
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.21.0...HEAD)
 

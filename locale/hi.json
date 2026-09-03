@@ -39,6 +39,7 @@
     "loading": "Usage Monitor: लोड हो रहा है...",
     "error_label": "Usage Monitor: त्रुटि",
     "connection_error": "Anthropic API से कनेक्ट नहीं हो सका।",
+    "certificate_error": "Anthropic API का प्रमाणपत्र सत्यापित नहीं हो सका।",
     "http_error": "API अनुरोध विफल (HTTP {code})।",
     "auth_expired": "सत्र समाप्त - कृपया Claude Code खोलकर फिर से लॉग इन करें।",
     "auth_expired_label": "Claude सत्र समाप्त",

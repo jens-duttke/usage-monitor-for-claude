@@ -31,6 +31,7 @@
     "loading": "Usage Monitor: Loading...",
     "error_label": "Usage Monitor: Error",
     "connection_error": "Could not connect to Anthropic API.",
+    "certificate_error": "Could not verify the Anthropic API certificate.",
     "http_error": "API request failed (HTTP {code}).",
     "auth_expired": "Session expired - please open Claude Code to log in again.",
     "auth_expired_label": "Claude Session Expired",

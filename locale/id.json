@@ -39,6 +39,7 @@
     "loading": "Usage Monitor: Memuat...",
     "error_label": "Usage Monitor: Error",
     "connection_error": "Tidak dapat terhubung ke API Anthropic.",
+    "certificate_error": "Tidak dapat memverifikasi sertifikat API Anthropic.",
     "http_error": "Permintaan API gagal (HTTP {code}).",
     "auth_expired": "Sesi berakhir - silakan buka Claude Code untuk login kembali.",
     "auth_expired_label": "Claude Sesi Berakhir",

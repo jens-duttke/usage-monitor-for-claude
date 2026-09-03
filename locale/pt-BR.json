@@ -39,6 +39,7 @@
     "loading": "Usage Monitor: Carregando...",
     "error_label": "Usage Monitor: Erro",
     "connection_error": "Não foi possível conectar à API da Anthropic.",
+    "certificate_error": "Não foi possível verificar o certificado da API da Anthropic.",
     "http_error": "Falha na requisição API (HTTP {code}).",
     "auth_expired": "Sessão expirada - abra o Claude Code para fazer login novamente.",
     "auth_expired_label": "Claude Sessão Expirada",

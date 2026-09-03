@@ -84,7 +84,7 @@ Prioritize readability and auditability - users handle credentials and must be a
 
 ## Security & Transparency
 - All URLs and API endpoints as top-level constants - no dynamic URL construction
-- Network communication exclusively with `api.anthropic.com` - no other destinations
+- Network communication exclusively with `api.anthropic.com` - no other destinations (the one exception is the Windows chain engine's own traffic, see "TLS Verification")
 - Credentials used only in HTTP Authorization headers - never log, store, or transmit elsewhere
 - The app writes no files **on Windows**, where the only system state it changes is two `HKCU` registry values: the notification identity and the autostart entry (both in `platforms/win32.py`). On Linux the same two concerns need files: the autostart entry is an XDG `.desktop` file in `~/.config/autostart/`, and the single-instance guard holds a `0600` lock file in `$XDG_RUNTIME_DIR`. Nothing else is ever written
 - Any new persistent write needs a matching update in `README.md` and `PRIVACY.md`, per platform. The list of what the app touches is part of the audit story and must never become inaccurate
@@ -94,6 +94,14 @@ Prioritize readability and auditability - users handle credentials and must be a
 - Modular package architecture in `usage_monitor_for_claude/` - small focused modules are easier to audit than one large file
 - Pure data files (translations, config) stay separate - they contain no logic or credential access
 - Minimal, well-known dependencies only (e.g., requests, Pillow, pystray)
+
+## TLS Verification
+- Server certificates are verified against the Windows certificate store through `truststore` (`truststore.inject_into_ssl()` at module level in `api.py`), not against the CA bundle shipped with `requests`. A corporate SSL-inspection proxy whose root certificate arrives via group policy is trusted like in the browser; with the bundle alone the app fails behind such a proxy, and that failure used to surface as a plain "could not connect"
+- Deliberately always on, not a setting: whoever can add a root to the Windows store already controls the machine and can read the credentials file directly, so an opt-in would add a setting without adding protection. `PRIVACY.md` states this trust model - keep both in sync
+- `inject_into_ssl()` replaces `ssl.SSLContext` process-wide (and urllib3's reference to it). That is safe only because `requests` is the sole TLS client in the process - WebView2 uses the Windows network stack and bottle serves the popup over plain localhost HTTP. It must run before the first request, which module level in `api.py` guarantees; re-running it (module reload in tests) is idempotent
+- `requests` still loads certifi into the context via `load_verify_locations`, and `truststore` falls back to those CAs when the Windows engine rejects a chain - effectively the union of both stores. Do not remove certifi from the picture to "simplify"; it covers a public root Windows has not downloaded yet
+- Verification is delegated to the Windows chain engine (`CertGetCertificateChain`, default engine, no revocation flags). Like for every Windows application, that engine may fetch a missing intermediate from the CA or a missing trusted root from Microsoft's root update while building the chain. `api.anthropic.com` sends its full chain, so in practice this only happens for a root not yet on the machine - it is Windows' own traffic, not a request the app makes
+- `requests.exceptions.SSLError` is a subclass of `requests.ConnectionError`. The `except` for it in `fetch_usage()` must stay ahead of the `ConnectionError` handler, or certificate failures collapse into the generic connection message again (`test_certificate_error` guards this)
 
 ## Type Hints & Documentation
 - Module docstring as very first element in file (title with equals underline, blank line, description)

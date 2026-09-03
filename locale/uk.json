@@ -39,6 +39,7 @@
     "loading": "Usage Monitor: Завантаження...",
     "error_label": "Usage Monitor: Помилка",
     "connection_error": "Не вдалося підключитися до Anthropic API.",
+    "certificate_error": "Не вдалося перевірити сертифікат Anthropic API.",
     "http_error": "Запит до API не вдався (HTTP {code}).",
     "auth_expired": "Сесія завершилася - будь ласка, відкрийте Claude Code, щоб увійти знову.",
     "auth_expired_label": "Сесія Claude завершилася",

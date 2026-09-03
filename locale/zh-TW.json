@@ -39,6 +39,7 @@
     "loading": "Usage Monitor: 載入中...",
     "error_label": "Usage Monitor: 錯誤",
     "connection_error": "無法連線到 Anthropic API。",
+    "certificate_error": "無法驗證 Anthropic API 的憑證。",
     "http_error": "API 請求失敗 (HTTP {code})。",
     "auth_expired": "工作階段已過期 - 請開啟 Claude Code 重新登入。",
     "auth_expired_label": "Claude 工作階段已過期",

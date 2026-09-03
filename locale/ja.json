@@ -39,6 +39,7 @@
     "loading": "Usage Monitor: 読み込み中...",
     "error_label": "Usage Monitor: エラー",
     "connection_error": "Anthropic APIに接続できません。",
+    "certificate_error": "Anthropic APIの証明書を検証できません。",
     "http_error": "APIリクエスト失敗 (HTTP {code})。",
     "auth_expired": "セッション期限切れ - Claude Codeを開いて再ログインしてください。",
     "auth_expired_label": "Claude セッション期限切れ",

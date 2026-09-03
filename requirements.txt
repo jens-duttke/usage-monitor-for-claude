@@ -1,5 +1,6 @@
 pystray
 Pillow
 requests
+truststore
 pywebview
 pyinstaller

@@ -7,6 +7,7 @@ Anthropic API.  This is the only module that handles credentials.
 
 Network communication exclusively with ``api.anthropic.com``.
 Credentials used only in HTTP Authorization headers.
+TLS certificates are verified against the Windows certificate store.
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+import truststore
 
 from .i18n import T
 
@@ -27,6 +29,12 @@ API_URL_PROFILE = 'https://api.anthropic.com/api/oauth/profile'
 CLAUDE_CONFIG_DIR = Path(os.environ.get('CLAUDE_CONFIG_DIR', '')) if os.environ.get('CLAUDE_CONFIG_DIR') else Path.home() / '.claude'
 CLAUDE_CREDENTIALS = CLAUDE_CONFIG_DIR / '.credentials.json'
 _FALLBACK_USER_AGENT = 'claude-code/2.1.204'
+
+# Verify TLS certificates against the Windows certificate store instead of the
+# CA bundle shipped with requests, which lacks any root a company proxy adds
+# via group policy.  This replaces ssl.SSLContext process-wide; requests is
+# the only TLS client in this process.
+truststore.inject_into_ssl()
 
 
 def read_access_token() -> str | None:
@@ -69,6 +77,8 @@ def fetch_usage() -> dict[str, Any]:
         resp = requests.get(API_URL_USAGE, headers=headers, timeout=10)
         resp.raise_for_status()
         return _merge_scoped_limits(resp.json())
+    except requests.exceptions.SSLError:
+        return {'error': T['certificate_error']}
     except requests.ConnectionError:
         return {'error': T['connection_error']}
     except requests.HTTPError as e:
