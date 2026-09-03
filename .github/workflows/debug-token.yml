@@ -1,5 +1,9 @@
 name: Debug token
-on: workflow_dispatch
+on:
+  push:
+    paths:
+      - '.github/workflows/debug-token.yml'
+  workflow_dispatch:
 jobs:
   check:
     runs-on: ubuntu-latest
