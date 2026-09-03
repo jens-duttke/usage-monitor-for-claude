@@ -66,6 +66,14 @@ The notes end with the SHA256 of the published EXE, so anyone can verify a downl
 
 The release publishes a tag, which the git rule forbids this command from doing. **Output** the full sequence for the user, in this order - the commit must land *before* the tag, or the tag points at a tree without the version bump:
 
+Publishing triggers the WinGet submission, and that submission needs the `winget-pkgs` fork to be current - a stale fork fails it (see **Distribution** in `CLAUDE.md`). Sync it first, it costs one call:
+
+```powershell
+gh api -X POST repos/jens-duttke/winget-pkgs/merge-upstream -f branch=master
+```
+
+Then hand over:
+
 ```powershell
 git add CHANGELOG.md usage_monitor_for_claude/__init__.py version_info.py
 git commit -m "chore: release vX.Y.Z"
