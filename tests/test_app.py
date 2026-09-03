@@ -1870,6 +1870,31 @@ class TestResetCommand(unittest.TestCase):
         env = mock_cmd.call_args[0][1]
         self.assertEqual(env['USAGE_MONITOR_RESETS_AT'], '')
 
+    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_reset_command_null_resets_at(self, _icon, _tooltip, mock_cmd):
+        """USAGE_MONITOR_RESETS_AT is empty string when the API reports resets_at as null.
+
+        A quota without an active window - the usual state right after a
+        reset - carries ``resets_at: null``.  A None value must never reach
+        the environment: the subprocess launch rejects it and the command
+        silently never runs.
+        """
+        self.app._prev_utilization = {'five_hour': 80.0, 'seven_day': 10.0}
+        data = {'five_hour': {'utilization': 0.0, 'resets_at': None}, 'seven_day': {'utilization': 10.0, 'resets_at': '2025-01-20T00:00:00Z'}}
+        self.app.cache = MagicMock()
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        mock_cmd.assert_called_once()
+        env = mock_cmd.call_args[0][1]
+        self.assertEqual(env['USAGE_MONITOR_VARIANT'], 'five_hour')
+        self.assertEqual(env['USAGE_MONITOR_RESETS_AT'], '')
+        self.assertTrue(all(isinstance(value, str) for value in env.values()))
+
     @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', [])
     @patch('usage_monitor_for_claude.app.run_event_command')
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
@@ -1996,6 +2021,18 @@ class TestThresholdCommand(unittest.TestCase):
         self.assertIn('USAGE_MONITOR_MESSAGE', env)
         # Threshold crossings fire automatically, so they stay silent (no error dialog).
         self.assertFalse(mock_cmd.call_args[1].get('capture_output'))
+
+    @patch('usage_monitor_for_claude.app.ON_THRESHOLD_COMMAND', ['notify.bat'])
+    @patch('usage_monitor_for_claude.app.ALERT_TIME_AWARE', False)
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    def test_threshold_command_null_resets_at(self, mock_cmd):
+        """USAGE_MONITOR_RESETS_AT is empty string when resets_at is null, never None."""
+        self.app._check_threshold_alerts({'five_hour': {'utilization': 85.0, 'resets_at': None}})
+
+        mock_cmd.assert_called_once()
+        env = mock_cmd.call_args[0][1]
+        self.assertEqual(env['USAGE_MONITOR_RESETS_AT'], '')
+        self.assertTrue(all(isinstance(value, str) for value in env.values()))
 
     @patch('usage_monitor_for_claude.app.ON_THRESHOLD_COMMAND', [])
     @patch('usage_monitor_for_claude.app.run_event_command')

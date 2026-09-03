@@ -742,7 +742,7 @@ class UsageMonitorForClaude:
             'USAGE_MONITOR_PREV_UTILIZATION': str(round(prev_pct)),
             'USAGE_MONITOR_UTILIZATION_FIVE_HOUR': str(round(pct_5h)),
             'USAGE_MONITOR_UTILIZATION_SEVEN_DAY': str(round(pct_7d)),
-            'USAGE_MONITOR_RESETS_AT': entry.get('resets_at', ''),
+            'USAGE_MONITOR_RESETS_AT': entry.get('resets_at') or '',
             'USAGE_MONITOR_TITLE': T['notify_reset_title'],
             'USAGE_MONITOR_MESSAGE': T['notify_reset'],
         })
@@ -774,7 +774,7 @@ class UsageMonitorForClaude:
             env_vars['USAGE_MONITOR_UTILIZATION'] = str(round(pct))
         env_vars.update({
             'USAGE_MONITOR_THRESHOLD': str(round(threshold)),
-            'USAGE_MONITOR_RESETS_AT': entry.get('resets_at', ''),
+            'USAGE_MONITOR_RESETS_AT': entry.get('resets_at') or '',
             'USAGE_MONITOR_TITLE': title,
             'USAGE_MONITOR_MESSAGE': message,
         })

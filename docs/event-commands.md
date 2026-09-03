@@ -211,7 +211,7 @@ Fires whenever usage drops (not only when nearly exhausted).
 | `USAGE_MONITOR_PREV_UTILIZATION` | `98` | Usage before the reset (integer) |
 | `USAGE_MONITOR_UTILIZATION_FIVE_HOUR` | `5` | Current session (5h) usage (integer) |
 | `USAGE_MONITOR_UTILIZATION_SEVEN_DAY` | `42` | Current weekly (7d) usage (integer) |
-| `USAGE_MONITOR_RESETS_AT` | `2025-01-15T18:00:00Z` | When the quota resets next (ISO 8601, UTC) |
+| `USAGE_MONITOR_RESETS_AT` | `2025-01-15T18:00:00Z` | When the quota resets next (ISO 8601, UTC), or empty if no new window has started yet |
 | `USAGE_MONITOR_TITLE` | `Quota Reset` | Notification title (localized) |
 | `USAGE_MONITOR_MESSAGE` | `Your quota has been reset...` | Notification message (localized) |
 

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The quick action no longer raises a "command failed" dialog when an app it started exits with an error later on - only a command that fails to start is reported, which is what the dialog is for
+- The `on_reset_command` event command now runs after a quota reset - previously it was silently skipped whenever the reset quota had no new window yet, which is the usual state right after a reset, so in practice the command never ran (thanks to [@cimenta](https://github.com/cimenta) for reporting [#86](https://github.com/jens-duttke/usage-monitor-for-claude/issues/86))
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.21.0...HEAD)
 
