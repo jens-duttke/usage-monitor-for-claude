@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.22.0...HEAD)
+
+## [1.22.0] - 2026-09-03
+
 ### Added
 
 - **Linux support** - the app now runs on Linux as well as Windows. The tray icon, detail popup, smart alerts, event commands, autostart and the single-instance guard all work there; see the [README](README.md#linux) for the packages it needs and for the launcher that starts the app from any directory, without activating its virtual environment
@@ -28,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `on_reset_command` event command now runs after a quota reset - previously it was silently skipped whenever the reset quota had no new window yet, which is the usual state right after a reset, so in practice the command never ran (thanks to [@cimenta](https://github.com/cimenta) for reporting [#86](https://github.com/jens-duttke/usage-monitor-for-claude/issues/86))
 - [Corporate proxies that inspect TLS](https://github.com/jens-duttke/usage-monitor-for-claude/issues/85) no longer block the connection to the Anthropic API - the server certificate is now verified against the Windows certificate store, so a proxy root certificate your organization installed is trusted just like in your browser (thanks to [@tommapson](https://github.com/tommapson) for the report and the diagnosis)
 
-[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.21.0...HEAD)
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.21.0...v1.22.0)
 
 ## [1.21.0] - 2026-08-21
 
