@@ -8,4 +8,5 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - run: curl -sI -H "Authorization: token ${{ secrets.WINGET_TOKEN }}" https://api.github.com/user | grep -iE "^HTTP|x-oauth-scopes"
+      - run: |
+          curl -sI -H "Authorization: token ${{ secrets.WINGET_TOKEN }}" https://api.github.com/user | grep -iE "^HTTP|x-oauth-scopes"
