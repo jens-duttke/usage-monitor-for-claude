@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The detail popup no longer greys out and stops updating when you leave the mouse alone - while it is open and visible, usage keeps refreshing at the normal interval
+- Verbose output now follows a redirect, so `UsageMonitorForClaude.exe --verbose > log.txt` writes a usable file - previously the diagnostics always went to the console window and the file stayed empty, leaving no way to attach a log to a bug report (thanks to [@mjtlsnelling-art](https://github.com/mjtlsnelling-art) for reporting [#89](https://github.com/jens-duttke/usage-monitor-for-claude/issues/89))
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.22.0...HEAD)
 

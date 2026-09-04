@@ -785,12 +785,40 @@ class TestScreenInfo(unittest.TestCase):
 
 
 class TestSetupConsole(unittest.TestCase):
-    """Tests for attaching a console in verbose mode."""
+    """Tests for routing verbose output in a windowless build."""
+
+    def setUp(self):
+        # setup_console() reassigns both streams; restore them so a mock
+        # does not stay installed for the rest of the suite.
+        self._streams = (sys.stdout, sys.stderr)
+
+    def tearDown(self):
+        sys.stdout, sys.stderr = self._streams
+
+    @staticmethod
+    def _set_std_handles(mock_ctypes: MagicMock, stdout: int | None, stderr: int | None, file_type: int = win32._FILE_TYPE_DISK) -> None:
+        """Make GetStdHandle report *stdout* and *stderr* as redirected handles.
+
+        ``None`` stands for a stream the caller did not redirect; it is
+        reported as a console handle (``FILE_TYPE_CHAR``).
+        """
+        FILE_TYPE_CHAR = 0x0002
+        console_handle = 900
+        file_types = {console_handle: FILE_TYPE_CHAR}
+        handles = {win32._STD_OUTPUT_HANDLE: stdout, win32._STD_ERROR_HANDLE: stderr}
+
+        for handle in (stdout, stderr):
+            if handle is not None:
+                file_types[handle] = file_type
+
+        mock_ctypes.windll.kernel32.GetStdHandle.side_effect = lambda std: handles[std] or console_handle
+        mock_ctypes.windll.kernel32.GetFileType.side_effect = file_types.get
 
     @patch.object(win32, 'ctypes')
     @patch('builtins.open')
     def test_attaches_parent_console_first(self, _mock_open: MagicMock, mock_ctypes: MagicMock):
         """A console-launched process writes into the console it came from."""
+        self._set_std_handles(mock_ctypes, None, None)
         mock_ctypes.windll.kernel32.AttachConsole.return_value = 1
         win32.setup_console()
         mock_ctypes.windll.kernel32.AttachConsole.assert_called_once_with(-1)
@@ -800,17 +828,111 @@ class TestSetupConsole(unittest.TestCase):
     @patch('builtins.open')
     def test_allocates_console_on_attach_failure(self, _mock_open: MagicMock, mock_ctypes: MagicMock):
         """A double-clicked process gets a console of its own."""
+        self._set_std_handles(mock_ctypes, None, None)
         mock_ctypes.windll.kernel32.AttachConsole.return_value = 0
         win32.setup_console()
         mock_ctypes.windll.kernel32.AllocConsole.assert_called_once()
 
     @patch.object(win32, 'ctypes')
     @patch('builtins.open')
-    def test_sets_pywebview_log(self, _mock_open: MagicMock, _mock_ctypes: MagicMock):
+    def test_sets_pywebview_log(self, _mock_open: MagicMock, mock_ctypes: MagicMock):
         """pywebview's own logging is raised alongside our diagnostics."""
+        self._set_std_handles(mock_ctypes, None, None)
         with patch.dict(win32.os.environ, {}, clear=True):
             win32.setup_console()
             self.assertEqual(win32.os.environ['PYWEBVIEW_LOG'], 'DEBUG')
+
+    @patch.object(win32.msvcrt, 'open_osfhandle')
+    @patch.object(win32, 'ctypes')
+    @patch('builtins.open')
+    def test_keeps_redirected_streams(self, mock_open: MagicMock, mock_ctypes: MagicMock, mock_osfhandle: MagicMock):
+        """``app.exe --verbose > log.txt`` writes into the file, not the console."""
+        self._set_std_handles(mock_ctypes, 100, 200)
+        mock_osfhandle.side_effect = {100: 3, 200: 4}.get
+        mock_open.side_effect = lambda target, *args, **kwargs: f'stream-{target}'
+
+        win32.setup_console()
+
+        self.assertEqual(sys.stdout, 'stream-3')
+        self.assertEqual(sys.stderr, 'stream-4')
+        mock_ctypes.windll.kernel32.AttachConsole.assert_not_called()
+        mock_ctypes.windll.kernel32.AllocConsole.assert_not_called()
+
+    @patch.object(win32.msvcrt, 'open_osfhandle')
+    @patch.object(win32, 'ctypes')
+    @patch('builtins.open')
+    def test_console_covers_the_stream_without_a_redirect(self, mock_open: MagicMock, mock_ctypes: MagicMock, mock_osfhandle: MagicMock):
+        """Redirecting only stdout leaves stderr on the console."""
+        self._set_std_handles(mock_ctypes, 100, None)
+        mock_osfhandle.return_value = 3
+        mock_open.side_effect = lambda target, *args, **kwargs: f'stream-{target}'
+        mock_ctypes.windll.kernel32.AttachConsole.return_value = 1
+
+        win32.setup_console()
+
+        self.assertEqual(sys.stdout, 'stream-3')
+        self.assertEqual(sys.stderr, 'stream-CONOUT$')
+        mock_ctypes.windll.kernel32.AttachConsole.assert_called_once_with(-1)
+
+    @patch.object(win32.msvcrt, 'open_osfhandle')
+    @patch.object(win32, 'ctypes')
+    @patch('builtins.open')
+    def test_shared_handle_is_wrapped_once(self, mock_open: MagicMock, mock_ctypes: MagicMock, mock_osfhandle: MagicMock):
+        """One file passed for both streams must not be closed twice on exit."""
+        self._set_std_handles(mock_ctypes, 100, 100)
+        mock_osfhandle.return_value = 3
+        mock_open.side_effect = lambda target, *args, **kwargs: f'stream-{target}'
+
+        win32.setup_console()
+
+        self.assertIs(sys.stdout, sys.stderr)
+        mock_osfhandle.assert_called_once_with(100, win32.os.O_WRONLY)
+
+    @patch.object(win32.msvcrt, 'open_osfhandle')
+    @patch.object(win32, 'ctypes')
+    @patch('builtins.open')
+    def test_pipe_counts_as_a_redirect(self, mock_open: MagicMock, mock_ctypes: MagicMock, mock_osfhandle: MagicMock):
+        """``Start-Process -RedirectStandardOutput`` hands over a pipe, not a file."""
+        self._set_std_handles(mock_ctypes, 100, 200, file_type=win32._FILE_TYPE_PIPE)
+        mock_osfhandle.side_effect = {100: 3, 200: 4}.get
+        mock_open.side_effect = lambda target, *args, **kwargs: f'stream-{target}'
+
+        win32.setup_console()
+
+        self.assertEqual(sys.stdout, 'stream-3')
+        self.assertEqual(sys.stderr, 'stream-4')
+        mock_ctypes.windll.kernel32.AttachConsole.assert_not_called()
+
+    @patch.object(win32, 'ctypes')
+    @patch('builtins.open')
+    def test_missing_handle_falls_back_to_console(self, mock_open: MagicMock, mock_ctypes: MagicMock):
+        """A process started without console or redirection has no usable handle."""
+        mock_ctypes.windll.kernel32.GetStdHandle.side_effect = [None, win32._INVALID_HANDLE]
+        mock_open.side_effect = lambda target, *args, **kwargs: f'stream-{target}'
+        mock_ctypes.windll.kernel32.AttachConsole.return_value = 0
+
+        win32.setup_console()
+
+        self.assertEqual(sys.stdout, 'stream-CONOUT$')
+        self.assertEqual(sys.stderr, 'stream-CONOUT$')
+        mock_ctypes.windll.kernel32.GetFileType.assert_not_called()
+        mock_ctypes.windll.kernel32.AllocConsole.assert_called_once()
+
+    @patch.object(win32.msvcrt, 'open_osfhandle')
+    @patch.object(win32, 'ctypes')
+    @patch('builtins.open')
+    def test_unwrappable_handle_falls_back_to_console(self, mock_open: MagicMock, mock_ctypes: MagicMock, mock_osfhandle: MagicMock):
+        """A redirected handle that cannot be turned into a descriptor is not fatal."""
+        self._set_std_handles(mock_ctypes, 100, 200)
+        mock_osfhandle.side_effect = OSError('bad handle')
+        mock_open.side_effect = lambda target, *args, **kwargs: f'stream-{target}'
+        mock_ctypes.windll.kernel32.AttachConsole.return_value = 1
+
+        win32.setup_console()
+
+        self.assertEqual(sys.stdout, 'stream-CONOUT$')
+        self.assertEqual(sys.stderr, 'stream-CONOUT$')
+        mock_ctypes.windll.kernel32.AttachConsole.assert_called_once_with(-1)
 
 
 class TestInstallTrayClickHandler(unittest.TestCase):
