@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Polling no longer stops while the computer is idle or locked - it continues on a 15-minute cadence, configurable via the new [`idle_interval`](docs/configuration.md#polling-intervals) setting. Quota resets, threshold alerts and event commands now fire on time on an unattended computer, and switching your Claude account is picked up right away instead of at your next keystroke
+
+### Fixed
+
+- The detail popup no longer greys out and stops updating when you leave the mouse alone - while it is open and visible, usage keeps refreshing at the normal interval
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.22.0...HEAD)
 
 ## [1.22.0] - 2026-09-03

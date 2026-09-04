@@ -506,6 +506,24 @@ class TestSettingsValidation(unittest.TestCase):
         self.assertNotIn('idle_pause', result)
         mock.assert_called_once()
 
+    def test_idle_interval_positive_valid(self):
+        """Positive value for idle_interval is valid."""
+        result, mock = self._run_validate({'idle_interval': 600})
+        self.assertEqual(result['idle_interval'], 600)
+        mock.assert_not_called()
+
+    def test_idle_interval_zero_dropped(self):
+        """Value 0 for idle_interval is dropped - polling always has a cadence."""
+        result, mock = self._run_validate({'idle_interval': 0})
+        self.assertNotIn('idle_interval', result)
+        mock.assert_called_once()
+
+    def test_idle_interval_string_dropped(self):
+        """String value for idle_interval is dropped."""
+        result, mock = self._run_validate({'idle_interval': 'fifteen'})
+        self.assertNotIn('idle_interval', result)
+        mock.assert_called_once()
+
     # Threshold array validation
 
     def test_valid_threshold_array(self):

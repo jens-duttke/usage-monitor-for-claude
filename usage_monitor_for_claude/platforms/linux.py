@@ -32,7 +32,7 @@ __all__ = [
     'autostart_supported', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows',
     'double_click_seconds', 'get_idle_seconds', 'is_autostart_enabled',
-    'is_workstation_locked', 'load_font', 'no_window_kwargs', 'register_notification_identity',
+    'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs', 'register_notification_identity',
     'set_autostart', 'setup_console', 'show_error_box', 'show_topmost_error', 'show_warning_box',
     'sync_autostart_path', 'system_time_format', 'taskbar_uses_light_theme', 'watch_theme_change',
 ]
@@ -186,6 +186,16 @@ def is_workstation_locked() -> bool:
     state as "locked" would suppress notifications indefinitely.
     """
     return bool(_call_session_method(_SCREENSAVER_SERVICE, 'GetActive'))
+
+
+def is_screensaver_running() -> bool:
+    """Return False - a running screensaver is already reported as locked.
+
+    ``org.gnome.ScreenSaver.GetActive`` is True as soon as the screen is
+    blanked, whether or not unlocking asks for a password, so
+    :func:`is_workstation_locked` covers this state on its own.
+    """
+    return False
 
 
 def _import_gi() -> Any:

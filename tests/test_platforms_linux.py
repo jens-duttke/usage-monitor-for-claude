@@ -84,6 +84,12 @@ class TestIdleAndLock(unittest.TestCase):
         with patch.object(linux, '_call_session_method', return_value=None):
             self.assertFalse(linux.is_workstation_locked())
 
+    def test_screensaver_reported_through_lock_state(self):
+        """A running screensaver is reported as locked, so the probe stays False."""
+        with patch.object(linux, '_call_session_method', return_value=True):
+            self.assertFalse(linux.is_screensaver_running())
+            self.assertTrue(linux.is_workstation_locked())
+
 
 class TestMessageBoxes(unittest.TestCase):
     """Tests for the dialog fallbacks."""
@@ -592,6 +598,7 @@ class TestImportsWithoutPyGObject(unittest.TestCase):
             "assert linux.system_time_format() in ('24h', '12h')\n"
             'assert linux.get_idle_seconds() == 0.0\n'
             'assert linux.is_workstation_locked() is False\n'
+            'assert linux.is_screensaver_running() is False\n'
             'assert linux.taskbar_uses_light_theme() is False\n'
             'assert linux.double_click_seconds() == linux._DEFAULT_DOUBLE_CLICK_SECONDS\n'
             'assert linux.install_tray_click_handler(None, None, None) is False\n'

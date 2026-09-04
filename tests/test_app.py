@@ -42,6 +42,7 @@ def _make_app(thresholds: list[float] | None = None) -> UsageMonitorForClaude:
     app._patches = [
         patch('usage_monitor_for_claude.app.get_alert_thresholds', return_value=thresholds),
         patch('usage_monitor_for_claude.app.is_workstation_locked', return_value=False),
+        patch('usage_monitor_for_claude.app.is_screensaver_running', return_value=False),
         patch('usage_monitor_for_claude.app.get_idle_seconds', return_value=0.0),
         patch('usage_monitor_for_claude.app.ICON_FIELDS', ['five_hour', 'seven_day']),
     ]
@@ -54,6 +55,40 @@ def _cleanup(app: UsageMonitorForClaude) -> None:
     """Stop patches started by _make_app."""
     for active_patch in app._patches:
         active_patch.stop()
+
+
+def _returns_from_away(app: UsageMonitorForClaude):
+    """Return a _polling_throttled stub that reports away, then present, then ends the loop.
+
+    The loop reads the state once before the wait (away) and once at the end of
+    the pass (present), which is the transition the away-return path reacts to.
+    """
+    states = [True, False]
+
+    def polling_throttled() -> bool:
+        if states:
+            return states.pop(0)
+        app.running = False
+        return False
+
+    return polling_throttled
+
+
+def _stop_after_one_pass(app: UsageMonitorForClaude):
+    """Return a _polling_throttled stub that ends poll_loop after one wait pass.
+
+    The loop reads the throttle state once before the wait and once at the end
+    of every pass, so the second call is where that pass is over.
+    """
+    calls = [0]
+
+    def polling_throttled() -> bool:
+        calls[0] += 1
+        if calls[0] > 1:
+            app.running = False
+        return False
+
+    return polling_throttled
 
 
 # ---------------------------------------------------------------------------
@@ -1372,6 +1407,52 @@ class TestCalculatePollInterval(unittest.TestCase):
         interval = self.app._calculate_poll_interval()
         self.assertEqual(interval, 180)
 
+    def test_away_uses_idle_interval(self):
+        """While the user is away, polling slows to IDLE_INTERVAL instead of stopping."""
+        self.app._last_response = {'five_hour': {'utilization': 50.0}}
+        with patch.object(self.app, '_polling_throttled', return_value=True):
+            interval = self.app._calculate_poll_interval()
+
+        self.assertEqual(interval, 900)
+
+    def test_away_error_still_uses_idle_interval(self):
+        """An error while away does not fall back to the fast error cadence."""
+        self.app._last_response = {'error': 'server down'}
+        with patch.object(self.app, '_polling_throttled', return_value=True):
+            interval = self.app._calculate_poll_interval()
+
+        self.assertEqual(interval, 900)
+
+    def test_away_rate_limited_keeps_longer_backoff(self):
+        """A backoff longer than IDLE_INTERVAL is not shortened by the away cadence."""
+        self.app._last_response = {'error': 'rate limited', 'rate_limited': True}
+        self.app.cache = MagicMock()
+        self.app.cache.rate_limit_remaining = 1200.0
+        with patch.object(self.app, '_polling_throttled', return_value=True):
+            interval = self.app._calculate_poll_interval()
+
+        self.assertEqual(interval, 1200)
+
+    def test_away_with_overdue_reset_keeps_normal_interval(self):
+        """An unconfirmed reset keeps the normal cadence even while away."""
+        self.app._last_response = {'five_hour': {'utilization': 50.0}}
+        with patch.object(self.app, '_polling_throttled', return_value=True), \
+             patch.object(self.app, '_reset_overdue', return_value=True):
+            interval = self.app._calculate_poll_interval()
+
+        self.assertEqual(interval, 180)
+
+    def test_away_still_aligns_to_reset(self):
+        """Reset alignment applies on the away cadence, so a reset is caught on time."""
+        self.app._last_response = {'five_hour': {'utilization': 50.0}}
+        with patch.object(self.app, '_polling_throttled', return_value=True), \
+             patch.object(self.app, '_seconds_until_next_reset', return_value=600.0):
+            interval = self.app._calculate_poll_interval()
+
+        # 600 + RESET_BUFFER = 605 <= 900 * 1.5, so the poll is committed to
+        # just after the reset instead of waiting out the full away interval.
+        self.assertEqual(interval, 605)
+
 
 # ---------------------------------------------------------------------------
 # _seconds_until_next_reset
@@ -1580,6 +1661,55 @@ class TestResetAlignedPollTarget(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _safe_poll_target
+# ---------------------------------------------------------------------------
+
+class TestSafePollTarget(unittest.TestCase):
+    """Tests for _safe_poll_target() keeping a poll off slots that delay the reset poll."""
+
+    def setUp(self):
+        self.app = _make_app()
+        self.app.cache = MagicMock()
+        self.app.cache.last_success_time = 1000.0
+
+    def tearDown(self):
+        _cleanup(self.app)
+
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_no_reset_keeps_target(self, _mock_time):
+        """Without a known reset any target is fine."""
+        with patch.object(self.app, '_seconds_until_next_reset', return_value=None):
+            self.assertEqual(self.app._safe_poll_target(1500.0), 1500.0)
+
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_target_well_before_reset_kept(self, _mock_time):
+        """A target far enough ahead of the reset is left alone."""
+        with patch.object(self.app, '_seconds_until_next_reset', return_value=600.0):
+            self.assertEqual(self.app._safe_poll_target(1200.0), 1200.0)
+
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_target_in_danger_window_moved_to_aligned_slot(self, _mock_time):
+        """A target inside the last POLL_FAST - RESET_BUFFER seconds is deferred past the reset."""
+        # Reset at 1600; the danger window starts at 1600 - 115 = 1485.
+        with patch.object(self.app, '_seconds_until_next_reset', return_value=600.0):
+            self.assertEqual(self.app._safe_poll_target(1500.0), 1600.0 + RESET_BUFFER)
+
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_target_past_aligned_slot_pulled_back(self, _mock_time):
+        """A target beyond the reset-aligned slot would delay the confirming poll."""
+        with patch.object(self.app, '_seconds_until_next_reset', return_value=600.0):
+            self.assertEqual(self.app._safe_poll_target(2000.0), 1600.0 + RESET_BUFFER)
+
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_aligned_slot_respects_cooldown(self, _mock_time):
+        """The fallback slot still honors the cache cooldown after the last fetch."""
+        self.app.cache.last_success_time = 990.0
+        # Reset in 20s: reset + buffer (1025) is earlier than the cooldown floor (1110).
+        with patch.object(self.app, '_seconds_until_next_reset', return_value=20.0):
+            self.assertEqual(self.app._safe_poll_target(1015.0), 990.0 + POLL_FAST)
+
+
+# ---------------------------------------------------------------------------
 # _should_refresh_usage (popup open decision)
 # ---------------------------------------------------------------------------
 
@@ -1709,11 +1839,11 @@ class TestIsUserAway(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _wait_for_activity
+# _polling_throttled (away cadence decision)
 # ---------------------------------------------------------------------------
 
-class TestWaitForActivity(unittest.TestCase):
-    """Tests for _wait_for_activity() blocking behavior."""
+class TestPollingThrottled(unittest.TestCase):
+    """Tests for _polling_throttled() - when polling drops to the away cadence."""
 
     def setUp(self):
         self.app = _make_app()
@@ -1721,61 +1851,102 @@ class TestWaitForActivity(unittest.TestCase):
     def tearDown(self):
         _cleanup(self.app)
 
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    def test_exits_when_activity_resumes(self, mock_sleep):
-        """Stops blocking when _is_user_away returns False."""
-        with patch.object(self.app, '_is_user_away', side_effect=[True, True, False]):
-            self.app._wait_for_activity()
-        self.assertEqual(mock_sleep.call_count, 2)
+    def test_present_user_not_throttled(self):
+        """An active user keeps the normal cadence."""
+        self.assertFalse(self.app._polling_throttled())
 
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    def test_exits_when_running_false(self, mock_sleep):
-        """Stops blocking when running is set to False."""
-        self.app.running = False
+    def test_away_user_throttled(self):
+        """An idle or locked machine drops to the away cadence."""
         with patch.object(self.app, '_is_user_away', return_value=True):
-            self.app._wait_for_activity()
-        mock_sleep.assert_not_called()
+            self.assertTrue(self.app._polling_throttled())
 
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    def test_returns_immediately_if_not_away(self, mock_sleep):
-        """Returns immediately when user is not away."""
-        with patch.object(self.app, '_is_user_away', return_value=False):
-            self.app._wait_for_activity()
-        mock_sleep.assert_not_called()
-
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_until_deadline_exits_while_still_away(self, mock_time, mock_sleep):
-        """Exits when deadline is reached even if user is still away."""
-        mock_time.side_effect = [100.0, 105.0]  # first call < deadline, second >= deadline
+    def test_open_popup_overrides_idle(self):
+        """An open popup keeps the normal cadence however long the machine sat idle."""
+        self.app._popup_open = True
         with patch.object(self.app, '_is_user_away', return_value=True):
-            self.app._wait_for_activity(until=105.0)
-        self.assertEqual(mock_sleep.call_count, 1)
+            self.assertFalse(self.app._polling_throttled())
 
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_until_deadline_already_passed(self, mock_time, mock_sleep):
-        """Exits immediately when deadline is already in the past."""
-        mock_time.return_value = 200.0
+    @patch('usage_monitor_for_claude.app.is_workstation_locked', return_value=True)
+    def test_open_popup_behind_lock_screen_throttled(self, _locked):
+        """A locked screen hides the popup, so the away cadence applies."""
+        self.app._popup_open = True
+        self.assertTrue(self.app._polling_throttled())
+
+    @patch('usage_monitor_for_claude.app.is_screensaver_running', return_value=True)
+    def test_open_popup_behind_screensaver_throttled(self, _screensaver):
+        """A running screensaver covers the popup, so the away cadence applies."""
+        self.app._popup_open = True
         with patch.object(self.app, '_is_user_away', return_value=True):
-            self.app._wait_for_activity(until=100.0)
-        mock_sleep.assert_not_called()
+            self.assertTrue(self.app._polling_throttled())
 
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    def test_until_none_blocks_until_activity(self, mock_sleep):
-        """With until=None, behaves like the original - blocks until activity."""
-        with patch.object(self.app, '_is_user_away', side_effect=[True, True, False]):
-            self.app._wait_for_activity(until=None)
-        self.assertEqual(mock_sleep.call_count, 2)
+    @patch('usage_monitor_for_claude.app.is_screensaver_running', return_value=True)
+    def test_screensaver_alone_does_not_throttle_present_user(self, _screensaver):
+        """A screensaver without an open popup still follows the idle decision."""
+        self.assertFalse(self.app._polling_throttled())
 
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_until_user_returns_before_deadline(self, mock_time, mock_sleep):
-        """Exits when user returns even if deadline has not been reached."""
-        mock_time.return_value = 100.0  # well before deadline
-        with patch.object(self.app, '_is_user_away', side_effect=[True, False]):
-            self.app._wait_for_activity(until=999.0)
-        self.assertEqual(mock_sleep.call_count, 1)
+
+# ---------------------------------------------------------------------------
+# _reset_overdue
+# ---------------------------------------------------------------------------
+
+class TestResetOverdue(unittest.TestCase):
+    """Tests for _reset_overdue() - a reset the API has not confirmed yet."""
+
+    def setUp(self):
+        self.app = _make_app()
+
+    def tearDown(self):
+        _cleanup(self.app)
+
+    def _freeze(self, mock_dt):
+        now = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        mock_dt.now.return_value = now
+        mock_dt.fromisoformat = datetime.fromisoformat
+
+    def test_no_data_not_overdue(self):
+        """Without data nothing is overdue."""
+        self.app._last_response = {}
+        self.assertFalse(self.app._reset_overdue())
+
+    @patch('usage_monitor_for_claude.app.datetime')
+    def test_future_reset_not_overdue(self, mock_dt):
+        """A reset still ahead is not overdue."""
+        self._freeze(mock_dt)
+        self.app._last_response = {'five_hour': {'utilization': 90.0, 'resets_at': '2025-01-15T12:30:00+00:00'}}
+        self.assertFalse(self.app._reset_overdue())
+
+    @patch('usage_monitor_for_claude.app.datetime')
+    def test_past_reset_is_overdue(self, mock_dt):
+        """A reset timestamp still in the past means the API has not reported it yet."""
+        self._freeze(mock_dt)
+        self.app._last_response = {'five_hour': {'utilization': 90.0, 'resets_at': '2025-01-15T11:30:00+00:00'}}
+        self.assertTrue(self.app._reset_overdue())
+
+    @patch('usage_monitor_for_claude.app.datetime')
+    def test_one_overdue_among_several(self, mock_dt):
+        """One overdue quota is enough, even next to fresh ones."""
+        self._freeze(mock_dt)
+        self.app._last_response = {
+            'five_hour': {'utilization': 0.0, 'resets_at': '2025-01-15T11:59:00+00:00'},
+            'seven_day': {'utilization': 30.0, 'resets_at': '2025-01-18T12:00:00+00:00'},
+        }
+        self.assertTrue(self.app._reset_overdue())
+
+    def test_null_resets_at_not_overdue(self):
+        """A quota without an active window (null resets_at) is not overdue."""
+        self.app._last_response = {'five_hour': {'utilization': 0.0, 'resets_at': None}}
+        self.assertFalse(self.app._reset_overdue())
+
+    def test_unparsable_resets_at_not_overdue(self):
+        """A malformed timestamp is ignored instead of forcing the normal cadence."""
+        self.app._last_response = {'five_hour': {'utilization': 0.0, 'resets_at': 'not-a-date'}}
+        self.assertFalse(self.app._reset_overdue())
+
+    def test_timestamp_without_offset_ignored(self):
+        """A timestamp without a UTC offset parses but cannot be compared - it is ignored."""
+        self.app._last_response = {'five_hour': {'utilization': 0.0, 'resets_at': '2020-01-15T12:00:00'}}
+        self.assertFalse(self.app._reset_overdue())
+        self.assertIsNone(self.app._seconds_until_next_reset())
 
 
 # ---------------------------------------------------------------------------
@@ -2272,11 +2443,11 @@ class TestTestEventCommands(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# poll_loop idle interruption for reset commands
+# poll_loop away cadence
 # ---------------------------------------------------------------------------
 
-class TestPollLoopIdleInterruption(unittest.TestCase):
-    """Tests for poll_loop waking from idle to fire reset commands."""
+class TestPollLoopAwayCadence(unittest.TestCase):
+    """Tests for poll_loop continuing on a reduced cadence while the user is away."""
 
     def setUp(self):
         self.app = _make_app()
@@ -2287,151 +2458,11 @@ class TestPollLoopIdleInterruption(unittest.TestCase):
     def tearDown(self):
         _cleanup(self.app)
 
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
     @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_idle_interrupted_for_imminent_reset(self, mock_time, mock_sleep):
-        """When idle and on_reset_command is set, idle wait is interrupted at reset deadline."""
-        # Simulate: update runs, then inner loop detects idle, _wait_for_activity
-        # returns at deadline while still idle, breaks to poll again.
-        call_count = [0]
-
-        def update_side_effect(force=False):
-            call_count[0] += 1
-            if call_count[0] >= 2:
-                self.app.running = False
-
-        mock_time.side_effect = [
-            100.0,   # target = time() + interval
-            100.0,   # inner loop: time() < target
-            100.0,   # backward-jump clamp check
-            100.0,   # _wait_for_activity: time() for deadline calc
-            200.0,   # second iteration target
-            200.0,   # inner loop exits (running=False)
-        ]
-
-        with patch.object(self.app, 'update', side_effect=update_side_effect), \
-             patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', return_value=True), \
-             patch.object(self.app, '_wait_for_activity'), \
-             patch.object(self.app, '_seconds_until_next_reset', return_value=30.0):
-            self.app.poll_loop()
-
-        self.assertEqual(call_count[0], 2)
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', [])
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_idle_not_interrupted_without_reset_command(self, mock_time, mock_sleep):
-        """When on_reset_command is empty, idle wait uses no deadline."""
-        wait_calls = []
-
-        def capture_wait(until=None):
-            wait_calls.append(until)
-            self.app.running = False
-
-        mock_time.side_effect = [
-            100.0,   # target = time() + interval
-            100.0,   # inner loop: time() < target
-            100.0,   # backward-jump clamp check
-            200.0,   # after _wait_for_activity: reset realign / interval check
-        ]
-
-        with patch.object(self.app, 'update'), \
-             patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', return_value=True), \
-             patch.object(self.app, '_wait_for_activity', side_effect=capture_wait), \
-             patch.object(self.app, '_seconds_until_next_reset', return_value=30.0):
-            self.app.poll_loop()
-
-        self.assertEqual(wait_calls, [None])
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_idle_no_deadline_when_no_imminent_reset(self, mock_time, mock_sleep):
-        """When on_reset_command is set but no reset is imminent, idle wait uses no deadline."""
-        wait_calls = []
-
-        def capture_wait(until=None):
-            wait_calls.append(until)
-            self.app.running = False
-
-        mock_time.side_effect = [
-            100.0,   # target = time() + interval
-            100.0,   # inner loop: time() < target
-            100.0,   # backward-jump clamp check
-            200.0,   # after _wait_for_activity: time() - lst >= interval
-        ]
-
-        with patch.object(self.app, 'update'), \
-             patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', return_value=True), \
-             patch.object(self.app, '_wait_for_activity', side_effect=capture_wait), \
-             patch.object(self.app, '_seconds_until_next_reset', return_value=None):
-            self.app.poll_loop()
-
-        self.assertEqual(wait_calls, [None])
-
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
-    @patch('usage_monitor_for_claude.app.POLL_INTERVAL', 180)
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_idle_retries_until_reset_confirmed(self, mock_time, mock_sleep):
-        """After reset deadline poll, keeps retrying at POLL_INTERVAL until reset is confirmed."""
-        wait_calls = []
-
-        def capture_wait(until=None):
-            wait_calls.append(until)
-
-        update_count = [0]
-
-        def update_side_effect(force=False):
-            update_count[0] += 1
-            if update_count[0] >= 3:
-                self.app.running = False
-
-        # First iteration: imminent reset at +30s -> deadline at now+35, sets _idle_reset_pending
-        # Second iteration: reset already passed (None), _idle_reset_pending=True -> deadline at now+180
-        # Third iteration: stops
-        mock_time.side_effect = [
-            100.0,    # 1st iter: target = time() + interval
-            100.0,    # 1st inner loop: time() < target
-            100.0,    # backward-jump clamp check
-            100.0,    # deadline calc: time() + 30 + 5
-            200.0,    # 2nd iter: target = time() + interval
-            200.0,    # 2nd inner loop: time() < target
-            200.0,    # backward-jump clamp check
-            200.0,    # deadline calc (_idle_reset_pending path): time() + 180
-            400.0,    # 3rd iter: target = time() + interval
-            400.0,    # 3rd inner loop: time() < target -> running=False
-        ]
-
-        with patch.object(self.app, 'update', side_effect=update_side_effect), \
-             patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', return_value=True), \
-             patch.object(self.app, '_wait_for_activity', side_effect=capture_wait), \
-             patch.object(self.app, '_seconds_until_next_reset', side_effect=[30.0, None, None]):
-            self.app.poll_loop()
-
-        self.assertEqual(update_count[0], 3)
-        # First call: deadline based on reset time (100+30+5=135)
-        self.assertAlmostEqual(wait_calls[0], 135.0, places=0)
-        # Second call: deadline based on POLL_INTERVAL (200+180=380)
-        self.assertAlmostEqual(wait_calls[1], 380.0, places=0)
-        # _idle_reset_pending was set by the first idle detection
-        self.assertTrue(self.app._idle_reset_pending)
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
-    @patch('usage_monitor_for_claude.app.POLL_INTERVAL', 180)
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_idle_reset_pending_survives_user_return(self, mock_time, mock_sleep):
-        """_idle_reset_pending persists when user returns, so re-locking resumes idle polling."""
-        def capture_wait(until=None):
-            pass  # simulate immediate return (user came back)
-
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_away_keeps_polling(self, _mock_time, _mock_sleep):
+        """Polling continues while the user stays away - the loop never blocks."""
+        self.app.cache.last_success_time = 1000.0
         update_count = [0]
 
         def update_side_effect(force=False):
@@ -2439,111 +2470,93 @@ class TestPollLoopIdleInterruption(unittest.TestCase):
             if update_count[0] >= 2:
                 self.app.running = False
 
-        # Reset is far off (not imminent), so the user return polls immediately
-        # rather than realigning to the reset - the path exercised here.
-        # _is_user_away: True on first check (enter idle), False after _wait_for_activity (user returned)
-        mock_time.side_effect = [
-            100.0,    # 1st iter: target = time() + interval
-            100.0,    # 1st inner loop: time() < target
-            100.0,    # backward-jump clamp check
-            100.0,    # deadline calc: time() + 300 + 5
-            200.0,    # after wait: time() - lst >= interval -> break
-            200.0,    # 2nd iter: target = time() + interval
-            200.0,    # 2nd inner loop: time() < target -> running=False
-        ]
-
+        # Each pass reaches its target immediately, so a still-away user gets
+        # another poll instead of the loop waiting for activity.
         with patch.object(self.app, 'update', side_effect=update_side_effect), \
-             patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', side_effect=[True, False, False, False]), \
-             patch.object(self.app, '_wait_for_activity', side_effect=capture_wait), \
-             patch.object(self.app, '_seconds_until_next_reset', return_value=300.0):
+             patch.object(self.app, '_calculate_poll_interval', return_value=0), \
+             patch.object(self.app, '_polling_throttled', return_value=True), \
+             patch.object(self.app, '_seconds_until_next_reset', return_value=None):
             self.app.poll_loop()
 
-        # Flag persists so that if the user locks again before the
-        # reset is confirmed, idle polling resumes correctly.
-        self.assertTrue(self.app._idle_reset_pending)
+        self.assertEqual(update_count[0], 2)
 
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
-    @patch('usage_monitor_for_claude.app.POLL_INTERVAL', 180)
-    @patch('usage_monitor_for_claude.app.time.sleep')
-    @patch('usage_monitor_for_claude.app.time.time')
-    def test_idle_resumes_polling_after_network_failure_and_relock(self, mock_time, mock_sleep):
-        """After network failure during user return, re-locking resumes idle polling."""
-        wait_calls = []
-
-        def capture_wait(until=None):
-            wait_calls.append(until)
-
-        update_count = [0]
-
-        def update_side_effect(force=False):
-            update_count[0] += 1
-            if update_count[0] >= 3:
-                self.app.running = False
-
-        # Iteration 1: imminent reset -> sets _idle_reset_pending, wakes for deadline
-        # Iteration 2: user returns briefly (network error), then re-locks.
-        #   _is_user_away: True (enter idle), no next_reset but _idle_reset_pending
-        #   -> deadline at now + POLL_INTERVAL -> keeps polling
-        # Iteration 3: stops
-        mock_time.side_effect = [
-            100.0,    # 1st iter: target
-            100.0,    # 1st inner loop check
-            100.0,    # backward-jump clamp check
-            100.0,    # deadline calc: time() + 30 + 5
-            200.0,    # 2nd iter: target
-            200.0,    # 2nd inner loop check
-            200.0,    # backward-jump clamp check
-            200.0,    # deadline calc (_idle_reset_pending): time() + 180
-            400.0,    # 3rd iter: target
-            400.0,    # 3rd inner loop check -> running=False
-        ]
-
-        with patch.object(self.app, 'update', side_effect=update_side_effect), \
-             patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', return_value=True), \
-             patch.object(self.app, '_wait_for_activity', side_effect=capture_wait), \
-             patch.object(self.app, '_seconds_until_next_reset', side_effect=[30.0, None, None]):
-            self.app.poll_loop()
-
-        # All three iterations ran (idle polling continued after re-lock)
-        self.assertEqual(update_count[0], 3)
-        # Second wait used POLL_INTERVAL deadline (not None)
-        self.assertAlmostEqual(wait_calls[1], 380.0, places=0)
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
     @patch('usage_monitor_for_claude.app.time.sleep')
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
-    def test_user_return_near_reset_realigns_instead_of_polling(self, mock_time, mock_sleep):
-        """Returning within POLL_FAST of a reset defers the poll to just after the reset."""
+    def test_return_polls_once_normal_interval_elapsed(self, _mock_time, _mock_sleep):
+        """Coming back polls right away when the normal interval has already elapsed."""
+        self.app.cache.last_success_time = 500.0
+        # The away interval applies until the user returns, the normal one after.
+        intervals = [900, 180]
+        polls = []
+
+        with patch.object(self.app, 'update', side_effect=lambda force=False: polls.append(force)), \
+             patch.object(self.app, '_calculate_poll_interval', side_effect=lambda: intervals.pop(0) if intervals else 180), \
+             patch.object(self.app, '_polling_throttled', side_effect=_returns_from_away(self.app)), \
+             patch.object(self.app, '_seconds_until_next_reset', return_value=None):
+            self.app.poll_loop()
+
+        # The away target (1000 + 900) was pulled back to last_success + 180,
+        # which is already in the past, so a second poll ran immediately.
+        self.assertEqual(len(polls), 2)
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_return_waits_out_remaining_interval(self, _mock_time, _mock_sleep):
+        """Coming back shortly after a fetch waits out the rest of the normal interval."""
+        self.app.cache.last_success_time = 950.0
+        # The away interval applies until the user returns, the normal one after.
+        intervals = [900, 180]
+        polls = []
+
+        with patch.object(self.app, 'update', side_effect=lambda force=False: polls.append(force)), \
+             patch.object(self.app, '_calculate_poll_interval', side_effect=lambda: intervals.pop(0) if intervals else 180), \
+             patch.object(self.app, '_polling_throttled', side_effect=_returns_from_away(self.app)), \
+             patch.object(self.app, '_seconds_until_next_reset', return_value=None):
+            self.app.poll_loop()
+
+        self.assertEqual(len(polls), 1)
+        self.assertEqual(self.app._next_poll_time, 950.0 + 180)
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
+    def test_return_near_reset_realigns_instead_of_polling(self, _mock_time, _mock_sleep):
+        """Returning within the cooldown before a reset defers the poll to just after it."""
         self.app.cache.last_success_time = 1000.0
+        # The away interval applies until the user returns, the normal one after.
+        intervals = [900, 180]
+        polls = []
 
-        away_sequence = [True, False]
-
-        def is_away():
-            if away_sequence:
-                return away_sequence.pop(0)
-            self.app.running = False
-            return False
-
-        update_count = [0]
-
-        def update_side_effect(force=False):
-            update_count[0] += 1
-
-        with patch.object(self.app, 'update', side_effect=update_side_effect), \
-             patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', side_effect=is_away), \
-             patch.object(self.app, '_wait_for_activity'), \
+        with patch.object(self.app, 'update', side_effect=lambda force=False: polls.append(force)), \
+             patch.object(self.app, '_calculate_poll_interval', side_effect=lambda: intervals.pop(0) if intervals else 180), \
+             patch.object(self.app, '_polling_throttled', side_effect=_returns_from_away(self.app)), \
              patch.object(self.app, '_seconds_until_next_reset', return_value=30.0):
             self.app.poll_loop()
 
-        # Poll was deferred, not fired immediately: update ran only the first time.
-        self.assertEqual(update_count[0], 1)
-        # Next poll realigned to max(now + 30 + RESET_BUFFER, last_success + POLL_FAST)
-        # = max(1035, 1120) = 1120, i.e. the cooldown floor just past the reset.
+        # Poll deferred, not fired: max(now + 30 + RESET_BUFFER, last_success +
+        # POLL_FAST) = 1120, the cooldown floor just past the reset.
+        self.assertEqual(len(polls), 1)
         self.assertEqual(self.app._next_poll_time, 1000.0 + POLL_FAST)
-        self.assertTrue(self.app._idle_reset_pending)
+
+    @patch('usage_monitor_for_claude.app.time.sleep')
+    @patch('usage_monitor_for_claude.app.time.time', return_value=100.0)
+    def test_account_switch_detected_while_away(self, _mock_time, _mock_sleep):
+        """A token change is picked up on a locked machine, not only when present."""
+        force_calls = []
+
+        def update_side_effect(force=False):
+            force_calls.append(force)
+            if len(force_calls) >= 2:
+                self.app.running = False
+
+        with patch.object(self.app, 'update', side_effect=update_side_effect), \
+             patch.object(self.app, '_calculate_poll_interval', return_value=900), \
+             patch.object(self.app, '_account_switched', return_value=True), \
+             patch.object(self.app, '_polling_throttled', return_value=True), \
+             patch.object(self.app, '_seconds_until_next_reset', return_value=None), \
+             patch('usage_monitor_for_claude.app.read_access_token', side_effect=['tok-a', 'tok-b', 'tok-b', 'tok-b']):
+            self.app.poll_loop()
+
+        self.assertEqual(force_calls, [False, True])
 
     @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', [])
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
@@ -2555,13 +2568,9 @@ class TestPollLoopIdleInterruption(unittest.TestCase):
             # Simulate a popup fetch completing mid-wait.
             self.app.cache.last_success_time = 1000.0
 
-        def is_away():
-            self.app.running = False
-            return False
-
         with patch.object(self.app, 'update'), \
              patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', side_effect=is_away), \
+             patch.object(self.app, '_polling_throttled', side_effect=_stop_after_one_pass(self.app)), \
              patch.object(self.app, '_seconds_until_next_reset', return_value=30.0), \
              patch('usage_monitor_for_claude.app.time.sleep', side_effect=advance_success):
             self.app.poll_loop()
@@ -2579,13 +2588,9 @@ class TestPollLoopIdleInterruption(unittest.TestCase):
         def advance_success(_seconds):
             self.app.cache.last_success_time = 1000.0
 
-        def is_away():
-            self.app.running = False
-            return False
-
         with patch.object(self.app, 'update'), \
              patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', side_effect=is_away), \
+             patch.object(self.app, '_polling_throttled', side_effect=_stop_after_one_pass(self.app)), \
              patch.object(self.app, '_seconds_until_next_reset', return_value=None), \
              patch('usage_monitor_for_claude.app.time.sleep', side_effect=advance_success):
             self.app.poll_loop()
@@ -2604,16 +2609,12 @@ class TestPollLoopIdleInterruption(unittest.TestCase):
         def advance_success(_seconds):
             self.app.cache.last_success_time = 1000.0
 
-        def is_away():
-            self.app.running = False
-            return False
-
         # Reset in 209 s: interval (180) <= 209 < interval + danger (295), so the
         # pushed target 1000 + 180 = 1180 would land at reset - 29, inside the
         # danger window [1094, 1209).
         with patch.object(self.app, 'update'), \
              patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', side_effect=is_away), \
+             patch.object(self.app, '_polling_throttled', side_effect=_stop_after_one_pass(self.app)), \
              patch.object(self.app, '_seconds_until_next_reset', return_value=209.0), \
              patch('usage_monitor_for_claude.app.time.sleep', side_effect=advance_success):
             self.app.poll_loop()
@@ -2632,13 +2633,9 @@ class TestPollLoopIdleInterruption(unittest.TestCase):
         def jump_back(_seconds):
             clock['now'] = 5000.0
 
-        def is_away():
-            self.app.running = False
-            return False
-
         with patch.object(self.app, 'update'), \
              patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', side_effect=is_away), \
+             patch.object(self.app, '_polling_throttled', side_effect=_stop_after_one_pass(self.app)), \
              patch.object(self.app, '_seconds_until_next_reset', return_value=None), \
              patch('usage_monitor_for_claude.app.time.time', side_effect=lambda: clock['now']), \
              patch('usage_monitor_for_claude.app.time.sleep', side_effect=jump_back):
@@ -2666,13 +2663,10 @@ class TestPollLoopAccountSwitch(unittest.TestCase):
         returned in the gap between the deferral and the next away check)."""
         self.app._deferred_notifications = {'reset': ('msg', 'title')}
 
-        def is_away():
-            self.app.running = False
-            return False
-
         with patch.object(self.app, 'update'), \
              patch.object(self.app, '_calculate_poll_interval', return_value=180), \
-             patch.object(self.app, '_is_user_away', side_effect=is_away), \
+             patch.object(self.app, '_is_user_away', return_value=False), \
+             patch.object(self.app, '_polling_throttled', side_effect=_stop_after_one_pass(self.app)), \
              patch.object(self.app, '_seconds_until_next_reset', return_value=None):
             self.app.poll_loop()
 
@@ -2794,78 +2788,6 @@ class TestPollLoopAccountSwitch(unittest.TestCase):
             self.app.poll_loop()
 
         self.assertEqual(force_calls, [False, True])
-
-
-class TestIdleResetPendingCleared(unittest.TestCase):
-    """Tests for _idle_reset_pending being cleared on confirmed usage drop."""
-
-    def setUp(self):
-        self.app = _make_app()
-
-    def tearDown(self):
-        _cleanup(self.app)
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
-    @patch('usage_monitor_for_claude.app.run_event_command')
-    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
-    @patch('usage_monitor_for_claude.app.create_icon_image')
-    def test_5h_drop_clears_idle_reset_pending(self, _icon, _tooltip, _cmd):
-        """_idle_reset_pending is cleared when a 5h usage drop is detected."""
-        self.app._idle_reset_pending = True
-        self.app._prev_utilization = {'five_hour': 80.0, 'seven_day': 10.0}
-        data = {'five_hour': {'utilization': 5.0}, 'seven_day': {'utilization': 10.0}}
-        self.app.cache = MagicMock()
-        self.app.cache.update.return_value = UpdateResult(data=data)
-
-        self.app.update()
-
-        self.assertFalse(self.app._idle_reset_pending)
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
-    @patch('usage_monitor_for_claude.app.run_event_command')
-    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
-    @patch('usage_monitor_for_claude.app.create_icon_image')
-    def test_7d_drop_clears_idle_reset_pending(self, _icon, _tooltip, _cmd):
-        """_idle_reset_pending is cleared when a 7d usage drop is detected."""
-        self.app._idle_reset_pending = True
-        self.app._prev_utilization = {'five_hour': 10.0, 'seven_day': 60.0}
-        data = {'five_hour': {'utilization': 10.0}, 'seven_day': {'utilization': 5.0}}
-        self.app.cache = MagicMock()
-        self.app.cache.update.return_value = UpdateResult(data=data)
-
-        self.app.update()
-
-        self.assertFalse(self.app._idle_reset_pending)
-
-    @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', ['echo reset'])
-    @patch('usage_monitor_for_claude.app.run_event_command')
-    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
-    @patch('usage_monitor_for_claude.app.create_icon_image')
-    def test_no_drop_keeps_idle_reset_pending(self, _icon, _tooltip, _cmd):
-        """_idle_reset_pending persists when usage stays stable (no drop)."""
-        self.app._idle_reset_pending = True
-        self.app._prev_utilization = {'five_hour': 50.0, 'seven_day': 10.0}
-        data = {'five_hour': {'utilization': 55.0}, 'seven_day': {'utilization': 10.0}}
-        self.app.cache = MagicMock()
-        self.app.cache.update.return_value = UpdateResult(data=data)
-
-        self.app.update()
-
-        self.assertTrue(self.app._idle_reset_pending)
-
-    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
-    @patch('usage_monitor_for_claude.app.create_icon_image')
-    def test_error_response_keeps_idle_reset_pending(self, _icon, _tooltip):
-        """_idle_reset_pending persists on API error (network failure)."""
-        self.app._idle_reset_pending = True
-        self.app._prev_utilization = {'five_hour': 80.0, 'seven_day': 10.0}
-        data = {'error': 'server down'}
-        self.app.cache = MagicMock()
-        self.app.cache.update.return_value = UpdateResult(data=data)
-
-        self.app.update()
-
-        self.assertTrue(self.app._idle_reset_pending)
 
 
 # ---------------------------------------------------------------------------

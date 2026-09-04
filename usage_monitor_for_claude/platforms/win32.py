@@ -28,7 +28,7 @@ __all__ = [
     'autostart_supported', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
     'diagnostic_display_rows', 'diagnostic_post_init_rows', 'diagnostic_runtime_rows',
     'diagnostic_system_rows', 'double_click_seconds', 'get_idle_seconds',
-    'is_autostart_enabled', 'is_workstation_locked', 'load_font', 'no_window_kwargs',
+    'is_autostart_enabled', 'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs',
     'register_notification_identity', 'set_autostart', 'show_error_box', 'show_warning_box',
     'setup_console', 'show_topmost_error', 'sync_autostart_path', 'system_time_format',
     'taskbar_uses_light_theme', 'watch_theme_change',
@@ -166,6 +166,21 @@ def is_workstation_locked() -> bool:
         return False
 
     return True
+
+
+def is_screensaver_running() -> bool:
+    """Return True while a screensaver is drawing over the desktop.
+
+    A screensaver without password protection leaves the input desktop open,
+    so ``is_workstation_locked`` does not report it.  Returns False when the
+    query fails - an unknown state must not look like a covered screen.
+    """
+    SPI_GETSCREENSAVERRUNNING = 0x0072
+    running = ctypes.wintypes.BOOL()
+    if not ctypes.windll.user32.SystemParametersInfoW(SPI_GETSCREENSAVERRUNNING, 0, ctypes.byref(running), 0):
+        return False
+
+    return bool(running.value)
 
 
 @functools.lru_cache(maxsize=None)

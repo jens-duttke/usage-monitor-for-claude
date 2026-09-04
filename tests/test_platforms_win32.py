@@ -100,6 +100,31 @@ class TestIsWorkstationLocked(unittest.TestCase):
         mock_ctypes.windll.user32.CloseDesktop.assert_called_once_with(1234)
 
 
+class TestIsScreensaverRunning(unittest.TestCase):
+    """Tests for SPI_GETSCREENSAVERRUNNING-based screensaver detection."""
+
+    @patch.object(win32, 'ctypes')
+    def test_running_when_flag_set(self, mock_ctypes: MagicMock):
+        """A set flag means a screensaver is drawing over the desktop."""
+        mock_ctypes.windll.user32.SystemParametersInfoW.return_value = 1
+        mock_ctypes.wintypes.BOOL.return_value.value = 1
+        self.assertTrue(win32.is_screensaver_running())
+
+    @patch.object(win32, 'ctypes')
+    def test_not_running_when_flag_clear(self, mock_ctypes: MagicMock):
+        """A clear flag means the desktop is visible."""
+        mock_ctypes.windll.user32.SystemParametersInfoW.return_value = 1
+        mock_ctypes.wintypes.BOOL.return_value.value = 0
+        self.assertFalse(win32.is_screensaver_running())
+
+    @patch.object(win32, 'ctypes')
+    def test_failed_query_reports_not_running(self, mock_ctypes: MagicMock):
+        """A failed query must not look like a covered screen."""
+        mock_ctypes.windll.user32.SystemParametersInfoW.return_value = 0
+        mock_ctypes.wintypes.BOOL.return_value.value = 1
+        self.assertFalse(win32.is_screensaver_running())
+
+
 class TestWatchThemeChange(unittest.TestCase):
     """Tests for watch_theme_change() - the registry-based theme watcher."""
 

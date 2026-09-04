@@ -30,7 +30,7 @@ Commands only fire on **state changes** detected while the app is running. On ap
 
 Because the quick action is user-driven, a command that fails to start - it exits with a non-zero (error) code within the first few seconds - shows its stderr in an error dialog, so a wrong path or a broken command is not swallowed silently. If the command starts an app, that app's later exit code is ignored. The automatic reset, threshold, and startup commands stay silent - they fire in the background and must not interrupt you with dialogs.
 
-When `on_reset_command` is configured, the app wakes from idle/lock pause at the expected reset time so the command fires promptly on an unattended computer, retrying until the API confirms the reset. `on_threshold_command` does not wake from idle - thresholds follow active usage, so they are checked once polling resumes. Notifications raised while you were away are shown when you return.
+On an idle or locked computer the app keeps polling on a slower cadence, and still checks at the expected reset time, so `on_reset_command` fires promptly and retries until the API confirms the reset. `on_threshold_command` follows that same slower cadence while you are away. Notifications raised while you were away are shown when you return.
 
 > [!TIP]
 > If you need a visible terminal, prefix your command with `start cmd /c`, e.g.:
