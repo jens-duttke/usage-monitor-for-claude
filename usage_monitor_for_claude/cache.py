@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, read_access_token
+from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, prepaid_credits_from_usage, read_access_token
 from .claude_cli import RefreshResult, refresh_token
 from .settings import MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
 
@@ -291,18 +291,35 @@ class UsageCache:
         pct_5h = (data.get('five_hour') or {}).get('utilization')
         pct_7d = (data.get('seven_day') or {}).get('utilization')
         log.info('fetch_usage -> OK (5h: %s%%, 7d: %s%%)', pct_5h if pct_5h is not None else '?', pct_7d if pct_7d is not None else '?')
-        self._record_success(data, token_before, self._fetch_prepaid_balance())
+        self._record_success(data, token_before, self._fetch_prepaid_balance(data))
         return UpdateResult(data=data, token=token_before)
 
-    def _fetch_prepaid_balance(self) -> dict[str, Any] | None:
-        """Fetch the prepaid credit balance of the current organization.
+    def _fetch_prepaid_balance(self, usage: dict[str, Any]) -> dict[str, Any] | None:
+        """Return the prepaid credit balance for the current organization.
 
-        Runs in the same cycle as the usage fetch, so it inherits the
-        cooldown, the 429 backoff and the adaptive cadence of
-        ``_update_locked`` instead of needing throttling of its own.  The
-        balance is supplementary: without a known organization uuid, or on
-        any failure, it stays None and the usage result is unaffected.
+        Read only while extra usage is enabled, the same condition under
+        which the popup renders it, so an account that cannot show the
+        balance never pays for reading it.  The usage response is the
+        preferred source; the dedicated endpoint is requested only when it
+        carries no balance of its own, and runs in the same cycle as the
+        usage fetch to inherit the cooldown, the 429 backoff and the
+        adaptive cadence of ``_update_locked``.  The balance is
+        supplementary: without a known organization uuid, or on any
+        failure, it stays None and the usage result is unaffected.
+
+        Parameters
+        ----------
+        usage : dict
+            Successful usage response of the current cycle.
         """
+        if not (usage.get('extra_usage') or {}).get('is_enabled'):
+            return None
+
+        balance = prepaid_credits_from_usage(usage)
+        if balance is not None:
+            log.debug('prepaid balance read from the usage response')
+            return balance
+
         org_uuid = ((self._profile or {}).get('organization') or {}).get('uuid')
         if not org_uuid:
             return None
@@ -417,7 +434,7 @@ class UsageCache:
         data = fetch_usage()
         if 'error' not in data:
             log.info('retry -> OK')
-            self._record_success(data, current_token, self._fetch_prepaid_balance())
+            self._record_success(data, current_token, self._fetch_prepaid_balance(data))
             return result, data
 
         log.warning('retry -> error: %s', data['error'])

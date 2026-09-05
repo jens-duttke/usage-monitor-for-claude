@@ -994,13 +994,17 @@ class TestNullQuotaFields(unittest.TestCase):
 
 _PREPAID_BALANCE = {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2}
 _ORG_PROFILE = {'organization': {'uuid': 'org-uuid-1'}}
+# The balance is only read while extra usage is enabled, so the usage data of
+# these tests carries the section that renders it.
+_EXTRA_USAGE_DATA = {**_SUCCESS_DATA, 'extra_usage': {'is_enabled': True, 'used_credits': 0.0}}
+_SPEND_BALANCE = {'money': {'amount_minor': 4200, 'currency': 'EUR', 'exponent': 2}, 'credits': None}
 
 
 class TestPrepaidBalance(unittest.TestCase):
     """Tests for fetching the prepaid credit balance alongside the usage data."""
 
     @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=_PREPAID_BALANCE)
-    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_EXTRA_USAGE_DATA)
     def test_success_stores_balance(self, _mock_fetch, mock_prepaid):
         """A successful usage fetch stores the balance for the same cycle."""
         cache = _make_cache()
@@ -1013,7 +1017,7 @@ class TestPrepaidBalance(unittest.TestCase):
         self.assertEqual(cache.snapshot.prepaid, _PREPAID_BALANCE)
 
     @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits')
-    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_EXTRA_USAGE_DATA)
     def test_unknown_org_uuid_skips_request(self, _mock_fetch, mock_prepaid):
         """Without a profile - or without an organization uuid in it - no request is made."""
         for profile in (None, {}, {'organization': None}, {'organization': {}}):
@@ -1027,7 +1031,7 @@ class TestPrepaidBalance(unittest.TestCase):
                 self.assertIsNone(cache.prepaid)
 
     @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=None)
-    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_EXTRA_USAGE_DATA)
     def test_unavailable_balance_leaves_usage_intact(self, _mock_fetch, _mock_prepaid):
         """An unavailable balance never affects the usage result."""
         cache = _make_cache()
@@ -1035,14 +1039,14 @@ class TestPrepaidBalance(unittest.TestCase):
 
         result = cache.update()
 
-        self.assertEqual(result.data, _SUCCESS_DATA)
-        self.assertEqual(cache.usage, _SUCCESS_DATA)
+        self.assertEqual(result.data, _EXTRA_USAGE_DATA)
+        self.assertEqual(cache.usage, _EXTRA_USAGE_DATA)
         self.assertIsNone(cache.last_error)
         self.assertEqual(cache.consecutive_errors, 0)
         self.assertIsNone(cache.prepaid)
 
     @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=None)
-    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_EXTRA_USAGE_DATA)
     def test_balance_cleared_when_no_longer_available(self, _mock_fetch, mock_prepaid):
         """A balance that disappears is cleared instead of being shown stale."""
         cache = _make_cache()
@@ -1072,7 +1076,48 @@ class TestPrepaidBalance(unittest.TestCase):
     @patch('usage_monitor_for_claude.cache.fetch_usage')
     def test_balance_fetched_after_recovered_auth_error(self, mock_fetch, _mock_token, _mock_refresh, mock_prepaid):
         """The retry that recovers a 401 also stores the balance."""
-        mock_fetch.side_effect = [_AUTH_ERROR_DATA, _SUCCESS_DATA]
+        mock_fetch.side_effect = [_AUTH_ERROR_DATA, _EXTRA_USAGE_DATA]
+        cache = _make_cache()
+        cache._profile = _ORG_PROFILE
+
+        cache.update()
+
+        mock_prepaid.assert_called_once_with('org-uuid-1')
+        self.assertEqual(cache.prepaid, _PREPAID_BALANCE)
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits')
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_disabled_extra_usage_skips_request(self, mock_fetch, mock_prepaid):
+        """Without extra usage the balance cannot be shown, so it is not requested."""
+        for extra_usage in (None, {}, {'is_enabled': False}):
+            with self.subTest(extra_usage=extra_usage):
+                mock_fetch.return_value = {**_SUCCESS_DATA, 'extra_usage': extra_usage}
+                cache = _make_cache()
+                cache._profile = _ORG_PROFILE
+
+                cache.update()
+
+                mock_prepaid.assert_not_called()
+                self.assertIsNone(cache.prepaid)
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits')
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_balance_in_usage_response_skips_request(self, mock_fetch, mock_prepaid):
+        """A balance carried by the usage response is used instead of a second request."""
+        mock_fetch.return_value = {**_EXTRA_USAGE_DATA, 'spend': {'balance': _SPEND_BALANCE}}
+        cache = _make_cache()
+        cache._profile = _ORG_PROFILE
+
+        cache.update()
+
+        mock_prepaid.assert_not_called()
+        self.assertEqual(cache.prepaid, {'amount_minor': 4200.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    @patch('usage_monitor_for_claude.cache.fetch_prepaid_credits', return_value=_PREPAID_BALANCE)
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_null_balance_in_usage_response_falls_back(self, mock_fetch, mock_prepaid):
+        """A spend block without a balance falls back to the dedicated endpoint."""
+        mock_fetch.return_value = {**_EXTRA_USAGE_DATA, 'spend': {'balance': None}}
         cache = _make_cache()
         cache._profile = _ORG_PROFILE
 

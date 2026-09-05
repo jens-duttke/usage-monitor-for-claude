@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.api import (
     API_URL_USAGE, _extract_server_message, _merge_scoped_limits, _model_slug, _normalize_prepaid_credits, _parse_retry_after,
-    fetch_prepaid_credits, fetch_usage, read_access_token,
+    fetch_prepaid_credits, fetch_usage, prepaid_credits_from_usage, read_access_token,
 )
 from usage_monitor_for_claude.i18n import LOCALE_DIR
 
@@ -550,7 +550,10 @@ class TestFetchPrepaidCredits(unittest.TestCase):
     @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
     def test_invalid_org_uuid_makes_no_request(self, _mock_headers, mock_get):
         """A uuid that is empty, malformed or path-like is rejected before any request."""
-        for org_uuid in ('', '   ', 'not-a-uuid', f'{_ORG_UUID}/../../admin', f'../{_ORG_UUID}', None, 123):
+        # The trailing-newline case fails only against the \A...\Z anchors: a $ anchor
+        # matches before a final newline, so without it the pattern could be weakened
+        # to ^...$ without a single test noticing.
+        for org_uuid in ('', '   ', 'not-a-uuid', f'{_ORG_UUID}/../../admin', f'../{_ORG_UUID}', f'{_ORG_UUID}\n', None, 123):
             with self.subTest(org_uuid=org_uuid):
                 self.assertIsNone(fetch_prepaid_credits(org_uuid))
 
@@ -605,6 +608,74 @@ class TestNormalizePrepaidCredits(unittest.TestCase):
         for data in (None, [], 'text', 42):
             with self.subTest(data=data):
                 self.assertIsNone(_normalize_prepaid_credits(data))
+
+
+# ---------------------------------------------------------------------------
+# prepaid_credits_from_usage
+# ---------------------------------------------------------------------------
+
+def _usage_with_spend(**overrides):
+    """Build a usage response carrying a spend block."""
+    spend = {
+        'used': {'amount_minor': 0, 'currency': 'EUR', 'exponent': 2},
+        'limit': None,
+        'balance': {'money': {'amount_minor': 5597, 'currency': 'EUR', 'exponent': 2}, 'credits': None},
+    }
+    spend.update(overrides)
+
+    return {'five_hour': {'utilization': 42.0}, 'extra_usage': {'is_enabled': True}, 'spend': spend}
+
+
+class TestPrepaidCreditsFromUsage(unittest.TestCase):
+    """Tests for prepaid_credits_from_usage()."""
+
+    def test_balance_is_normalized(self):
+        """A populated balance returns the same shape as the dedicated endpoint."""
+        result = prepaid_credits_from_usage(_usage_with_spend())
+        self.assertEqual(result, {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_null_balance_returns_none(self):
+        """A null balance - the value every observed account reports - returns None."""
+        self.assertIsNone(prepaid_credits_from_usage(_usage_with_spend(balance=None)))
+
+    def test_balance_without_money_returns_none(self):
+        """A balance carrying credits but no money object returns None."""
+        self.assertIsNone(prepaid_credits_from_usage(_usage_with_spend(balance={'money': None, 'credits': 12})))
+
+    def test_missing_spend_block_returns_none(self):
+        """A usage response without a spend block returns None."""
+        for usage in ({'five_hour': {'utilization': 42.0}}, {'spend': None}, {'spend': {}}):
+            with self.subTest(usage=usage):
+                self.assertIsNone(prepaid_credits_from_usage(usage))
+
+    def test_non_numeric_amount_returns_none(self):
+        """An amount that is not a number - including a bool - returns None."""
+        for amount in (None, 'none', True, [5597]):
+            with self.subTest(amount=amount):
+                balance = {'money': {'amount_minor': amount, 'currency': 'EUR', 'exponent': 2}, 'credits': None}
+                self.assertIsNone(prepaid_credits_from_usage(_usage_with_spend(balance=balance)))
+
+    def test_zero_balance_is_reported(self):
+        """A depleted balance of zero is a value, not a missing one."""
+        balance = {'money': {'amount_minor': 0, 'currency': 'EUR', 'exponent': 2}, 'credits': None}
+        self.assertEqual(prepaid_credits_from_usage(_usage_with_spend(balance=balance))['amount_minor'], 0.0)
+
+    def test_missing_exponent_uses_default(self):
+        """Without an exponent the balance still reads, with two decimal places."""
+        balance = {'money': {'amount_minor': 5597, 'currency': 'EUR'}, 'credits': None}
+        result = prepaid_credits_from_usage(_usage_with_spend(balance=balance))
+        self.assertEqual(result, {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_missing_currency_is_none(self):
+        """Without a currency the field is None, so the locale default applies."""
+        balance = {'money': {'amount_minor': 5597, 'exponent': 2}, 'credits': None}
+        self.assertIsNone(prepaid_credits_from_usage(_usage_with_spend(balance=balance))['currency'])
+
+    def test_non_dict_returns_none(self):
+        """A usage response that is not an object returns None."""
+        for usage in (None, [], 'text', 42):
+            with self.subTest(usage=usage):
+                self.assertIsNone(prepaid_credits_from_usage(usage))
 
 
 # ---------------------------------------------------------------------------

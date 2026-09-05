@@ -24,7 +24,7 @@ from .i18n import T
 
 __all__ = [
     'API_URL_USAGE', 'API_URL_PROFILE', 'API_URL_PREPAID_CREDITS', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CREDENTIALS',
-    'read_access_token', 'api_headers', 'fetch_usage', 'fetch_profile', 'fetch_prepaid_credits',
+    'read_access_token', 'api_headers', 'fetch_usage', 'fetch_profile', 'fetch_prepaid_credits', 'prepaid_credits_from_usage',
 ]
 
 # API endpoints & credentials
@@ -157,6 +157,31 @@ def fetch_prepaid_credits(org_uuid: str) -> dict[str, Any] | None:
         return None
 
 
+def prepaid_credits_from_usage(usage: Any) -> dict[str, Any] | None:
+    """Read the prepaid credit balance carried by a usage response.
+
+    The usage response serves the same balance under ``spend.balance``, in
+    the money shape the prepaid endpoint returns.  It is null on every
+    account observed so far, which is why the dedicated request remains the
+    fallback rather than the other way round.
+
+    Parameters
+    ----------
+    usage : Any
+        Parsed usage response.
+
+    Returns
+    -------
+    dict or None
+        ``{'amount_minor': float, 'currency': str | None, 'decimal_places': int}``,
+        or None when the response carries no balance.
+    """
+    if not isinstance(usage, dict):
+        return None
+
+    return _normalize_money(((usage.get('spend') or {}).get('balance') or {}).get('money'))
+
+
 # Helpers
 
 
@@ -183,13 +208,48 @@ def _normalize_prepaid_credits(data: Any) -> dict[str, Any] | None:
 
     money = (data.get('balance') or {}).get('money') or {}
     currency = money.get('currency') or data.get('currency')
-    exponent = money.get('exponent')
 
     return {
         'amount_minor': float(amount),
         'currency': currency if isinstance(currency, str) else None,
-        'decimal_places': exponent if isinstance(exponent, int) and not isinstance(exponent, bool) else _PREPAID_DEFAULT_DECIMAL_PLACES,
+        'decimal_places': _decimal_places(money.get('exponent')),
     }
+
+
+def _normalize_money(money: Any) -> dict[str, Any] | None:
+    """Reduce a money object to amount, currency and decimal places.
+
+    Unlike the prepaid-credits response, which carries the amount next to
+    the money object, a bare money object holds it as ``amount_minor``.  A
+    non-numeric amount means no balance is being reported.
+
+    Parameters
+    ----------
+    money : Any
+        Money object in the ``{amount_minor, currency, exponent}`` shape.
+    """
+    if not isinstance(money, dict):
+        return None
+
+    amount = money.get('amount_minor')
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return None
+
+    currency = money.get('currency')
+
+    return {
+        'amount_minor': float(amount),
+        'currency': currency if isinstance(currency, str) else None,
+        'decimal_places': _decimal_places(money.get('exponent')),
+    }
+
+
+def _decimal_places(exponent: Any) -> int:
+    """Return the decimal places for a money exponent, defaulting when it is absent or not an integer."""
+    if isinstance(exponent, bool) or not isinstance(exponent, int):
+        return _PREPAID_DEFAULT_DECIMAL_PLACES
+
+    return exponent
 
 
 def _merge_scoped_limits(data: dict[str, Any]) -> dict[str, Any]:
