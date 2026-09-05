@@ -31,7 +31,7 @@ from .settings import (
     NOTIFY_CLAUDE_UPDATE, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND, POLL_ERROR, POLL_FAST,
     POLL_FAST_EXTRA, POLL_INTERVAL, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
-from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, parse_field_name, popup_label
+from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label
 from .i18n import T
 from .popup import UsagePopup
 from .tray_icon import create_icon_image, create_status_image
@@ -666,7 +666,8 @@ class UsageMonitorForClaude:
         """Build environment variables describing the current quota state.
 
         Emits one ``USAGE_MONITOR_UTILIZATION_<FIELD>`` /
-        ``USAGE_MONITOR_RESETS_AT_<FIELD>`` pair per detected quota field, plus
+        ``USAGE_MONITOR_RESETS_AT_<FIELD>`` pair per quota field that applies
+        to the account, so a quota the API only announces is left out, plus
         ``USAGE_MONITOR_EXTRA_USED`` when paid extra usage is enabled and
         ``USAGE_MONITOR_EXTRA_LIMIT`` when it also has a monthly limit (an
         uncapped account has no limit to report).  Shared by the startup and
@@ -674,7 +675,7 @@ class UsageMonitorForClaude:
         """
         env_vars: dict[str, str] = {}
         for key, entry in data.items():
-            if key == 'extra_usage' or not isinstance(entry, dict) or 'utilization' not in entry:
+            if key == 'extra_usage' or not is_active_quota(key, entry):
                 continue
             env_vars[f'USAGE_MONITOR_UTILIZATION_{key.upper()}'] = str(round(entry.get('utilization', 0) or 0))
             env_vars[f'USAGE_MONITOR_RESETS_AT_{key.upper()}'] = entry.get('resets_at') or ''

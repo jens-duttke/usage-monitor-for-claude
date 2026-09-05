@@ -3356,6 +3356,43 @@ class TestStartupCommand(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.app.ON_STARTUP_COMMAND', ['echo startup'])
     @patch('usage_monitor_for_claude.app.run_event_command')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_skips_quota_announced_but_not_active(self, _icon, _tooltip, mock_cmd):
+        """A quota the API announces under a code name, before it applies, gets no variables."""
+        data = {
+            'five_hour': {'utilization': 10.0, 'resets_at': '2026-01-01T00:00:00Z'},
+            'nimbus_quill': {'utilization': 0.0, 'resets_at': None},
+        }
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        env = mock_cmd.call_args[0][1]
+        self.assertIn('USAGE_MONITOR_UTILIZATION_FIVE_HOUR', env)
+        self.assertNotIn('USAGE_MONITOR_UTILIZATION_NIMBUS_QUILL', env)
+        self.assertNotIn('USAGE_MONITOR_RESETS_AT_NIMBUS_QUILL', env)
+
+    @patch('usage_monitor_for_claude.app.ON_STARTUP_COMMAND', ['echo startup'])
+    @patch('usage_monitor_for_claude.app.run_event_command')
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_skips_quota_without_utilization(self, _icon, _tooltip, mock_cmd):
+        """A quota field carrying no utilization reports nothing rather than zero."""
+        data = {
+            'five_hour': {'utilization': 10.0, 'resets_at': '2026-01-01T00:00:00Z'},
+            'seven_day_opus': {'utilization': None, 'resets_at': '2026-01-08T00:00:00Z'},
+        }
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        env = mock_cmd.call_args[0][1]
+        self.assertIn('USAGE_MONITOR_UTILIZATION_FIVE_HOUR', env)
+        self.assertNotIn('USAGE_MONITOR_UTILIZATION_SEVEN_DAY_OPUS', env)
+
+    @patch('usage_monitor_for_claude.app.ON_STARTUP_COMMAND', ['echo startup'])
+    @patch('usage_monitor_for_claude.app.run_event_command')
     def test_test_menu_handler_passes_expected_env(self, mock_cmd):
         """on_test_startup passes the documented env vars."""
         self.app.on_test_startup()

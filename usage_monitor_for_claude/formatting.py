@@ -16,7 +16,7 @@ from .settings import CURRENCY_SYMBOL, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURR
 
 __all__ = [
     'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits',
-    'format_tooltip', 'parse_field_name', 'popup_label', 'time_until', 'tooltip_label',
+    'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'time_until', 'tooltip_label',
 ]
 
 PERIOD_5H = 5 * 3600
@@ -25,7 +25,10 @@ PERIOD_7D = 7 * 24 * 3600
 _NUMBER_WORDS = {
     'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6,
     'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10, 'eleven': 11, 'twelve': 12,
+    'thirteen': 13, 'fourteen': 14, 'fifteen': 15, 'sixteen': 16, 'seventeen': 17,
+    'eighteen': 18, 'nineteen': 19,
 }
+_TENS = {'twenty': 20, 'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70, 'eighty': 80, 'ninety': 90}
 _UNIT_SUFFIXES = {'hour': 'h', 'day': 'd'}
 _TITLE_CASE_EXCEPTIONS = {'oauth': 'OAuth', 'api': 'API', 'ai': 'AI'}
 _CURRENCY_SYMBOLS = {
@@ -45,8 +48,9 @@ def parse_field_name(field: str) -> tuple[int, str, str | None] | None:
     Returns
     -------
     tuple or None
-        ``(number, unit, variant)`` where *number* is the parsed digit,
-        *unit* is the raw unit word (e.g. ``'hour'``, ``'day'``), and
+        ``(number, unit, variant)`` where *number* is the value of the
+        number word (``'twentyfour'`` reads as 24), *unit* is the raw unit
+        word (e.g. ``'hour'``, ``'day'``), and
         *variant* is the remaining suffix or ``None``.
         Returns ``None`` if the number word or unit is not recognized.
     """
@@ -54,13 +58,44 @@ def parse_field_name(field: str) -> tuple[int, str, str | None] | None:
     if len(parts) < 2:
         return None
 
-    number = _NUMBER_WORDS.get(parts[0])
+    number = _number_word(parts[0])
     unit = parts[1]
     if number is None or unit not in _UNIT_SUFFIXES:
         return None
 
     variant = parts[2] if len(parts) > 2 else None
     return (number, unit, variant)
+
+
+def _number_word(word: str) -> int | None:
+    """Return the value of a number written as one word, or None.
+
+    A field name holds its number as a single word before the unit
+    (``five_hour``), so a value above twenty has to arrive written closed
+    up, as in ``twentyfour_hour``.  Those are read as a tens word followed
+    by a ones word instead of being listed one by one.
+
+    Parameters
+    ----------
+    word : str
+        The first component of a field name.
+    """
+    if word in _NUMBER_WORDS:
+        return _NUMBER_WORDS[word]
+
+    for tens_word, tens in _TENS.items():
+        if not word.startswith(tens_word):
+            continue
+
+        ones_word = word[len(tens_word):]
+        if not ones_word:
+            return tens
+
+        ones = _NUMBER_WORDS.get(ones_word)
+        if ones is not None and ones < 10:
+            return tens + ones
+
+    return None
 
 
 def _title_case_variant(text: str) -> str:
@@ -143,6 +178,30 @@ def field_period(field: str) -> int | None:
     return None
 
 
+def is_active_quota(field: str, entry: Any) -> bool:
+    """Return True if a usage entry is a quota that applies to the account.
+
+    The API announces a quota type before it applies to an account, under a
+    code name (e.g. ``nimbus_quill``): those entries carry a utilization of
+    0 and no reset window, and their name yields neither a label nor a
+    period, so they would surface as a bar stuck at 0% titled with the code
+    name.  A code-named entry therefore counts only once the API gives it a
+    reset window, while a name that parses counts without one, which is how
+    an inactive model-scoped limit is reported.
+
+    Parameters
+    ----------
+    field : str
+        API field name.
+    entry : Any
+        Value of that field in the usage response.
+    """
+    if not isinstance(entry, dict) or entry.get('utilization') is None:
+        return False
+
+    return bool(entry.get('resets_at')) or parse_field_name(field) is not None
+
+
 def _field_sort_key(field: str) -> tuple[int, int, int, str]:
     """Sort key for default field ordering: shorter periods first, base before variants."""
     parsed = parse_field_name(field)
@@ -168,12 +227,14 @@ def expand_popup_fields(popup_fields: list[str], usage_data: dict[str, Any]) -> 
     Returns
     -------
     list[str]
-        Ordered list of field names to display, with null/missing fields removed.
+        Ordered list of field names to display, with null, missing and
+        not-yet-active fields removed.
     """
+    # A bar also needs the reset field itself, which is what separates a quota
+    # entry from the differently shaped extra_usage block.
     available = {
         key for key, value in usage_data.items()
-        if isinstance(value, dict) and 'utilization' in value and 'resets_at' in value
-        and value.get('utilization') is not None
+        if isinstance(value, dict) and 'resets_at' in value and is_active_quota(key, value)
     }
 
     result: list[str] = []
