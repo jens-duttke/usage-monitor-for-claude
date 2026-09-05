@@ -126,7 +126,9 @@ dl > div {
     & > dd { margin: 0; }
 }
 
-#usageBars {
+/* Rows of blocks: one per quota model, and the extra-usage bar next to the
+   prepaid balance.  The gap is the standard separator between blocks. */
+#usageBars, #extraRows {
     display: flex;
     flex-direction: column;
     gap: 12px;

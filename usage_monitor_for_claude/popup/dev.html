@@ -96,7 +96,7 @@ const PRESETS = {
             { unit: 'week', suffix: 'Opus', pct: 12, warn: false,
               reset: { kind: 'weekday', day: 'Sat', clock: '12:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
         ],
-        extra: { pct: 23, used: '$4.60', limit: '$20.00' },
+        extra: { pct: 23, used: '$4.60', limit: '$20.00', balance: '$55.97' },
         installations: [
             { name: 'CLI', version: '2.1.69' },
             { name: 'VS Code', version: '2.1.69' },
@@ -203,6 +203,7 @@ function resolveData(name, loc) {
         pct_text: preset.extra.pct + '%',
         fill_pct: preset.extra.pct / 100,
         spent_text: loc.extra_usage_spent.replace('{used}', preset.extra.used).replace('{limit}', preset.extra.limit),
+        balance_text: preset.extra.balance ? loc.extra_usage_balance.replace('{balance}', preset.extra.balance) : '',
     } : null;
 
     let status = typeof preset.status === 'function' ? preset.status() : preset.status;

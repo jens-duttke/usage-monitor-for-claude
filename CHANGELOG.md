@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The Extra Usage section in the detail popup now also shows the prepaid usage credits you have left to pay for it, so you can tell whether work can continue instead of only seeing what has been spent (thanks to [@TheConfax](https://github.com/TheConfax) for the contribution)
+
 ### Changed
 
 - Polling no longer stops while the computer is idle or locked - it continues on a 15-minute cadence, configurable via the new [`idle_interval`](docs/configuration.md#polling-intervals) setting. Quota resets, threshold alerts and event commands now fire on time on an unattended computer, and switching your Claude account is picked up right away instead of at your next keystroke

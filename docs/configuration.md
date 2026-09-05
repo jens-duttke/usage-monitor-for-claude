@@ -131,7 +131,7 @@ Must be an array of non-empty strings. Duplicates are silently removed. Unknown 
 
 Entries can be either a **section key** or a **usage field name**:
 
-**Section keys:** `account` (email and plan), `extra_usage` (paid overage bar), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When nothing but the usage bars is left, the "Usage" heading is dropped automatically.
+**Section keys:** `account` (email and plan), `extra_usage` (paid overage bar and prepaid credit balance), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When nothing but the usage bars is left, the "Usage" heading is dropped automatically.
 
 **Usage field names:** any quota field, e.g. `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`. This hides that single bar in the pinned view, independent of [`popup_fields`](#popup-fields) (which controls the normal, unpinned popup).
 

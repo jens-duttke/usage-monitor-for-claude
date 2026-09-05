@@ -93,6 +93,23 @@ function makeEntry(overrides) {
         warn: false, dividers: [], marker_rel: null, reset_text: '',
     }, overrides);
 }
+
+// Full element set for the scenarios that drive updateData() end to end.
+function makeEls() {
+    const names = [
+        'accountSection', 'emailRow', 'emailValue', 'planRow', 'planValue',
+        'usageSection', 'headingUsage', 'usageBars',
+        'extraSection', 'extraSpent', 'extraPct', 'extraBarContainer', 'extraFill', 'extraBalance',
+        'installSection', 'installRows', 'statusSection', 'statusText',
+    ];
+    return Object.fromEntries(names.map((name) => [name, document.createElement('div')]));
+}
+
+function makeExtra(overrides) {
+    return Object.assign({
+        has_limit: true, pct_text: '25%', fill_pct: 0.25, spent_text: '$25.00 / $100.00 spent', balance_text: '',
+    }, overrides);
+}
 '''
 
 
@@ -169,6 +186,45 @@ console.log(JSON.stringify({
 }));
 ''')
         self.assertEqual(result, {'sameElement': True, 'pct': '50%', 'fillWidth': '50%'})
+
+
+@unittest.skipUnless(_NODE, 'Node.js not available')
+class TestExtraUsageSection(unittest.TestCase):
+    """Tests for the prepaid balance line in the extra-usage section."""
+
+    def test_balance_line_shown_when_present(self):
+        """A rendered balance is shown below the extra-usage bar."""
+        result = _run_scenario('''
+els = makeEls();
+updateData({ profile: null, usage: [], extra: makeExtra({ balance_text: '$55.97 available' }), installations: [], status: null });
+console.log(JSON.stringify({ text: els.extraBalance.textContent, display: els.extraBalance.style.display }));
+''')
+        self.assertEqual(result, {'text': '$55.97 available', 'display': ''})
+
+    def test_balance_line_hidden_when_absent(self):
+        """Without a balance the line is hidden, leaving the section as it was before."""
+        result = _run_scenario('''
+els = makeEls();
+updateData({ profile: null, usage: [], extra: makeExtra(), installations: [], status: null });
+const empty = { text: els.extraBalance.textContent, display: els.extraBalance.style.display };
+updateData({ profile: null, usage: [], extra: makeExtra({ balance_text: undefined }), installations: [], status: null });
+const missing = { text: els.extraBalance.textContent, display: els.extraBalance.style.display };
+console.log(JSON.stringify({ empty, missing }));
+''')
+        self.assertEqual(result, {
+            'empty': {'text': '', 'display': 'none'},
+            'missing': {'text': '', 'display': 'none'},
+        })
+
+    def test_balance_line_cleared_on_update(self):
+        """A balance that becomes unavailable is removed instead of lingering."""
+        result = _run_scenario('''
+els = makeEls();
+updateData({ profile: null, usage: [], extra: makeExtra({ balance_text: '$55.97 available' }), installations: [], status: null });
+updateData({ profile: null, usage: [], extra: makeExtra(), installations: [], status: null });
+console.log(JSON.stringify({ text: els.extraBalance.textContent, display: els.extraBalance.style.display }));
+''')
+        self.assertEqual(result, {'text': '', 'display': 'none'})
 
 
 if __name__ == '__main__':

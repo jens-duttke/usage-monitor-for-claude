@@ -10,7 +10,8 @@ This application does **not** collect, store, or transmit any personal data.
 ## Network Communication
 
 The application communicates exclusively with `api.anthropic.com` to retrieve your current API usage
-data. No other network connections are made.
+data and, when extra usage is enabled for your account, your prepaid credit balance. No other network
+connections are made.
 
 The server certificate is verified against the Windows certificate store, the same store your browser
 uses. A proxy that your organization has installed with its own root certificate can therefore inspect

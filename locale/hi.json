@@ -58,6 +58,7 @@
     "extra_usage": "अतिरिक्त उपयोग",
     "extra_usage_spent": "{used} / {limit} खर्च",
     "extra_usage_spent_no_limit": "{used} खर्च",
+    "extra_usage_balance": "{balance} उपलब्ध",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "पॉपअप पिन करें",

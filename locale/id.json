@@ -58,6 +58,7 @@
     "extra_usage": "PENGGUNAAN EKSTRA",
     "extra_usage_spent": "{used} / {limit} terpakai",
     "extra_usage_spent_no_limit": "{used} terpakai",
+    "extra_usage_balance": "{balance} tersedia",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Sematkan popup",

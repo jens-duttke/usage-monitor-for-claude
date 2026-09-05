@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +22,20 @@ import truststore
 
 from .i18n import T
 
-__all__ = ['API_URL_USAGE', 'API_URL_PROFILE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CREDENTIALS', 'read_access_token', 'api_headers', 'fetch_usage', 'fetch_profile']
+__all__ = [
+    'API_URL_USAGE', 'API_URL_PROFILE', 'API_URL_PREPAID_CREDITS', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CREDENTIALS',
+    'read_access_token', 'api_headers', 'fetch_usage', 'fetch_profile', 'fetch_prepaid_credits',
+]
 
 # API endpoints & credentials
 API_URL_USAGE = 'https://api.anthropic.com/api/oauth/usage'
 API_URL_PROFILE = 'https://api.anthropic.com/api/oauth/profile'
+API_URL_PREPAID_CREDITS = 'https://api.anthropic.com/api/oauth/organizations/{org_uuid}/prepaid/credits'
 CLAUDE_CONFIG_DIR = Path(os.environ.get('CLAUDE_CONFIG_DIR', '')) if os.environ.get('CLAUDE_CONFIG_DIR') else Path.home() / '.claude'
 CLAUDE_CREDENTIALS = CLAUDE_CONFIG_DIR / '.credentials.json'
 _FALLBACK_USER_AGENT = 'claude-code/2.1.204'
+_ORG_UUID_PATTERN = re.compile(r'\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z')
+_PREPAID_DEFAULT_DECIMAL_PLACES = 2
 
 # Verify TLS certificates against the Windows certificate store instead of the
 # CA bundle shipped with requests, which lacks any root a company proxy adds
@@ -116,7 +123,86 @@ def fetch_profile() -> dict[str, Any] | None:
         return None
 
 
+def fetch_prepaid_credits(org_uuid: Any) -> dict[str, Any] | None:
+    """Fetch the prepaid usage-credit balance of an organization.
+
+    Supplementary data: every failure - a malformed organization uuid, a
+    missing token, an HTTP error, an unexpected payload - returns None, so
+    a balance that cannot be read simply stays hidden and never turns into
+    an error message or a notification.
+
+    Parameters
+    ----------
+    org_uuid : Any
+        Organization uuid from the profile response.  Anything that is not
+        a canonical uuid is rejected before a request is sent.
+
+    Returns
+    -------
+    dict or None
+        ``{'amount_minor': float, 'currency': str | None, 'decimal_places': int}``,
+        or None when no balance is available.
+    """
+    if not isinstance(org_uuid, str) or not _ORG_UUID_PATTERN.match(org_uuid):
+        return None
+
+    headers = api_headers()
+    if not headers:
+        return None
+
+    try:
+        resp = requests.get(API_URL_PREPAID_CREDITS.format(org_uuid=org_uuid), headers=headers, timeout=5)
+        resp.raise_for_status()
+        return _normalize_prepaid_credits(resp.json())
+    except Exception:
+        return None
+
+
 # Helpers
+
+
+def _normalize_prepaid_credits(data: Any) -> dict[str, Any] | None:
+    """Reduce a prepaid-credits response to amount, currency and decimal places.
+
+    The OAuth response is leaner than the one behind the web app: the money
+    objects nested in the tranches are null here, so only the top-level
+    ``balance.money`` is read for the currency and its exponent.  A response
+    whose ``amount`` is not a number means the account has no prepaid
+    credits.
+
+    Parameters
+    ----------
+    data : Any
+        Parsed JSON body of the prepaid-credits response.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    amount = data.get('amount')
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return None
+
+    # isinstance rather than "or {}": the latter substitutes an empty dict for
+    # a null, but passes a value that changed type straight into the next get().
+    balance = data.get('balance')
+    money = balance.get('money') if isinstance(balance, dict) else None
+    money = money if isinstance(money, dict) else {}
+
+    currency = money.get('currency') or data.get('currency')
+
+    return {
+        'amount_minor': float(amount),
+        'currency': currency if isinstance(currency, str) else None,
+        'decimal_places': _decimal_places(money.get('exponent')),
+    }
+
+
+def _decimal_places(exponent: Any) -> int:
+    """Return the decimal places for a money exponent, defaulting when it is absent or not an integer."""
+    if isinstance(exponent, bool) or not isinstance(exponent, int):
+        return _PREPAID_DEFAULT_DECIMAL_PLACES
+
+    return exponent
 
 
 def _merge_scoped_limits(data: dict[str, Any]) -> dict[str, Any]:

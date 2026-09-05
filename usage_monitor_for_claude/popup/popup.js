@@ -53,6 +53,7 @@ function init(config) {
         extraPct: document.getElementById('extraPct'),
         extraBarContainer: document.getElementById('extraBarContainer'),
         extraFill: document.getElementById('extraFill'),
+        extraBalance: document.getElementById('extraBalance'),
         installSection: document.getElementById('installSection'),
         installRows: document.getElementById('installRows'),
         statusSection: document.getElementById('statusSection'),
@@ -189,6 +190,8 @@ function updateData(data) {
         els.extraPct.textContent = data.extra.pct_text;
         els.extraBarContainer.style.display = data.extra.has_limit ? '' : 'none';
         els.extraFill.style.width = `${data.extra.fill_pct * 100}%`;
+        els.extraBalance.textContent = data.extra.balance_text || '';
+        els.extraBalance.style.display = data.extra.balance_text ? '' : 'none';
     }
 
     const hasInstalls = !!data.installations?.length;

@@ -2,7 +2,8 @@
 API Client Tests
 =================
 
-Unit tests for read_access_token() and fetch_usage().
+Unit tests for read_access_token(), fetch_usage() and
+fetch_prepaid_credits().
 """
 from __future__ import annotations
 
@@ -13,7 +14,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.api import (
-    API_URL_USAGE, _extract_server_message, _merge_scoped_limits, _model_slug, _parse_retry_after, fetch_usage, read_access_token,
+    API_URL_USAGE, _extract_server_message, _merge_scoped_limits, _model_slug, _normalize_prepaid_credits, _parse_retry_after,
+    fetch_prepaid_credits, fetch_usage, read_access_token,
 )
 from usage_monitor_for_claude.i18n import LOCALE_DIR
 
@@ -393,6 +395,226 @@ class TestFetchUsageRateLimit(unittest.TestCase):
         result = fetch_usage()
 
         self.assertEqual(result['server_message'], 'Internal server error')
+
+
+# ---------------------------------------------------------------------------
+# fetch_prepaid_credits
+# ---------------------------------------------------------------------------
+
+_ORG_UUID = '2b4f9a1c-7d3e-4a58-9c61-0e8fb2d7a940'
+
+
+def _prepaid_response(**overrides):
+    """Build a prepaid-credits response as returned by the OAuth endpoint."""
+    data = {
+        'amount': 5597,
+        'currency': 'EUR',
+        'balance': {'money': {'amount_minor': 5597, 'currency': 'EUR', 'exponent': 2}, 'credits': None},
+        'balance_credits': None,
+        'auto_reload_settings': None,
+        'expiry_policy_months': None,
+        'tranches': [],
+        'promo_tranches': [],
+        'next_expires_at': None,
+    }
+    data.update(overrides)
+
+    return data
+
+
+def _http_error_response(status_code):
+    """Build a mock response whose raise_for_status() raises an HTTPError."""
+    import requests
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.raise_for_status.side_effect = requests.HTTPError(response=resp)
+
+    return resp
+
+
+class TestFetchPrepaidCredits(unittest.TestCase):
+    """Tests for fetch_prepaid_credits()."""
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_success_returns_normalized_balance(self, _mock_headers, mock_get):
+        """A numeric amount returns the normalized balance dict."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = _prepaid_response()
+        mock_get.return_value = mock_resp
+
+        result = fetch_prepaid_credits(_ORG_UUID)
+
+        self.assertEqual(result, {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_request_targets_the_org_endpoint(self, _mock_headers, mock_get):
+        """The organization uuid is the only variable part of the URL."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = _prepaid_response()
+        mock_get.return_value = mock_resp
+
+        fetch_prepaid_credits(_ORG_UUID)
+
+        mock_get.assert_called_once_with(
+            f'https://api.anthropic.com/api/oauth/organizations/{_ORG_UUID}/prepaid/credits',
+            headers={'Authorization': 'Bearer test'},
+            timeout=5,
+        )
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_empty_tranches_still_returns_balance(self, _mock_headers, mock_get):
+        """Empty tranches / promo_tranches do not affect the balance."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = _prepaid_response(tranches=[], promo_tranches=[])
+        mock_get.return_value = mock_resp
+
+        self.assertEqual(fetch_prepaid_credits(_ORG_UUID), {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_null_tranche_money_objects_ignored(self, _mock_headers, mock_get):
+        """The null money objects nested in a promo tranche are never read."""
+        tranche = {
+            'remaining_amount_minor_units': 5596, 'granted_amount_minor_units': 8500, 'currency': 'EUR',
+            'expires_at': '2026-09-19T00:00:00Z', 'granted_at': None, 'remaining': None, 'granted': None, 'program_id': None,
+        }
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = _prepaid_response(promo_tranches=[tranche])
+        mock_get.return_value = mock_resp
+
+        self.assertEqual(fetch_prepaid_credits(_ORG_UUID), {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_missing_amount_returns_none(self, _mock_headers, mock_get):
+        """A response without an amount means the account has no prepaid credits."""
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = _prepaid_response(amount=None)
+        mock_get.return_value = mock_resp
+
+        self.assertIsNone(fetch_prepaid_credits(_ORG_UUID))
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_non_numeric_amount_returns_none(self, _mock_headers, mock_get):
+        """A non-numeric amount returns None instead of raising."""
+        for amount in ('5597', [], {}, True):
+            with self.subTest(amount=amount):
+                mock_resp = MagicMock()
+                mock_resp.json.return_value = _prepaid_response(amount=amount)
+                mock_get.return_value = mock_resp
+
+                self.assertIsNone(fetch_prepaid_credits(_ORG_UUID))
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_http_errors_return_none(self, _mock_headers, mock_get):
+        """HTTP 401, 429 and 500 all return None without raising."""
+        for code in (401, 429, 500):
+            with self.subTest(code=code):
+                mock_get.return_value = _http_error_response(code)
+
+                self.assertIsNone(fetch_prepaid_credits(_ORG_UUID))
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_connection_error_returns_none(self, _mock_headers, mock_get):
+        """A connection error returns None without raising."""
+        import requests
+        mock_get.side_effect = requests.ConnectionError()
+
+        self.assertIsNone(fetch_prepaid_credits(_ORG_UUID))
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_unexpected_exception_returns_none(self, _mock_headers, mock_get):
+        """No exception escapes - the caller stores the result without guarding."""
+        mock_get.side_effect = RuntimeError('unexpected')
+
+        self.assertIsNone(fetch_prepaid_credits(_ORG_UUID))
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_invalid_json_body_returns_none(self, _mock_headers, mock_get):
+        """A body that is not JSON returns None without raising."""
+        mock_resp = MagicMock()
+        mock_resp.json.side_effect = ValueError('not JSON')
+        mock_get.return_value = mock_resp
+
+        self.assertIsNone(fetch_prepaid_credits(_ORG_UUID))
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_invalid_org_uuid_makes_no_request(self, _mock_headers, mock_get):
+        """A uuid that is empty, malformed or path-like is rejected before any request."""
+        # The trailing-newline case fails only against the \A...\Z anchors: a $ anchor
+        # matches before a final newline, so without it the pattern could be weakened
+        # to ^...$ without a single test noticing.
+        for org_uuid in ('', '   ', 'not-a-uuid', f'{_ORG_UUID}/../../admin', f'../{_ORG_UUID}', f'{_ORG_UUID}\n', None, 123):
+            with self.subTest(org_uuid=org_uuid):
+                self.assertIsNone(fetch_prepaid_credits(org_uuid))
+
+        mock_get.assert_not_called()
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value=None)
+    def test_no_token_makes_no_request(self, _mock_headers, mock_get):
+        """Without a token no request is made and None is returned."""
+        self.assertIsNone(fetch_prepaid_credits(_ORG_UUID))
+        mock_get.assert_not_called()
+
+
+class TestNormalizePrepaidCredits(unittest.TestCase):
+    """Tests for _normalize_prepaid_credits()."""
+
+    def test_exponent_from_balance_money(self):
+        """The decimal places come from the top-level balance.money exponent."""
+        data = _prepaid_response(balance={'money': {'amount_minor': 5597, 'currency': 'JPY', 'exponent': 0}, 'credits': None})
+        self.assertEqual(_normalize_prepaid_credits(data), {'amount_minor': 5597.0, 'currency': 'JPY', 'decimal_places': 0})
+
+    def test_null_balance_falls_back_to_top_level_currency(self):
+        """A null balance still yields the amount, with two decimal places assumed."""
+        data = _prepaid_response(balance=None)
+        self.assertEqual(_normalize_prepaid_credits(data), {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_null_money_falls_back_to_top_level_currency(self):
+        """A null balance.money still yields the amount, with two decimal places assumed."""
+        data = _prepaid_response(balance={'money': None, 'credits': None})
+        self.assertEqual(_normalize_prepaid_credits(data), {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_non_dict_balance_or_money_ignored(self):
+        """A balance or money object that changed type is ignored rather than raised on."""
+        for balance in ('x', [1], 42, {'money': 'x'}, {'money': [1]}):
+            with self.subTest(balance=balance):
+                data = _prepaid_response(balance=balance)
+                self.assertEqual(_normalize_prepaid_credits(data), {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_missing_currency_returns_none_currency(self):
+        """Without any currency the field is None, so the locale default applies."""
+        data = _prepaid_response(currency=None, balance={'money': {'exponent': 2}, 'credits': None})
+        self.assertEqual(_normalize_prepaid_credits(data), {'amount_minor': 5597.0, 'currency': None, 'decimal_places': 2})
+
+    def test_non_integer_exponent_uses_default(self):
+        """A non-integer exponent falls back to two decimal places."""
+        data = _prepaid_response(balance={'money': {'currency': 'EUR', 'exponent': '2'}, 'credits': None})
+        self.assertEqual(_normalize_prepaid_credits(data), {'amount_minor': 5597.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_zero_amount(self):
+        """A depleted balance of zero is a valid amount, not a missing one."""
+        self.assertEqual(_normalize_prepaid_credits(_prepaid_response(amount=0)), {'amount_minor': 0.0, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_float_amount(self):
+        """A float amount is accepted."""
+        self.assertEqual(_normalize_prepaid_credits(_prepaid_response(amount=5597.5)), {'amount_minor': 5597.5, 'currency': 'EUR', 'decimal_places': 2})
+
+    def test_non_dict_returns_none(self):
+        """A body that is not an object returns None."""
+        for data in (None, [], 'text', 42):
+            with self.subTest(data=data):
+                self.assertIsNone(_normalize_prepaid_credits(data))
 
 
 # ---------------------------------------------------------------------------
