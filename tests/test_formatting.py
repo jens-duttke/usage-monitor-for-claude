@@ -54,6 +54,35 @@ class TestParseFieldName(unittest.TestCase):
     def test_twelve_day(self):
         self.assertEqual(parse_field_name('twelve_day'), (12, 'day', None))
 
+    def test_thirty_day(self):
+        """A monthly limit parses, so it gets a label and a period like any other."""
+        self.assertEqual(parse_field_name('thirty_day'), (30, 'day', None))
+        self.assertEqual(field_period('thirty_day'), 30 * 24 * 3600)
+
+    def test_teen_numbers(self):
+        """The teens parse as well, e.g. a fortnightly limit."""
+        for word, number in (('fourteen', 14), ('nineteen', 19), ('twenty', 20)):
+            with self.subTest(word=word):
+                self.assertEqual(parse_field_name(f'{word}_day'), (number, 'day', None))
+
+    def test_closed_up_compound_number(self):
+        """A number above twenty parses when written as one word, e.g. a daily limit."""
+        self.assertEqual(parse_field_name('twentyfour_hour'), (24, 'hour', None))
+        self.assertEqual(field_period('twentyfour_hour'), 24 * 3600)
+        for field, expected in (('fortyeight_hour', 48), ('ninetynine_day', 99), ('thirtyone_day', 31)):
+            with self.subTest(field=field):
+                self.assertEqual(parse_field_name(field)[0], expected)
+
+    def test_number_word_separated_by_underscore(self):
+        """A compound split by an underscore is not expressible: the unit slot holds the ones word."""
+        self.assertIsNone(parse_field_name('twenty_one_day'))
+
+    def test_invalid_closed_up_number(self):
+        """A tens word followed by something that is not a ones word does not parse."""
+        for field in ('twentyten_hour', 'twentytwenty_day', 'twentyfoo_hour'):
+            with self.subTest(field=field):
+                self.assertIsNone(parse_field_name(field))
+
     def test_unknown_number_word(self):
         """Unrecognized number word returns None."""
         self.assertIsNone(parse_field_name('iguana_day'))
@@ -292,6 +321,28 @@ class TestExpandPopupFields(unittest.TestCase):
         usage = {'five_hour': {'utilization': 42}}
         result = expand_popup_fields(['*'], usage)
         self.assertEqual(result, [])
+
+    def test_code_named_field_without_reset_window_skipped(self):
+        """A quota the API announces under a code name, before it applies, is not shown."""
+        usage = {
+            'five_hour': {'utilization': 10, 'resets_at': '2026-01-01T00:00:00Z'},
+            'nimbus_quill': {'utilization': 0.0, 'resets_at': None},
+        }
+        for fields in (['*'], ['nimbus_quill']):
+            with self.subTest(popup_fields=fields):
+                self.assertNotIn('nimbus_quill', expand_popup_fields(fields, usage))
+
+    def test_code_named_field_with_reset_window_shown(self):
+        """The same quota appears once the API gives it a reset window."""
+        usage = {'nimbus_quill': {'utilization': 0.0, 'resets_at': '2026-01-01T00:00:00Z'}}
+        result = expand_popup_fields(['*'], usage)
+        self.assertEqual(result, ['nimbus_quill'])
+
+    def test_parsable_field_without_reset_window_shown(self):
+        """A parsable name stays visible without a reset window (inactive model-scoped limit)."""
+        usage = {'seven_day_fable': {'utilization': 0.0, 'resets_at': None}}
+        result = expand_popup_fields(['*'], usage)
+        self.assertEqual(result, ['seven_day_fable'])
 
     def test_all_fields_null(self):
         """All quota fields null returns empty list."""
