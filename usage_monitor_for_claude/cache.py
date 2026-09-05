@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, prepaid_credits_from_usage, read_access_token
+from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, read_access_token
 from .claude_cli import RefreshResult, refresh_token
 from .settings import MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
 
@@ -297,15 +297,13 @@ class UsageCache:
     def _fetch_prepaid_balance(self, usage: dict[str, Any]) -> dict[str, Any] | None:
         """Return the prepaid credit balance for the current organization.
 
-        Read only while extra usage is enabled, the same condition under
-        which the popup renders it, so an account that cannot show the
-        balance never pays for reading it.  The usage response is the
-        preferred source; the dedicated endpoint is requested only when it
-        carries no balance of its own, and runs in the same cycle as the
-        usage fetch to inherit the cooldown, the 429 backoff and the
-        adaptive cadence of ``_update_locked``.  The balance is
-        supplementary: without a known organization uuid, or on any
-        failure, it stays None and the usage result is unaffected.
+        Read only while extra usage is enabled, which the popup requires to
+        render the balance at all, so an account that can never show it does
+        not pay for reading it.  The request runs in the same cycle as the
+        usage fetch and therefore inherits the cooldown, the 429 backoff and
+        the adaptive cadence of ``_update_locked``.  The balance is
+        supplementary: without a known organization uuid, or on any failure,
+        it stays None and the usage result is unaffected.
 
         Parameters
         ----------
@@ -314,11 +312,6 @@ class UsageCache:
         """
         if not (usage.get('extra_usage') or {}).get('is_enabled'):
             return None
-
-        balance = prepaid_credits_from_usage(usage)
-        if balance is not None:
-            log.debug('prepaid balance read from the usage response')
-            return balance
 
         org_uuid = ((self._profile or {}).get('organization') or {}).get('uuid')
         if not org_uuid:

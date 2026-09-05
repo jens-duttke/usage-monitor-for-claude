@@ -24,7 +24,7 @@ from .i18n import T
 
 __all__ = [
     'API_URL_USAGE', 'API_URL_PROFILE', 'API_URL_PREPAID_CREDITS', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CREDENTIALS',
-    'read_access_token', 'api_headers', 'fetch_usage', 'fetch_profile', 'fetch_prepaid_credits', 'prepaid_credits_from_usage',
+    'read_access_token', 'api_headers', 'fetch_usage', 'fetch_profile', 'fetch_prepaid_credits',
 ]
 
 # API endpoints & credentials
@@ -123,7 +123,7 @@ def fetch_profile() -> dict[str, Any] | None:
         return None
 
 
-def fetch_prepaid_credits(org_uuid: str) -> dict[str, Any] | None:
+def fetch_prepaid_credits(org_uuid: Any) -> dict[str, Any] | None:
     """Fetch the prepaid usage-credit balance of an organization.
 
     Supplementary data: every failure - a malformed organization uuid, a
@@ -133,8 +133,9 @@ def fetch_prepaid_credits(org_uuid: str) -> dict[str, Any] | None:
 
     Parameters
     ----------
-    org_uuid : str
-        Organization uuid from the profile response.
+    org_uuid : Any
+        Organization uuid from the profile response.  Anything that is not
+        a canonical uuid is rejected before a request is sent.
 
     Returns
     -------
@@ -155,31 +156,6 @@ def fetch_prepaid_credits(org_uuid: str) -> dict[str, Any] | None:
         return _normalize_prepaid_credits(resp.json())
     except Exception:
         return None
-
-
-def prepaid_credits_from_usage(usage: Any) -> dict[str, Any] | None:
-    """Read the prepaid credit balance carried by a usage response.
-
-    The usage response serves the same balance under ``spend.balance``, in
-    the money shape the prepaid endpoint returns.  It is null on every
-    account observed so far, which is why the dedicated request remains the
-    fallback rather than the other way round.
-
-    Parameters
-    ----------
-    usage : Any
-        Parsed usage response.
-
-    Returns
-    -------
-    dict or None
-        ``{'amount_minor': float, 'currency': str | None, 'decimal_places': int}``,
-        or None when the response carries no balance.
-    """
-    if not isinstance(usage, dict):
-        return None
-
-    return _normalize_money(((usage.get('spend') or {}).get('balance') or {}).get('money'))
 
 
 # Helpers
@@ -206,36 +182,13 @@ def _normalize_prepaid_credits(data: Any) -> dict[str, Any] | None:
     if isinstance(amount, bool) or not isinstance(amount, (int, float)):
         return None
 
-    money = (data.get('balance') or {}).get('money') or {}
+    # isinstance rather than "or {}": the latter substitutes an empty dict for
+    # a null, but passes a value that changed type straight into the next get().
+    balance = data.get('balance')
+    money = balance.get('money') if isinstance(balance, dict) else None
+    money = money if isinstance(money, dict) else {}
+
     currency = money.get('currency') or data.get('currency')
-
-    return {
-        'amount_minor': float(amount),
-        'currency': currency if isinstance(currency, str) else None,
-        'decimal_places': _decimal_places(money.get('exponent')),
-    }
-
-
-def _normalize_money(money: Any) -> dict[str, Any] | None:
-    """Reduce a money object to amount, currency and decimal places.
-
-    Unlike the prepaid-credits response, which carries the amount next to
-    the money object, a bare money object holds it as ``amount_minor``.  A
-    non-numeric amount means no balance is being reported.
-
-    Parameters
-    ----------
-    money : Any
-        Money object in the ``{amount_minor, currency, exponent}`` shape.
-    """
-    if not isinstance(money, dict):
-        return None
-
-    amount = money.get('amount_minor')
-    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
-        return None
-
-    currency = money.get('currency')
 
     return {
         'amount_minor': float(amount),
