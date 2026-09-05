@@ -54,7 +54,7 @@ This tool handles your Claude Code OAuth token, so you should be able to verify 
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and logged in (CLI, VS Code extension, or JetBrains plugin - any variant works). The app reads the OAuth token that Claude Code stores locally (`~/.claude/.credentials.json`), or from `CLAUDE_CONFIG_DIR` when that is set; the `--config-dir="<path>"` command-line parameter overrides both. To run one instance per Claude account, log each account in via Claude Code with `CLAUDE_CONFIG_DIR` pointing at its own directory first.
 
 > [!TIP]
-> If the token expires, the app automatically runs `claude update` to refresh it. If the token is missing entirely, the app shows a notification and a "!" icon - log in to Claude Code and the monitor picks it up automatically.
+> If the token expires, the app automatically runs `claude update` to refresh it. If the token is missing entirely, the app shows a notification and a "!" icon - run `claude auth login` and the monitor picks the new token up automatically.
 
 ---
 

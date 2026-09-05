@@ -753,7 +753,7 @@ class TestFormatTooltip(unittest.TestCase):
     def test_auth_error(self):
         data = {'error': 'Unauthorized', 'auth_error': True}
         result = format_tooltip(data)
-        self.assertEqual(result, 'Claude Session Expired\nPlease open Claude Code to refresh your session.')
+        self.assertEqual(result, f"{EN['auth_expired_label']}\n{EN['auth_expired_short']}")
 
     def test_error_with_server_message(self):
         data = {'error': 'API request failed (HTTP 429).', 'server_message': 'Rate limited.'}

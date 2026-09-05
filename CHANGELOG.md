@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Polling no longer stops while the computer is idle or locked - it continues on a 15-minute cadence, configurable via the new [`idle_interval`](docs/configuration.md#polling-intervals) setting. Quota resets, threshold alerts and event commands now fire on time on an unattended computer, and switching your Claude account is picked up right away instead of at your next keystroke
+- The expired-session and missing-token messages now name the Claude Code CLI and the command that fixes it (`claude auth login`) - previously they asked you to open Claude Code, which helps nobody whose Claude Code is already open and whose CLI login is the part that expired (thanks to [@mjtlsnelling-art](https://github.com/mjtlsnelling-art) for reporting [#89](https://github.com/jens-duttke/usage-monitor-for-claude/issues/89))
 
 ### Fixed
 

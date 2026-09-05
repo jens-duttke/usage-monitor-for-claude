@@ -262,6 +262,22 @@ class TestLocaleConsistency(unittest.TestCase):
                     f'{lang}.json key "{key}": placeholders {lang_placeholders} != expected {en_placeholders}',
                 )
 
+    def test_auth_messages_end_with_the_login_command(self):
+        """Every locale must hand the user the command that fixes a missing login.
+
+        The command is what makes these messages actionable, so it has to
+        survive translation verbatim and stay at the end, where a reader
+        looks for it.
+        """
+        keys = ('auth_expired', 'auth_expired_short', 'no_token', 'warn_login')
+
+        for lang, data in self.translations.items():
+            for key in keys:
+                self.assertTrue(
+                    data[key].endswith('claude auth login'),
+                    f'{lang}.json key "{key}" does not end with the login command: {data[key]!r}',
+                )
+
     def test_no_empty_translations(self):
         """No translation value should be an empty string."""
         for lang, data in self.translations.items():
