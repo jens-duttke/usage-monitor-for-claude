@@ -22,7 +22,7 @@ from .claude_cli import PROJECT_URL
 from .command import run_event_command
 from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import (
-    autostart_supported, get_idle_seconds, install_tray_click_handler, is_autostart_enabled,
+    autostart_supported, dual_tray_supported, get_idle_seconds, install_tray_click_handler, is_autostart_enabled,
     is_screensaver_running, is_workstation_locked, set_autostart, show_error_box, sync_autostart_path,
     taskbar_uses_light_theme, watch_theme_change,
 )
@@ -31,10 +31,10 @@ from .settings import (
     NOTIFY_CLAUDE_UPDATE, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND, POLL_ERROR, POLL_FAST,
     POLL_FAST_EXTRA, POLL_INTERVAL, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
-from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, parse_field_name, popup_label
+from .formatting import elapsed_pct, field_period, format_codex_tooltip, format_credits, format_tooltip, parse_field_name, popup_label
 from .i18n import T
 from .popup import UsagePopup
-from .tray_icon import create_icon_image, create_status_image
+from .tray_icon import create_codex_icon_image, create_icon_image, create_status_image
 
 __all__ = ['UsageMonitorForClaude', 'crash_log']
 
@@ -84,7 +84,7 @@ def _align_to_reset(interval: int, next_reset: float | None) -> tuple[int, bool]
 
     if post <= interval * 1.5:
         # Reset near enough: commit the confirming poll to just after it.
-        return post, True
+        return max(POLL_FAST, post), True
 
     if next_reset < interval + danger:
         # A normal interval would drop the next poll into that last window,
@@ -93,7 +93,7 @@ def _align_to_reset(interval: int, next_reset: float | None) -> tuple[int, bool]
         # that is too close to keep POLL_FAST spacing, commit to the
         # confirming poll directly.
         pre = int(next_reset) - danger
-        return (pre if pre >= POLL_FAST else post), True
+        return (max(POLL_FAST, pre) if pre >= POLL_FAST else max(POLL_FAST, post)), True
 
     return interval, False                     # reset still far - keep the normal cadence
 
@@ -168,6 +168,18 @@ class UsageMonitorForClaude:
                 pystray.MenuItem(T['quit'], self.on_quit),
             ),
         )
+        self.codex_icon = None
+        if dual_tray_supported():
+            self.codex_icon = pystray.Icon(
+                'usage_monitor_codex',
+                icon=create_codex_icon_image(0, 0, self._light_taskbar),
+                title='Codex Usage',
+                menu=pystray.Menu(
+                    pystray.MenuItem(T['menu_show'], self.on_show_popup, default=True),
+                    pystray.Menu.SEPARATOR,
+                    pystray.MenuItem(T['quit'], self.on_quit),
+                ),
+            )
 
         # Only wired up when a command is configured, so the platform's own
         # single-click behavior is otherwise untouched.  Not every platform
@@ -294,6 +306,8 @@ class UsageMonitorForClaude:
     def on_quit(self, icon: Any = None, item: Any = None) -> None:
         self.running = False
         self.icon.stop()
+        if self.codex_icon is not None:
+            self.codex_icon.stop()
 
     # Popup
 
@@ -316,14 +330,16 @@ class UsageMonitorForClaude:
         next_reset = self._seconds_until_next_reset()
         return not (next_reset is not None and next_reset < POLL_FAST)
 
+    def _should_refresh_codex(self) -> bool:
+        """Return whether the cached Codex snapshot has expired."""
+        return self.cache.codex_expired()
+
     def _open_popup(self) -> None:
-        # _popup_open is set True under _popup_lock (in on_show_popup) and
-        # reset here without the lock.  This is safe because False is the
-        # permissive default - a momentary stale True only delays the next open.
         try:
             needs_profile = not self.cache.profile
             needs_refresh = self._should_refresh_usage()
-            if needs_profile or needs_refresh:
+            needs_codex = self._should_refresh_codex()
+            if needs_profile or needs_refresh or needs_codex:
                 # Single thread: ensure_profile() and update() both acquire
                 # cache._lock, so they must run sequentially.  Two threads
                 # would cause update()'s non-blocking acquire to fail while
@@ -333,6 +349,8 @@ class UsageMonitorForClaude:
                         self.cache.ensure_profile()
                     if needs_refresh:
                         self.update()
+                    if needs_codex:
+                        self.cache.refresh_codex_if_stale(force=True)
                 threading.Thread(target=_bg_refresh, daemon=True).start()
             UsagePopup(self)
         finally:
@@ -351,8 +369,6 @@ class UsageMonitorForClaude:
         else:
             top_field, top_mode = ICON_FIELDS[0].split(':', 1) if ':' in ICON_FIELDS[0] else (ICON_FIELDS[0], 'utilization')
             bottom_field, bottom_mode = ICON_FIELDS[1].split(':', 1) if ':' in ICON_FIELDS[1] else (ICON_FIELDS[1], 'utilization')
-            # isinstance instead of truthiness: a configured field may point at
-            # a non-dict response value (e.g. the raw limits array).
             top_entry = data.get(top_field)
             bottom_entry = data.get(bottom_field)
             if not isinstance(top_entry, dict):
@@ -368,8 +384,6 @@ class UsageMonitorForClaude:
             extra = data.get('extra_usage') or {}
             extra_limit = extra.get('monthly_limit') or 0
             extra_used = extra.get('used_credits') or 0
-            # A missing/null monthly_limit means uncapped pay-as-you-go extra
-            # usage, which cannot be exhausted.
             extra_usage_available = bool(extra.get('is_enabled')) and (extra_limit <= 0 or extra_used < extra_limit)
             self.icon.icon = create_icon_image(
                 pct_top, pct_bottom, self._light_taskbar,
@@ -378,6 +392,27 @@ class UsageMonitorForClaude:
                 extra_usage_available=extra_usage_available,
             )
         self.icon.title = self._tooltip_prefix + format_tooltip(data)
+
+    def _render_codex_tray(self) -> None:
+        """Render Codex usage on the Windows-only secondary tray icon."""
+        if self.codex_icon is None:
+            return
+
+        data = self.cache.snapshot.codex_usage or {}
+        top_entry = data.get('five_hour')
+        bottom_entry = data.get('seven_day')
+        if not isinstance(top_entry, dict):
+            top_entry = {}
+        if not isinstance(bottom_entry, dict):
+            bottom_entry = {}
+        pct_top = top_entry.get('utilization', 0) or 0
+        pct_bottom = bottom_entry.get('utilization', 0) or 0
+        self.codex_icon.icon = create_codex_icon_image(
+            pct_top, pct_bottom, self._light_taskbar,
+            time_pct_top=elapsed_pct(top_entry.get('resets_at', ''), field_period('five_hour')),
+            time_pct_bottom=elapsed_pct(bottom_entry.get('resets_at', ''), field_period('seven_day')),
+        )
+        self.codex_icon.title = format_codex_tooltip(data)
 
     def _on_theme_changed(self) -> None:
         """Re-render the tray icon when the Windows theme changes."""
@@ -389,6 +424,7 @@ class UsageMonitorForClaude:
         if self._last_response:
             self._render_tray()
 
+        self._render_codex_tray()
     # Update orchestration
 
     def update(self, force: bool = False) -> None:
@@ -403,11 +439,15 @@ class UsageMonitorForClaude:
             has no polling history that those throttles need to protect.
         """
         result = self.cache.update(force=force)
+        codex_refreshed = self.cache.refresh_codex_if_stale()
         if result.data is None:
+            if codex_refreshed:
+                self._render_codex_tray()
             return
 
         self._last_response = result.data
         self._render_tray()
+        self._render_codex_tray()
 
         # Handle CLI update notification from token refresh
         if NOTIFY_CLAUDE_UPDATE and result.token_refresh and result.token_refresh.updated:
@@ -415,9 +455,9 @@ class UsageMonitorForClaude:
                 T['notify_update'].format(old=result.token_refresh.old_version, new=result.token_refresh.new_version),
                 T['notify_update_title'],
             )
-
         if 'error' in result.data:
             return
+
 
         # The credentials token changed after this usage data was fetched: the user switched
         # accounts while the request was in flight, so the data still belongs to the previous
@@ -1027,8 +1067,6 @@ class UsageMonitorForClaude:
                     self._next_poll_time = target
                 throttled_seen = throttled_now
 
-    # Lifecycle
-
     def _on_icon_ready(self, icon: Any) -> None:
         """Called by pystray in a separate thread once the tray icon is set up."""
         try:
@@ -1042,10 +1080,24 @@ class UsageMonitorForClaude:
         except Exception:
             crash_log(traceback.format_exc())
 
+    def _on_codex_icon_ready(self, icon: Any) -> None:
+        """Show the secondary icon without starting another poller."""
+        icon.visible = True
+        self._render_codex_tray()
+
+    def _run_codex_icon(self) -> None:
+        """Run the secondary Windows tray loop independently."""
+        try:
+            self.codex_icon.run(setup=self._on_codex_icon_ready)
+        except Exception:
+            crash_log(traceback.format_exc())
+
     def run(self) -> None:
+        if self.codex_icon is not None:
+            threading.Thread(target=self._run_codex_icon, daemon=True).start()
         self.icon.run(setup=self._on_icon_ready)
 
 
 def crash_log(msg: str) -> None:
     """Show a crash message box (for windowless EXE builds)."""
-    show_error_box(msg, 'Usage Monitor for Claude - Error')
+    show_error_box(msg, 'Claude&CodexUsage - Error')

@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for Usage Monitor for Claude.
+PyInstaller spec file for Claude&CodexUsage.
 
 Build:
   pyinstaller usage_monitor_for_claude.spec
@@ -34,13 +34,6 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # The platform layer dispatches on sys.platform, but PyInstaller walks
-        # both branches.  Excluding the Linux backends keeps the EXE small and
-        # avoids pulling in POSIX-only modules such as fcntl and gi.
-        'usage_monitor_for_claude.platforms.linux',
-        'usage_monitor_for_claude.platforms.instance_linux',
-        'usage_monitor_for_claude.platforms.popup_linux',
-        'fcntl', 'gi',
         'unittest', 'test',
         'xmlrpc', 'pydoc',
         'tkinter', '_tkinter',
@@ -63,7 +56,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='UsageMonitorForClaude',
+    name='Claude&CodexUsage',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -30,7 +30,7 @@ if _config_dir is not None:
     if not _config_path.is_dir():
         show_error_box(
             f'--config-dir directory does not exist:\n{_config_dir}',
-            'Usage Monitor for Claude - Error',
+            'Claude&CodexUsage - Error',
         )
         sys.exit(1)
     os.environ['CLAUDE_CONFIG_DIR'] = str(_config_path.resolve())

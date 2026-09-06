@@ -17,7 +17,10 @@ from typing import Any
 
 from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, read_access_token
 from .claude_cli import RefreshResult, refresh_token
+from .codex import fetch_codex_usage
 from .settings import MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
+
+CODEX_TTL = 5 * 60
 
 __all__ = ['CacheSnapshot', 'UpdateResult', 'UsageCache']
 
@@ -27,7 +30,6 @@ log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class CacheSnapshot:
     """Immutable, consistent snapshot of cache state for the popup."""
-
     usage: dict[str, Any]
     profile: dict[str, Any] | None
     prepaid: dict[str, Any] | None
@@ -35,6 +37,10 @@ class CacheSnapshot:
     refreshing: bool
     last_error: str | None
     version: int
+    codex_usage: dict[str, Any] | None = None
+    codex_last_success_time: float | None = None
+    codex_last_attempt_time: float | None = None
+    codex_refresh_failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,7 @@ class UsageCache:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._codex_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._profile_lock = threading.Lock()
         self._usage: dict[str, Any] = {}
@@ -76,6 +83,10 @@ class UsageCache:
         self._profile: dict[str, Any] | None = None
         self._profile_token: str | None = None
         self._prepaid: dict[str, Any] | None = None
+        self._codex_usage: dict[str, Any] | None = None
+        self._codex_last_success: float | None = None
+        self._codex_last_attempt: float | None = None
+        self._codex_refresh_failed = False
         self._last_success_time: float | None = None
         self._refreshing = False
         self._last_error: str | None = None
@@ -134,11 +145,81 @@ class UsageCache:
                 usage=self._usage,
                 profile=self._profile,
                 prepaid=self._prepaid,
+                codex_usage=self._codex_usage,
+                codex_last_success_time=self._codex_last_success,
+                codex_last_attempt_time=self._codex_last_attempt,
+                codex_refresh_failed=self._codex_refresh_failed,
                 last_success_time=self._last_success_time,
                 refreshing=self._refreshing,
                 last_error=self._last_error,
                 version=self._version,
             )
+
+    def codex_expired(self) -> bool:
+        """Return whether the last valid Codex snapshot is older than its TTL.
+
+        A failed refresh never changes the last-success timestamp, so a
+        transient app-server failure leaves the previous valid snapshot
+        available while the next cadence can retry it.
+        """
+        with self._state_lock:
+            last_success = self._codex_last_success
+
+        return last_success is None or time.monotonic() - last_success >= CODEX_TTL
+
+    def refresh_codex_if_stale(self, *, force: bool = False) -> bool:
+        """Refresh the Codex snapshot when its independent cadence is due.
+
+        Parameters
+        ----------
+        force : bool
+            Request an immediate refresh when the snapshot is expired.  A
+            recent failed attempt still observes the TTL to avoid hammering
+            an unavailable app-server when the popup is opened repeatedly.
+
+        Returns
+        -------
+        bool
+            True when a new valid snapshot was stored, otherwise False.
+        """
+        if not self._codex_lock.acquire(blocking=False):
+            return False
+
+        try:
+            now = time.monotonic()
+            with self._state_lock:
+                last_attempt = self._codex_last_attempt
+                last_success = self._codex_last_success
+                expired = last_success is None or now - last_success >= CODEX_TTL
+                if not expired:
+                    return False
+                if last_attempt is not None and now - last_attempt < CODEX_TTL:
+                    return False
+                self._codex_last_attempt = now
+
+            try:
+                codex_usage = self._fetch_codex_usage()
+            except Exception:
+                log.debug('fetch_codex_usage failed', exc_info=True)
+                with self._state_lock:
+                    self._codex_refresh_failed = True
+                    self._version += 1
+                return False
+
+            if codex_usage is None:
+                with self._state_lock:
+                    self._codex_refresh_failed = True
+                    self._version += 1
+                return False
+
+            with self._state_lock:
+                self._codex_usage = codex_usage
+                self._codex_last_success = time.monotonic()
+                self._codex_refresh_failed = False
+                self._version += 1
+            return True
+        finally:
+            self._codex_lock.release()
 
     # Public methods
 
@@ -270,15 +351,10 @@ class UsageCache:
                 log.warning('fetch_usage -> auth error, attempting token refresh')
                 token_refresh, retry_data = self._try_token_refresh(token_before)
                 if token_refresh is not None and self._last_error is None:
-                    # Token refresh succeeded and retry was successful
                     return UpdateResult(data=self._usage, token_refresh=token_refresh, token=self._usage_token)
                 if token_refresh is None:
-                    # Refresh failed or token unchanged - block this token
                     self._last_failed_token = token_before
                 if retry_data is not None:
-                    # Report the retry's failure, not the repaired 401, so the
-                    # caller reacts to the current state (e.g. a 429 backoff
-                    # instead of a stale credentials error).
                     data = retry_data
             elif not data.get('rate_limited'):
                 log.warning('fetch_usage -> error: %s', data['error'])
@@ -291,8 +367,17 @@ class UsageCache:
         pct_5h = (data.get('five_hour') or {}).get('utilization')
         pct_7d = (data.get('seven_day') or {}).get('utilization')
         log.info('fetch_usage -> OK (5h: %s%%, 7d: %s%%)', pct_5h if pct_5h is not None else '?', pct_7d if pct_7d is not None else '?')
-        self._record_success(data, token_before, self._fetch_prepaid_balance(data))
+        prepaid = self._fetch_prepaid_balance(data)
+        self._record_success(data, token_before, prepaid)
         return UpdateResult(data=data, token=token_before)
+
+    def _fetch_codex_usage(self) -> dict[str, Any] | None:
+        """Return the optional Codex snapshot without affecting Claude updates."""
+        try:
+            return fetch_codex_usage()
+        except Exception:
+            log.debug('fetch_codex_usage failed', exc_info=True)
+            return None
 
     def _fetch_prepaid_balance(self, usage: dict[str, Any]) -> dict[str, Any] | None:
         """Return the prepaid credit balance for the current organization.
@@ -427,7 +512,8 @@ class UsageCache:
         data = fetch_usage()
         if 'error' not in data:
             log.info('retry -> OK')
-            self._record_success(data, current_token, self._fetch_prepaid_balance(data))
+            prepaid = self._fetch_prepaid_balance(data)
+            self._record_success(data, current_token, prepaid)
             return result, data
 
         log.warning('retry -> error: %s', data['error'])

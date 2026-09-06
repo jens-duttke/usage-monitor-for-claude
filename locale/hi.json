@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "Claude उपयोग दिखाएं",
     "menu_quick_action": "Quick Action चलाएँ",
-    "tooltip_title": "Claude उपयोग",
+    "tooltip_title": "Claude Usage",
     "account": "खाता",
     "usage": "उपयोग",
     "email": "ईमेल",
@@ -36,8 +36,8 @@
         "शनि",
         "रवि"
     ],
-    "loading": "Usage Monitor: लोड हो रहा है...",
-    "error_label": "Usage Monitor: त्रुटि",
+    "loading": "Claude Usage: लोड हो रहा है...",
+    "error_label": "Claude Usage: त्रुटि",
     "connection_error": "Anthropic API से कनेक्ट नहीं हो सका।",
     "certificate_error": "Anthropic API का प्रमाणपत्र सत्यापित नहीं हो सका।",
     "http_error": "API अनुरोध विफल (HTTP {code})।",
@@ -70,6 +70,10 @@
     "status_updated_s": "{s}s पहले अपडेट किया गया",
     "status_next_update": "अगला अपडेट {duration} में",
     "status_refreshing": "रीफ़्रेश हो रहा है...",
-    "already_running": "Usage Monitor for Claude v{running_version} पहले से चल रहा है।\n\nक्या आप चल रही प्रति को बदलना चाहते हैं?",
+    "codex_snapshot_notice": "Codex डेटा {duration} के भीतर अपडेट हो सकता है।",
+    "codex_snapshot_due": "Codex डेटा का अपडेट लंबित है।",
+    "codex_snapshot_unavailable": "Codex डेटा उपलब्ध नहीं है। {duration} के भीतर फिर से प्रयास होगा।",
+    "codex_snapshot_unavailable_due": "Codex डेटा उपलब्ध नहीं है। अपडेट लंबित है।",
+    "already_running": "Claude&CodexUsage v{running_version} पहले से चल रहा है।\n\nक्या आप चल रही प्रति को बदलना चाहते हैं?",
     "replace_failed": "चल रही प्रति को बदला नहीं जा सका।\n\nकृपया उसे मैन्युअल रूप से बंद करें और फिर से प्रयास करें।"
 }

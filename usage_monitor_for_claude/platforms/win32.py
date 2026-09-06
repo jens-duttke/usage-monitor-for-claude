@@ -26,8 +26,7 @@ from ..instance_id import config_dir_suffix, effective_config_dir, is_default_co
 
 __all__ = [
     'AUTOSTART_REG_BASE_NAME', 'AUTOSTART_REG_KEY', 'DIAGNOSTIC_PACKAGES', 'ask_yes_no',
-    'autostart_supported', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
-    'diagnostic_display_rows', 'diagnostic_post_init_rows', 'diagnostic_runtime_rows',
+    'autostart_supported', 'dual_tray_supported', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
     'diagnostic_system_rows', 'double_click_seconds', 'get_idle_seconds',
     'is_autostart_enabled', 'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs',
     'register_notification_identity', 'set_autostart', 'show_error_box', 'show_warning_box',
@@ -52,7 +51,7 @@ AUTOSTART_REG_BASE_NAME = 'UsageMonitorForClaude'
 # Stable per-application identity.  Every instance (one per Claude account)
 # shares it, so notifications group under one name and logo.
 APP_USER_MODEL_ID = 'JensDuttke.UsageMonitorForClaude'
-DISPLAY_NAME = 'Usage Monitor for Claude'
+DISPLAY_NAME = 'Claude&CodexUsage'
 
 # Neutral branded logo (empty usage bars) shown as the notification icon.
 # A multi-size .ico (16-256 px) so Windows picks a crisp frame for the small
@@ -644,6 +643,11 @@ def set_dpi_awareness() -> None:
         pass
 
 
+def dual_tray_supported() -> bool:
+    """Return whether the platform supports separate Claude and Codex icons."""
+    return True
+
+
 def autostart_supported() -> bool:
     """Whether an autostart entry can be written that actually starts the app.
 
@@ -655,7 +659,4 @@ def autostart_supported() -> bool:
 
 
 def prepare_gui_environment() -> None:
-    """No-op.
-
-    The Linux counterpart selects a GTK backend here; Windows has one host.
-    """
+    """No-op because Windows has one GUI host."""

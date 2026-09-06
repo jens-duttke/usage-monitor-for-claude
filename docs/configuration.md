@@ -4,7 +4,7 @@ All settings work out of the box - no configuration file is needed. To customize
 
 ```json
 {
-  "poll_interval": 180,
+  "poll_interval": 30,
   "bar_fg": "#00cc66",
   "bar_fg_warn": "#ff6600"
 }
@@ -208,8 +208,8 @@ Run a shell command when a usage event occurs. See [Event Commands](event-comman
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `poll_interval` | `180` | Seconds between API updates |
-| `poll_fast` | `120` | Seconds when usage is actively increasing |
+| `poll_interval` | `30` | Seconds between API updates |
+| `poll_fast` | `30` | Seconds when usage is actively increasing |
 | `poll_fast_extra` | `2` | Extra fast polls after usage stops increasing |
 | `poll_error` | `30` | Seconds after a transient error (5xx, network). Rate-limit errors (429) use exponential backoff instead |
 | `max_backoff` | `900` | Maximum backoff in seconds for rate-limit errors (15 min) |

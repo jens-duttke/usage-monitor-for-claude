@@ -15,7 +15,7 @@ from .i18n import T
 from .settings import CURRENCY_SYMBOL, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL
 
 __all__ = [
-    'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits',
+    'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_codex_tooltip', 'format_credits',
     'format_tooltip', 'parse_field_name', 'popup_label', 'time_until', 'tooltip_label',
 ]
 
@@ -408,6 +408,20 @@ def format_credits(minor_units: float, currency: str | None = None, decimal_plac
             return f'{symbol}\u00a0{amount:.{places}f}'
         return f'{amount:.{places}f}'
 
+
+def format_codex_tooltip(data: dict[str, Any]) -> str:
+    """Format Codex usage data for the dedicated tray icon."""
+    lines = ['Codex Usage']
+    for key in ('five_hour', 'seven_day'):
+        entry = data.get(key)
+        if not isinstance(entry, dict) or entry.get('utilization') is None:
+            continue
+        line = f'{tooltip_label(key)}: {entry["utilization"]:.0f}%'
+        reset = time_until(entry.get('resets_at', ''))
+        if reset:
+            line += f' ({reset})'
+        lines.append(line)
+    return '\n'.join(lines)
 
 def format_tooltip(data: dict[str, Any]) -> str:
     """Format usage data as short tooltip text."""

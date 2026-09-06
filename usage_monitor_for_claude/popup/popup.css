@@ -128,7 +128,7 @@ dl > div {
 
 /* Rows of blocks: one per quota model, and the extra-usage bar next to the
    prepaid balance.  The gap is the standard separator between blocks. */
-#usageBars, #extraRows {
+#usageBars, #codexBars, #extraRows {
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -185,6 +185,11 @@ dl > div {
 }
 
 .reset-text {
+    font-size: 12px;
+    color: var(--fg-dim);
+}
+
+.codex-notice {
     font-size: 12px;
     color: var(--fg-dim);
 }

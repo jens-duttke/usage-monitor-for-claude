@@ -746,7 +746,6 @@ class TestRunCli(unittest.TestCase):
             **no_window_kwargs(),
         )
 
-    @unittest.skipUnless(sys.platform == 'win32', 'only Windows drains pipes on reader threads')
     def test_locale_codec_loses_the_captured_stream(self):
         """Reproduces #80: a locale codec that cannot decode UTF-8 drops the output.
 
@@ -764,17 +763,6 @@ class TestRunCli(unittest.TestCase):
         self.assertIsNone(proc.stdout)
         self.assertIsNone(proc.stderr)
 
-    @unittest.skipIf(sys.platform == 'win32', 'POSIX decodes on the calling thread')
-    def test_locale_codec_raises_on_posix(self):
-        """The same misuse loses the output on POSIX too, just louder.
-
-        POSIX drains the pipes with a selector on the calling thread, so the
-        decode failure propagates instead of being swallowed into a None
-        stream.  Either way the captured output is gone, which is why
-        ``_run_cli`` pins UTF-8 rather than trusting the ambient codec.
-        """
-        with self.assertRaises(UnicodeDecodeError):
-            self._run_with_locale_codec()
 
     def test_pinned_codec_keeps_the_same_output(self):
         """_run_cli decodes the very output the locale codec drops."""

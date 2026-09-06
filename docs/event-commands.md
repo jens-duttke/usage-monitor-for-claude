@@ -2,9 +2,9 @@
 
 Run a custom shell command when a quota resets, a usage threshold is crossed, the app starts, or you trigger your quick action from the tray icon. Commands run asynchronously and do not block the app. Event details are passed as environment variables so your command or script can use them directly.
 
-The examples on this page use Windows PowerShell. They work the same way on Linux with the shell of your choice - only the commands themselves differ (`paplay` or `notify-send` instead of `Media.SoundPlayer`).
+The examples on this page use Windows PowerShell.
 
-How you trigger the quick action depends on the system. On Windows it is a double-click on the tray icon. On Linux the desktop panel handles that click itself and never passes it to the app, so the tray menu carries a **Run Quick Action** entry instead. Both run the same command with the same environment variables.
+On Windows, a configured quick action runs on a double-click of the tray icon. A single click still opens the detail popup.
 
 ## Settings
 
@@ -50,8 +50,8 @@ On an idle or locked computer the app keeps polling on a slower cadence, and sti
 **Setup:**
 
 1. Download `AgentMonitorForClaude.exe` from the [latest release](https://github.com/jens-duttke/agent-monitor-for-claude/releases/latest).
-2. Place it in the **same folder** as `UsageMonitorForClaude.exe`. Relative paths in event commands resolve against that folder, so no full path is needed.
-3. Add the setting and restart Usage Monitor for Claude via the tray context menu:
+2. Place it in the **same folder** as `Claude&CodexUsage.exe`. Relative paths in event commands resolve against that folder, so no full path is needed.
+3. Add the setting and restart Claude&CodexUsage via the tray context menu:
 
 ```json
 {

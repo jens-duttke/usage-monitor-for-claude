@@ -17,7 +17,8 @@ from usage_monitor_for_claude.popup import UsagePopup, _init_config, _snapshot_t
 
 
 def _snap(
-    usage=None, profile=None, prepaid=None, last_success_time=None,
+    usage=None, profile=None, prepaid=None, codex_usage=None, codex_last_success_time=None,
+    codex_last_attempt_time=None, codex_refresh_failed=False, last_success_time=None,
     refreshing=False, last_error=None, version=1,
 ) -> CacheSnapshot:
     """Build a CacheSnapshot with convenient defaults."""
@@ -25,6 +26,10 @@ def _snap(
         usage=usage or {},
         profile=profile,
         prepaid=prepaid,
+        codex_usage=codex_usage,
+        codex_last_success_time=codex_last_success_time,
+        codex_last_attempt_time=codex_last_attempt_time,
+        codex_refresh_failed=codex_refresh_failed,
         last_success_time=last_success_time,
         refreshing=refreshing,
         last_error=last_error,
@@ -208,6 +213,52 @@ class TestSnapshotToDict(unittest.TestCase):
         usage = {'five_hour': None}
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
         self.assertEqual(result['usage'], [])
+
+    @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=40.0)
+    @patch('usage_monitor_for_claude.popup.time_until', return_value='2h 0m')
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_codex_usage_is_rendered_in_separate_section_data(self, _mock_dividers, _mock_time_until, _mock_elapsed):
+        """Codex session and weekly windows use the shared bar shape."""
+        codex_usage = {
+            'five_hour': {'utilization': 42.0, 'resets_at': '2026-01-01T05:00:00Z'},
+            'seven_day': {'utilization': 12.0, 'resets_at': '2026-01-07T00:00:00Z'},
+        }
+        result = _snapshot_to_dict(_snap(codex_usage=codex_usage), installations=[])
+
+        self.assertEqual([entry['key'] for entry in result['codex_usage']], ['codex_five_hour', 'codex_seven_day'])
+        self.assertEqual([entry['pct_text'] for entry in result['codex_usage']], ['42%', '12%'])
+        self.assertTrue(result['codex_usage'][0]['warn'])
+        self.assertFalse(result['codex_usage'][1]['warn'])
+
+    @patch('usage_monitor_for_claude.popup.time.monotonic', return_value=1300.0)
+    def test_codex_snapshot_reports_remaining_ttl(self, _mock_monotonic):
+        """Codex payload exposes the remaining independent snapshot TTL."""
+        result = _snapshot_to_dict(
+            _snap(codex_usage={'five_hour': {'utilization': 42}}, codex_last_success_time=1000.0),
+            installations=[],
+        )
+
+        self.assertEqual(result['codex_snapshot'], {'remaining_seconds': 0.0, 'refresh_failed': False})
+
+    def test_codex_snapshot_failure_is_present_without_data(self):
+        """A failed first Codex refresh produces state for an open popup."""
+        result = _snapshot_to_dict(
+            _snap(codex_last_attempt_time=1000.0, codex_refresh_failed=True),
+            installations=[],
+        )
+
+        self.assertEqual(result['codex_snapshot']['refresh_failed'], True)
+        self.assertIsNotNone(result['codex_snapshot']['remaining_seconds'])
+
+    def test_codex_null_or_invalid_windows_are_ignored(self):
+        """Unavailable Codex windows do not create malformed popup bars."""
+        result = _snapshot_to_dict(_snap(codex_usage={
+            'five_hour': None,
+            'seven_day': {'utilization': None},
+            'codex_plan': 'plus',
+        }), installations=[])
+
+        self.assertEqual(result['codex_usage'], [])
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='5h 0m')
@@ -559,11 +610,10 @@ class TestSnapshotToDict(unittest.TestCase):
         self.assertEqual(len(result['status']['error']), 120)
 
     # -- top-level dict structure --
-
     def test_all_top_level_keys_present(self):
-        """Result always has profile, usage, extra, installations, status."""
+        """Result always has profile, usage, Codex usage, extra, installations, and status."""
         result = _snapshot_to_dict(_snap(), installations=[])
-        self.assertEqual(set(result.keys()), {'profile', 'usage', 'extra', 'installations', 'status'})
+        self.assertEqual(set(result.keys()), {'profile', 'usage', 'codex_usage', 'codex_snapshot', 'extra', 'installations', 'status'})
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +663,10 @@ class TestInitConfig(unittest.TestCase):
         self.assertEqual(t['plan'], T['plan'])
         self.assertEqual(t['usage'], T['usage'])
         self.assertEqual(t['extra_usage'], T['extra_usage'])
+        self.assertEqual(t['codex_snapshot_notice'], T['codex_snapshot_notice'])
+        self.assertEqual(t['codex_snapshot_due'], T['codex_snapshot_due'])
+        self.assertEqual(t['codex_snapshot_unavailable'], T['codex_snapshot_unavailable'])
+        self.assertEqual(t['codex_snapshot_unavailable_due'], T['codex_snapshot_unavailable_due'])
         self.assertEqual(t['claude_code'], T['claude_code'])
         self.assertEqual(t['changelog'], T['changelog'])
         self.assertEqual(t['pin_popup'], T['pin_popup'])
@@ -637,7 +691,6 @@ class TestInitConfig(unittest.TestCase):
         snap = _snap(profile={'account': {'email': 'a@b.com'}, 'organization': {}})
         config = _init_config(snap)
         self.assertEqual(config['data']['profile']['email'], 'a@b.com')
-        self.assertEqual(set(config['data'].keys()), {'profile', 'usage', 'extra', 'installations', 'status'})
 
 
 # ---------------------------------------------------------------------------
@@ -988,6 +1041,91 @@ class TestUpdateLoopResilience(unittest.TestCase):
             popup._update_loop()
 
         self.assertEqual(popup._window.evaluate_js.call_count, 2)
+        self.assertEqual(popup._last_version, 1)
+
+    def test_installations_are_discovered_for_final_snapshot_only(self):
+        """A refresh uses the cached list while refreshing, then discovers once for its final snapshot."""
+        popup = object.__new__(UsagePopup)
+        popup._running = True
+        popup._last_version = 0
+        popup._window = MagicMock()
+
+        snapshots = iter([
+            _snap(refreshing=True, version=1),
+            _snap(refreshing=False, version=2),
+        ])
+
+        class FakeCache:
+            @property
+            def snapshot(self):
+                return next(snapshots)
+
+        popup.app = MagicMock()
+        popup.app.cache = FakeCache()
+        popup.app._next_poll_time = 100.0
+        payloads = []
+
+        def capture_data(_snap, installations, next_poll_time):
+            payloads.append(installations)
+            return {}
+
+        initial = MagicMock(name='initial_installation')
+        initial.name = 'CLI'
+        initial.version = '2.1.1'
+        final = MagicMock(name='final_installation')
+        final.name = 'CLI'
+        final.version = '2.1.2'
+
+        def stop_after_final(_script):
+            if len(payloads) == 2:
+                popup._running = False
+
+        popup._window.evaluate_js.side_effect = stop_after_final
+        with patch('usage_monitor_for_claude.popup.time.sleep'), \
+             patch('usage_monitor_for_claude.popup.find_installations', side_effect=[[initial], [final]]) as mock_find, \
+             patch('usage_monitor_for_claude.popup._snapshot_to_dict', side_effect=capture_data):
+            popup._update_loop()
+
+        self.assertEqual(mock_find.call_count, 2)
+        self.assertEqual(payloads, [
+            [{'name': 'CLI', 'version': '2.1.1'}],
+            [{'name': 'CLI', 'version': '2.1.2'}],
+        ])
+
+    def test_failed_final_installation_discovery_retries(self):
+        """A failed final discovery leaves the version uncommitted so a later tick can refresh the list."""
+        popup = object.__new__(UsagePopup)
+        popup._running = True
+        popup._last_version = 0
+        popup._window = MagicMock()
+
+        snapshots = iter([
+            _snap(refreshing=False, version=1),
+            _snap(refreshing=False, version=1),
+        ])
+
+        class FakeCache:
+            @property
+            def snapshot(self):
+                return next(snapshots)
+
+        popup.app = MagicMock()
+        popup.app.cache = FakeCache()
+        popup.app._next_poll_time = 100.0
+        final = MagicMock(name='final_installation')
+        final.name = 'CLI'
+        final.version = '2.1.2'
+
+        def stop_after_update(_script):
+            popup._running = False
+
+        popup._window.evaluate_js.side_effect = stop_after_update
+        with patch('usage_monitor_for_claude.popup.time.sleep'), \
+             patch('usage_monitor_for_claude.popup.find_installations', side_effect=[RuntimeError('transient'), [final]]) as mock_find, \
+             patch('usage_monitor_for_claude.popup._snapshot_to_dict', return_value={}):
+            popup._update_loop()
+
+        self.assertEqual(mock_find.call_count, 2)
         self.assertEqual(popup._last_version, 1)
 
 

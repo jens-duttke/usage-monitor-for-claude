@@ -7,7 +7,6 @@ Unit tests for --config-dir parsing and per-instance name suffixes.
 from __future__ import annotations
 
 import os
-import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -44,18 +43,12 @@ class TestParseConfigDir(unittest.TestCase):
     def test_strips_trailing_backslash(self):
         self.assertEqual(parse_config_dir(['app.exe', '--config-dir=C:\\dir\\']), r'C:\dir')
 
-    @unittest.skipUnless(sys.platform == 'win32', '%VAR% is only expanded on Windows')
     def test_expands_environment_variables(self):
         """%VAR% syntax works even from shells that do not expand it (PowerShell)."""
         with patch.dict('os.environ', {'USERPROFILE': r'C:\Users\test'}):
             result = parse_config_dir(['app.exe', '--config-dir=%USERPROFILE%\\.claude-second'])
         self.assertEqual(result, r'C:\Users\test\.claude-second')
 
-    @unittest.skipIf(sys.platform == 'win32', '$VAR is the POSIX form')
-    def test_expands_posix_environment_variables(self):
-        """$VAR syntax is expanded so the flag behaves the same from any shell."""
-        result = parse_config_dir(['app', '--config-dir=$HOME/.claude-second'])
-        self.assertEqual(result, str(Path.home() / '.claude-second'))
 
     def test_expands_tilde(self):
         """A leading ~ is expanded, so shortcut targets work unchanged."""
@@ -107,7 +100,6 @@ class TestConfigDirSuffix(unittest.TestCase):
         self.assertTrue(suffix.startswith('_'))
         self.assertEqual(len(suffix), 13)
 
-    @unittest.skipUnless(sys.platform == 'win32', 'only Windows paths ignore casing')
     def test_suffix_stable_across_casing_and_trailing_slash(self):
         with TemporaryDirectory() as config_tmp:
             with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': config_tmp}):
@@ -125,15 +117,6 @@ class TestConfigDirSuffix(unittest.TestCase):
                 suffix_variant = config_dir_suffix()
         self.assertEqual(suffix_plain, suffix_variant)
 
-    @unittest.skipIf(sys.platform == 'win32', 'POSIX paths are case-sensitive')
-    def test_suffix_differs_by_casing_on_posix(self):
-        """Different casing names a different directory, so it is a different instance."""
-        with TemporaryDirectory() as config_tmp:
-            with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': config_tmp}):
-                suffix_plain = config_dir_suffix()
-            with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': config_tmp.upper()}):
-                suffix_variant = config_dir_suffix()
-        self.assertNotEqual(suffix_plain, suffix_variant)
 
     def test_different_dirs_produce_different_suffixes(self):
         with TemporaryDirectory() as dir_a, TemporaryDirectory() as dir_b:

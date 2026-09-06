@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "Tampilkan penggunaan Claude",
     "menu_quick_action": "Jalankan Quick Action",
-    "tooltip_title": "Penggunaan Claude",
+    "tooltip_title": "Claude Usage",
     "account": "AKUN",
     "usage": "PENGGUNAAN",
     "email": "Email",
@@ -36,8 +36,8 @@
         "Sab",
         "Min"
     ],
-    "loading": "Usage Monitor: Memuat...",
-    "error_label": "Usage Monitor: Error",
+    "loading": "Claude Usage: Memuat...",
+    "error_label": "Claude Usage: Error",
     "connection_error": "Tidak dapat terhubung ke API Anthropic.",
     "certificate_error": "Tidak dapat memverifikasi sertifikat API Anthropic.",
     "http_error": "Permintaan API gagal (HTTP {code}).",
@@ -70,6 +70,10 @@
     "status_updated_s": "Diperbarui {s}d lalu",
     "status_next_update": "Pembaruan berik.: {duration}",
     "status_refreshing": "Memperbarui...",
-    "already_running": "Usage Monitor for Claude v{running_version} sudah berjalan.\n\nApakah Anda ingin mengganti instans yang sedang berjalan?",
+    "codex_snapshot_notice": "Data Codex mungkin diperbarui dalam hingga {duration}.",
+    "codex_snapshot_due": "Pembaruan data Codex diperlukan.",
+    "codex_snapshot_unavailable": "Data Codex tidak tersedia. Mencoba lagi dalam hingga {duration}.",
+    "codex_snapshot_unavailable_due": "Data Codex tidak tersedia. Pembaruan diperlukan.",
+    "already_running": "Claude&CodexUsage v{running_version} sudah berjalan.\n\nApakah Anda ingin mengganti instans yang sedang berjalan?",
     "replace_failed": "Instans yang sedang berjalan tidak dapat digantikan.\n\nSilakan tutup secara manual lalu coba lagi."
 }

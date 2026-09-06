@@ -748,7 +748,7 @@ class TestFormatTooltip(unittest.TestCase):
 
     def test_error(self):
         result = format_tooltip({'error': 'Connection failed'})
-        self.assertEqual(result, 'Usage Monitor: Error\nConnection failed')
+        self.assertEqual(result, 'Claude Usage: Error\nConnection failed')
 
     def test_auth_error(self):
         data = {'error': 'Unauthorized', 'auth_error': True}
@@ -758,7 +758,7 @@ class TestFormatTooltip(unittest.TestCase):
     def test_error_with_server_message(self):
         data = {'error': 'API request failed (HTTP 429).', 'server_message': 'Rate limited.'}
         result = format_tooltip(data)
-        self.assertEqual(result, 'Usage Monitor: Error\nAPI request failed (HTTP 429). Rate limited.')
+        self.assertEqual(result, 'Claude Usage: Error\nAPI request failed (HTTP 429). Rate limited.')
 
     def test_error_with_server_message_truncated_to_80_chars(self):
         data = {'error': 'API request failed (HTTP 429).', 'server_message': 'x' * 200}
@@ -827,7 +827,7 @@ class TestFormatTooltip(unittest.TestCase):
         """auth_error=False with error shows normal error, not auth message."""
         data = {'error': 'Something broke', 'auth_error': False}
         result = format_tooltip(data)
-        self.assertEqual(result, 'Usage Monitor: Error\nSomething broke')
+        self.assertEqual(result, 'Claude Usage: Error\nSomething broke')
 
     @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     def test_extra_usage_ignored(self, _mock_tu):

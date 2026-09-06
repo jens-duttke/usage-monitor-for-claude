@@ -2,6 +2,8 @@ let els;
 let statusState = {};
 let translations = {};
 let textTimerId = null;
+let codexTimerId = null;
+let codexNoticeStartedAt = 0;
 let popupPinned = false;
 let compactHide = [];
 let lastData = null;
@@ -27,6 +29,7 @@ function init(config) {
     document.getElementById('labelEmail').textContent = translations.email;
     document.getElementById('labelPlan').textContent = translations.plan;
     document.getElementById('headingUsage').textContent = translations.usage;
+    document.getElementById('headingCodex').textContent = translations.codex_usage;
     document.getElementById('headingExtraUsage').textContent = translations.extra_usage;
     document.getElementById('headingClaudeCode').textContent = translations.claude_code;
 
@@ -47,6 +50,9 @@ function init(config) {
         planValue: document.getElementById('planValue'),
         usageSection: document.getElementById('usageSection'),
         headingUsage: document.getElementById('headingUsage'),
+        codexSection: document.getElementById('codexSection'),
+        codexBars: document.getElementById('codexBars'),
+        codexNotice: document.getElementById('codexNotice'),
         usageBars: document.getElementById('usageBars'),
         extraSection: document.getElementById('extraSection'),
         extraSpent: document.getElementById('extraSpent'),
@@ -181,6 +187,16 @@ function updateData(data) {
         updateUsageBars(usage);
     }
 
+    const codexUsage = (data.codex_usage || []).filter((entry) => !compactHidden(entry.key));
+    const hasCodexUsage = !!codexUsage.length;
+    const hasCodexSnapshot = !!data.codex_snapshot;
+    const codexVisible = (hasCodexUsage || hasCodexSnapshot) && !compactHidden('codex_usage');
+    els.codexSection.classList.toggle('visible', codexVisible);
+    if (codexVisible && hasCodexUsage) {
+        updateUsageBars(codexUsage, els.codexBars);
+    }
+    updateCodexNotice(data.codex_snapshot);
+
     const hasExtra = !!data.extra;
     const extraVisible = hasExtra && !compactHidden('extra_usage');
     els.extraSection.classList.toggle('visible', extraVisible);
@@ -200,7 +216,7 @@ function updateData(data) {
 
     // The "Usage" heading only labels the bars against the other sections;
     // when the usage bars stand alone, drop the now-redundant heading.
-    els.headingUsage.style.display = (hasUsage && !accountVisible && !extraVisible && !installsVisible) ? 'none' : '';
+    els.headingUsage.style.display = (hasUsage && !accountVisible && !codexVisible && !extraVisible && !installsVisible) ? 'none' : '';
 
     if (hasInstalls) {
         els.installRows.replaceChildren(...data.installations.map((inst) => {
@@ -215,6 +231,50 @@ function updateData(data) {
     }
 
     updateStatus(data.status);
+}
+
+
+/**
+ * Show the Codex snapshot's independent five-minute refresh state.
+ *
+ * The Python payload measures the TTL with the monotonic cache clock.  The
+ * browser continues the countdown locally so an open popup reflects expiry
+ * even when no new snapshot has arrived yet.
+ */
+function updateCodexNotice(snapshot) {
+    clearInterval(codexTimerId);
+    codexTimerId = null;
+
+    if (!snapshot) {
+        els.codexNotice.textContent = '';
+        els.codexNotice.style.display = 'none';
+        return;
+    }
+
+    codexNoticeStartedAt = Date.now() / 1000;
+    const render = () => {
+        const remaining = snapshot.remaining_seconds === null
+            ? 0
+            : Math.max(0, Math.ceil(snapshot.remaining_seconds - (Date.now() / 1000 - codexNoticeStartedAt)));
+        let text;
+        if (snapshot.refresh_failed) {
+            text = remaining > 0
+                ? translations.codex_snapshot_unavailable.replace('{duration}', formatCountdown(remaining))
+                : translations.codex_snapshot_unavailable_due;
+        } else if (remaining > 0) {
+            text = translations.codex_snapshot_notice.replace('{duration}', formatCountdown(remaining));
+        } else {
+            text = translations.codex_snapshot_due;
+        }
+        els.codexNotice.textContent = text;
+        els.codexNotice.style.display = '';
+        els.codexSection.classList.toggle('stale', remaining <= 0);
+    };
+
+    render();
+    if (snapshot.remaining_seconds !== null && snapshot.remaining_seconds > 0) {
+        codexTimerId = setInterval(render, 1000);
+    }
 }
 
 /**
@@ -270,10 +330,10 @@ function tickStatusText() {
     const secondsAgo = Math.max(0, Math.floor(now - statusState.lastSuccessTime));
     const isStale = !!statusState.nextPollTime && (now > statusState.nextPollTime + 30);
     els.usageSection.classList.toggle('stale', isStale);
+    els.codexSection.classList.toggle('stale', isStale);
     els.extraSection.classList.toggle('stale', isStale);
 
     const parts = [formatDuration(secondsAgo)];
-
     if (statusState.refreshing) {
         parts.push(translations.status_refreshing);
     } else if (statusState.error) {
@@ -329,25 +389,25 @@ function formatCountdown(totalSeconds) {
     return translations.duration_m.replace('{m}', totalMin);
 }
 
-function updateUsageBars(entries) {
+function updateUsageBars(entries, container = els.usageBars) {
     // Rebuild whenever the field set changes, not only the count - after an
     // account switch the same number of bars can carry different quotas, and
     // an in-place update would show the new values under the old labels.
-    const bars = els.usageBars.children;
+    const bars = container.children;
     const sameFields = entries.length === bars.length
         && entries.every((entry, i) => bars[i].dataset.key === entry.key);
 
     if (!sameFields) {
-        els.usageBars.replaceChildren(...entries.map(createBarElement));
+        container.replaceChildren(...entries.map(createBarElement));
         requestAnimationFrame(() => {
             for (let i = 0; i < entries.length; i++) {
-                els.usageBars.children[i].querySelector('.bar-fill').style.width =
+                container.children[i].querySelector('.bar-fill').style.width =
                     `${entries[i].fill_pct * 100}%`;
             }
         });
     } else {
         for (let i = 0; i < entries.length; i++) {
-            updateBarElement(els.usageBars.children[i], entries[i]);
+            updateBarElement(container.children[i], entries[i]);
         }
     }
 }

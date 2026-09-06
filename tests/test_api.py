@@ -92,6 +92,46 @@ class TestReadAccessToken(unittest.TestCase):
             with patch('usage_monitor_for_claude.api.CLAUDE_CREDENTIALS', creds_file):
                 self.assertEqual(read_access_token(), 'sk-test-123')
 
+    def test_unchanged_file_is_parsed_once(self):
+        """Repeated reads reuse the token while credentials metadata is unchanged."""
+        creds = {'claudeAiOauth': {'accessToken': 'sk-cached'}}
+        with TemporaryDirectory() as tmp:
+            creds_file = Path(tmp) / 'creds.json'
+            creds_file.write_text(json.dumps(creds))
+            with patch('usage_monitor_for_claude.api.CLAUDE_CREDENTIALS', creds_file), \
+                 patch('usage_monitor_for_claude.api.json.loads', wraps=json.loads) as mock_loads:
+                self.assertEqual(read_access_token(), 'sk-cached')
+                self.assertEqual(read_access_token(), 'sk-cached')
+
+            self.assertEqual(mock_loads.call_count, 1)
+
+    def test_changed_file_is_reparsed(self):
+        """A credentials change invalidates the cached token immediately."""
+        with TemporaryDirectory() as tmp:
+            creds_file = Path(tmp) / 'creds.json'
+            creds_file.write_text(json.dumps({'claudeAiOauth': {'accessToken': 'sk-old'}}))
+            with patch('usage_monitor_for_claude.api.CLAUDE_CREDENTIALS', creds_file), \
+                 patch('usage_monitor_for_claude.api.json.loads', wraps=json.loads) as mock_loads:
+                self.assertEqual(read_access_token(), 'sk-old')
+                creds_file.write_text(json.dumps({'claudeAiOauth': {'accessToken': 'sk-new-token'}}))
+                self.assertEqual(read_access_token(), 'sk-new-token')
+
+            self.assertEqual(mock_loads.call_count, 2)
+
+    def test_unchanged_malformed_file_is_not_reparsed(self):
+        """A malformed file keeps returning no token without repeated parsing."""
+        with TemporaryDirectory() as tmp:
+            creds_file = Path(tmp) / 'creds.json'
+            creds_file.write_text('not json')
+            with patch('usage_monitor_for_claude.api.CLAUDE_CREDENTIALS', creds_file), \
+                 patch('usage_monitor_for_claude.api.json.loads', wraps=json.loads) as mock_loads:
+                self.assertIsNone(read_access_token())
+                self.assertIsNone(read_access_token())
+
+            self.assertEqual(mock_loads.call_count, 1)
+
+
+
     def test_malformed_json(self):
         """Malformed JSON returns None."""
         with TemporaryDirectory() as tmp:

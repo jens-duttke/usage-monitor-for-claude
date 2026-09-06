@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from usage_monitor_for_claude.app import (
     POLL_FAST, RESET_BUFFER, UsageMonitorForClaude, _align_to_reset,
@@ -645,6 +645,15 @@ class TestUpdateOrchestration(unittest.TestCase):
         self.app.update()
 
         self.assertEqual(self.app._last_response, {})
+
+    def test_skipped_claude_still_refreshes_codex_cadence(self):
+        """A Claude cooldown or error does not prevent an expired Codex refresh."""
+        self.app.cache = MagicMock()
+        self.app.cache.update.return_value = UpdateResult(data=None)
+
+        self.app.update()
+
+        self.app.cache.refresh_codex_if_stale.assert_called_once_with()
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
@@ -1346,14 +1355,14 @@ class TestCalculatePollInterval(unittest.TestCase):
         """Normal state returns POLL_INTERVAL."""
         self.app._last_response = {'five_hour': {'utilization': 50.0}}
         interval = self.app._calculate_poll_interval()
-        self.assertEqual(interval, 180)
+        self.assertEqual(interval, 30)
 
     def test_fast_polling_interval(self):
         """When fast polling is active, returns POLL_FAST."""
         self.app._last_response = {'five_hour': {'utilization': 50.0}}
         self.app._fast_polls_remaining = 3
         interval = self.app._calculate_poll_interval()
-        self.assertEqual(interval, 120)
+        self.assertEqual(interval, 30)
 
     def test_error_interval(self):
         """Transient error returns POLL_ERROR."""
@@ -1375,7 +1384,7 @@ class TestCalculatePollInterval(unittest.TestCase):
         self.app.cache = MagicMock()
         self.app.cache.rate_limit_remaining = 10.0
         interval = self.app._calculate_poll_interval()
-        self.assertEqual(interval, 180)
+        self.assertEqual(interval, 30)
 
     def test_rate_limited_with_large_remaining(self):
         """Rate-limited with large remaining uses that value."""
@@ -1399,13 +1408,13 @@ class TestCalculatePollInterval(unittest.TestCase):
         self.app.cache = MagicMock()
         self.app.cache.rate_limit_remaining = 0.0
         interval = self.app._calculate_poll_interval()
-        self.assertEqual(interval, 180)
+        self.assertEqual(interval, 30)
 
     def test_empty_response_returns_normal_interval(self):
         """Empty _last_response (initial state) returns POLL_INTERVAL."""
         self.app._last_response = {}
         interval = self.app._calculate_poll_interval()
-        self.assertEqual(interval, 180)
+        self.assertEqual(interval, 30)
 
     def test_away_uses_idle_interval(self):
         """While the user is away, polling slows to IDLE_INTERVAL instead of stopping."""
@@ -1440,7 +1449,7 @@ class TestCalculatePollInterval(unittest.TestCase):
              patch.object(self.app, '_reset_overdue', return_value=True):
             interval = self.app._calculate_poll_interval()
 
-        self.assertEqual(interval, 180)
+        self.assertEqual(interval, 30)
 
     def test_away_still_aligns_to_reset(self):
         """Reset alignment applies on the away cadence, so a reset is caught on time."""
@@ -1523,12 +1532,12 @@ class TestResetAlignment(unittest.TestCase):
     def test_imminent_reset_aligns_poll(self):
         """When reset is imminent, interval aligns to reset time."""
         self.app._last_response = {'five_hour': {'utilization': 50.0}}
-        with patch.object(self.app, '_seconds_until_next_reset', return_value=160.0):
+        with patch.object(self.app, '_seconds_until_next_reset', return_value=20.0):
             interval = self.app._calculate_poll_interval()
 
-        # next_reset(160) + RESET_BUFFER(5) = 165 <= interval(180) * 1.5 = 270,
-        # so the confirming poll is committed to just after the reset.
-        self.assertEqual(interval, 165)
+        # next_reset(20) + RESET_BUFFER(5) = 25 is below the POLL_FAST floor,
+        # so the confirming poll stays at the minimum 30-second interval.
+        self.assertEqual(interval, 30)
 
     def test_distant_reset_no_alignment(self):
         """When reset is far away, normal interval is used."""
@@ -1536,18 +1545,17 @@ class TestResetAlignment(unittest.TestCase):
         with patch.object(self.app, '_seconds_until_next_reset', return_value=500.0):
             interval = self.app._calculate_poll_interval()
 
-        # next_reset(500) + 5 = 505 > interval(180) * 1.5 = 270, no alignment
-        self.assertEqual(interval, 180)
+        # next_reset(500) + 5 = 505 > interval(30) * 1.5 = 45, no alignment
+        self.assertEqual(interval, 30)
 
     def test_reset_alignment_sets_fast_polls(self):
         """Reset alignment sets fast_polls_remaining for post-reset follow-up."""
         self.app._last_response = {'five_hour': {'utilization': 50.0}}
         self.app._fast_polls_remaining = 0
-        with patch.object(self.app, '_seconds_until_next_reset', return_value=100.0):
+        with patch.object(self.app, '_seconds_until_next_reset', return_value=20.0):
             self.app._calculate_poll_interval()
 
         self.assertGreaterEqual(self.app._fast_polls_remaining, 2)
-
 
 # ---------------------------------------------------------------------------
 # _align_to_reset
@@ -1555,65 +1563,59 @@ class TestResetAlignment(unittest.TestCase):
 
 class TestAlignToReset(unittest.TestCase):
     """Tests for the pure _align_to_reset() poll-phase math.
-
-    RESET_BUFFER = 5, POLL_FAST = 120, so the "danger" window (where a poll
-    can no longer be exact) is the last 115 seconds before a reset.
+    RESET_BUFFER = 5, POLL_FAST = 30, so the "danger" window (where a poll
+    can no longer be exact) is the last 25 seconds before a reset.
     """
 
     def test_no_reset(self):
         """No upcoming reset keeps the normal interval, no alignment."""
-        self.assertEqual(_align_to_reset(180, None), (180, False))
+        self.assertEqual(_align_to_reset(POLL_FAST, None), (POLL_FAST, False))
 
     def test_non_positive_reset(self):
         """A non-positive next_reset keeps the normal interval."""
-        self.assertEqual(_align_to_reset(180, 0.0), (180, False))
+        self.assertEqual(_align_to_reset(POLL_FAST, 0.0), (POLL_FAST, False))
 
     def test_distant_reset(self):
         """A reset beyond one cadence plus the danger window is not aligned."""
-        self.assertEqual(_align_to_reset(180, 500.0), (180, False))
+        self.assertEqual(_align_to_reset(POLL_FAST, 500.0), (POLL_FAST, False))
 
     def test_near_reset_commits(self):
-        """A reset within one cadence commits the confirming poll just after it."""
-        self.assertEqual(_align_to_reset(180, 160.0), (165, True))
+        """An imminent reset commits the confirming poll without breaking cooldown."""
+        self.assertEqual(_align_to_reset(POLL_FAST, 20.0), (POLL_FAST, True))
 
     def test_commit_upper_edge(self):
-        """next_reset at the commit threshold still commits (post == interval*1.5)."""
-        self.assertEqual(_align_to_reset(180, 265.0), (270, True))
+        """next_reset at the commit threshold still commits."""
+        self.assertEqual(_align_to_reset(POLL_FAST, 40.0), (45, True))
 
     def test_cap_pulls_last_poll_forward(self):
         """Just past the commit threshold, the next poll is pulled to the danger boundary."""
-        # 280 - danger(115) = 165 >= POLL_FAST, so cap to 165 -> next poll lands at T_pre.
-        self.assertEqual(_align_to_reset(180, 280.0), (165, True))
+        self.assertEqual(_align_to_reset(POLL_FAST, 45.0), (50, True))
 
     def test_cap_high_edge(self):
-        """Highest next_reset that still needs a cap (below interval + danger)."""
-        self.assertEqual(_align_to_reset(180, 294.0), (179, True))
+        """Highest next_reset that still needs a cap."""
+        self.assertEqual(_align_to_reset(POLL_FAST, 54.0), (59, True))
 
     def test_just_beyond_cap_is_normal(self):
-        """At interval + danger a normal poll already lands safely at the boundary."""
-        self.assertEqual(_align_to_reset(180, 295.0), (180, False))
+        """At interval plus danger a normal poll already lands safely at the boundary."""
+        self.assertEqual(_align_to_reset(POLL_FAST, 55.0), (POLL_FAST, False))
 
     def test_danger_zone_falls_back_to_poll_fast(self):
-        """Inside the last POLL_FAST window the confirming poll can only be POLL_FAST later."""
-        self.assertEqual(_align_to_reset(180, 100.0), (POLL_FAST, True))
+        """Inside the last POLL_FAST window the confirming poll stays on the floor."""
+        self.assertEqual(_align_to_reset(POLL_FAST, 25.0), (POLL_FAST, True))
 
     def test_danger_boundary(self):
-        """Exactly at the danger boundary uses POLL_FAST (lands at reset + buffer)."""
-        self.assertEqual(_align_to_reset(180, 115.0), (POLL_FAST, True))
+        """Exactly at the danger boundary uses POLL_FAST."""
+        self.assertEqual(_align_to_reset(POLL_FAST, 25.0), (POLL_FAST, True))
 
     def test_fast_base_commits_directly(self):
-        """With a POLL_FAST base, a mid-range reset commits directly (cap would break cooldown)."""
-        # post(205) > 120*1.5=180 and pre(85) < POLL_FAST, so commit at post.
-        self.assertEqual(_align_to_reset(120, 200.0), (205, True))
+        """With a POLL_FAST base, an imminent reset stays on the cooldown floor."""
+        self.assertEqual(_align_to_reset(POLL_FAST, 20.0), (POLL_FAST, True))
 
     def test_two_step_cap_then_commit_lands_after_reset(self):
-        """Cap to the danger boundary, then the follow-up commits exactly to reset + buffer."""
-        interval, aligned = _align_to_reset(180, 280.0)
-        self.assertEqual((interval, aligned), (165, True))
-        # After 165s the next poll sits at the danger boundary (115s before reset);
-        # the fast follow-up base (POLL_FAST) then lands POLL_FAST later = reset + buffer.
-        self.assertEqual(_align_to_reset(POLL_FAST, 115.0), (POLL_FAST, True))
-
+        """Cap to the danger boundary, then the follow-up commits after the reset."""
+        interval, aligned = _align_to_reset(POLL_FAST, 45.0)
+        self.assertEqual((interval, aligned), (50, True))
+        self.assertEqual(_align_to_reset(POLL_FAST, 25.0), (POLL_FAST, True))
     def test_never_schedules_below_poll_fast(self):
         """No aligned interval is ever shorter than POLL_FAST (the cache cooldown)."""
         for base in (POLL_FAST, 180):
@@ -1642,27 +1644,21 @@ class TestResetAlignedPollTarget(unittest.TestCase):
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
     def test_lands_just_after_reset(self, _mock_time):
         """Well past the cooldown, the poll lands RESET_BUFFER after the reset."""
-        self.app.cache.last_success_time = 1000.0 - 300  # last fetch 300s ago
-        self.assertEqual(self.app._reset_aligned_poll_target(60.0), 1000.0 + 60.0 + RESET_BUFFER)
+        self.app.cache.last_success_time = 700.0
+        self.assertEqual(self.app._reset_aligned_poll_target(60.0), 1065.0)
 
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
     def test_clamped_to_cooldown(self, _mock_time):
         """Inside the cooldown window the poll is delayed to last_success + POLL_FAST."""
-        last = 1000.0 - 30  # last fetch 30s ago
-        self.app.cache.last_success_time = last
-        # reset+buffer (1025) is earlier than the cooldown floor (last + POLL_FAST)
-        self.assertEqual(self.app._reset_aligned_poll_target(20.0), last + POLL_FAST)
+        self.app.cache.last_success_time = 1000.0
+        self.assertEqual(self.app._reset_aligned_poll_target(20.0), 1030.0)
 
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
     def test_no_last_success_uses_reset_only(self, _mock_time):
         """Without a prior fetch only reset + buffer applies."""
         self.app.cache.last_success_time = None
-        self.assertEqual(self.app._reset_aligned_poll_target(60.0), 1000.0 + 60.0 + RESET_BUFFER)
+        self.assertEqual(self.app._reset_aligned_poll_target(60.0), 1065.0)
 
-
-# ---------------------------------------------------------------------------
-# _safe_poll_target
-# ---------------------------------------------------------------------------
 
 class TestSafePollTarget(unittest.TestCase):
     """Tests for _safe_poll_target() keeping a poll off slots that delay the reset poll."""
@@ -1689,29 +1685,24 @@ class TestSafePollTarget(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
     def test_target_in_danger_window_moved_to_aligned_slot(self, _mock_time):
-        """A target inside the last POLL_FAST - RESET_BUFFER seconds is deferred past the reset."""
-        # Reset at 1600; the danger window starts at 1600 - 115 = 1485.
+        """A target inside the danger window is deferred past the reset."""
         with patch.object(self.app, '_seconds_until_next_reset', return_value=600.0):
-            self.assertEqual(self.app._safe_poll_target(1500.0), 1600.0 + RESET_BUFFER)
+            self.assertEqual(self.app._safe_poll_target(1580.0), 1605.0)
 
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
     def test_target_past_aligned_slot_pulled_back(self, _mock_time):
         """A target beyond the reset-aligned slot would delay the confirming poll."""
         with patch.object(self.app, '_seconds_until_next_reset', return_value=600.0):
-            self.assertEqual(self.app._safe_poll_target(2000.0), 1600.0 + RESET_BUFFER)
+            self.assertEqual(self.app._safe_poll_target(2000.0), 1605.0)
 
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
     def test_aligned_slot_respects_cooldown(self, _mock_time):
         """The fallback slot still honors the cache cooldown after the last fetch."""
-        self.app.cache.last_success_time = 990.0
-        # Reset in 20s: reset + buffer (1025) is earlier than the cooldown floor (1110).
+        self.app.cache.last_success_time = 1000.0
         with patch.object(self.app, '_seconds_until_next_reset', return_value=20.0):
-            self.assertEqual(self.app._safe_poll_target(1015.0), 990.0 + POLL_FAST)
+            self.assertEqual(self.app._safe_poll_target(1015.0), 1030.0)
 
 
-# ---------------------------------------------------------------------------
-# _should_refresh_usage (popup open decision)
-# ---------------------------------------------------------------------------
 
 class TestShouldRefreshUsage(unittest.TestCase):
     """Tests for the popup's background-refresh decision."""
@@ -1749,6 +1740,19 @@ class TestShouldRefreshUsage(unittest.TestCase):
         self.app.cache.last_success_time = 1000.0 - (POLL_FAST + 10)
         with patch.object(self.app, '_seconds_until_next_reset', return_value=POLL_FAST - 1):
             self.assertFalse(self.app._should_refresh_usage())
+
+    def test_popup_refreshes_expired_codex_on_demand(self):
+        """An expired Codex snapshot is refreshed by the popup thread."""
+        self.app.cache.profile = {'name': 'User'}
+        self.app.cache.codex_expired.return_value = True
+        with patch.object(self.app, '_should_refresh_usage', return_value=False), \
+             patch('usage_monitor_for_claude.app.UsagePopup'), \
+             patch('usage_monitor_for_claude.app.threading.Thread') as mock_thread:
+            self.app._open_popup()
+            target = mock_thread.call_args.kwargs['target']
+            target()
+
+        self.app.cache.refresh_codex_if_stale.assert_called_once_with(force=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2532,10 +2536,9 @@ class TestPollLoopAwayCadence(unittest.TestCase):
              patch.object(self.app, '_seconds_until_next_reset', return_value=30.0):
             self.app.poll_loop()
 
-        # Poll deferred, not fired: max(now + 30 + RESET_BUFFER, last_success +
-        # POLL_FAST) = 1120, the cooldown floor just past the reset.
+        # Poll deferred just after the reset: max(now + 30 + RESET_BUFFER, cooldown).
         self.assertEqual(len(polls), 1)
-        self.assertEqual(self.app._next_poll_time, 1000.0 + POLL_FAST)
+        self.assertEqual(self.app._next_poll_time, 1000.0 + 30.0 + RESET_BUFFER)
 
     @patch('usage_monitor_for_claude.app.time.sleep')
     @patch('usage_monitor_for_claude.app.time.time', return_value=100.0)
@@ -2575,9 +2578,8 @@ class TestPollLoopAwayCadence(unittest.TestCase):
              patch('usage_monitor_for_claude.app.time.sleep', side_effect=advance_success):
             self.app.poll_loop()
 
-        # Capped to the reset-aligned slot (1000 + POLL_FAST = 1120), not the
-        # uncapped push-forward (last_success + interval = 1180).
-        self.assertEqual(self.app._next_poll_time, 1000.0 + POLL_FAST)
+        # Capped to the reset-aligned slot (1000 + 30 + RESET_BUFFER = 1035).
+        self.assertEqual(self.app._next_poll_time, 1000.0 + 30.0 + RESET_BUFFER)
 
     @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', [])
     @patch('usage_monitor_for_claude.app.time.time', return_value=1000.0)
@@ -2609,19 +2611,17 @@ class TestPollLoopAwayCadence(unittest.TestCase):
         def advance_success(_seconds):
             self.app.cache.last_success_time = 1000.0
 
-        # Reset in 209 s: interval (180) <= 209 < interval + danger (295), so the
-        # pushed target 1000 + 180 = 1180 would land at reset - 29, inside the
-        # danger window [1094, 1209).
+        # Reset in 204 s: the pushed target 1000 + 180 = 1180 is inside
+        # the danger window immediately before the reset.
         with patch.object(self.app, 'update'), \
              patch.object(self.app, '_calculate_poll_interval', return_value=180), \
              patch.object(self.app, '_polling_throttled', side_effect=_stop_after_one_pass(self.app)), \
-             patch.object(self.app, '_seconds_until_next_reset', return_value=209.0), \
+             patch.object(self.app, '_seconds_until_next_reset', return_value=204.0), \
              patch('usage_monitor_for_claude.app.time.sleep', side_effect=advance_success):
             self.app.poll_loop()
 
-        # Deferred to the reset-aligned slot just after the reset:
-        # max(1000 + 209 + RESET_BUFFER, 1000 + POLL_FAST) = 1214.
-        self.assertEqual(self.app._next_poll_time, 1000.0 + 209.0 + RESET_BUFFER)
+        # Deferred to the reset-aligned slot just after the reset.
+        self.assertEqual(self.app._next_poll_time, 1000.0 + 204.0 + RESET_BUFFER)
 
     @patch('usage_monitor_for_claude.app.ON_RESET_COMMAND', [])
     def test_backward_clock_jump_reanchors_poll_target(self):
@@ -3604,6 +3604,89 @@ class TestDoubleClickWiring(unittest.TestCase):
         _icon, on_single, on_double = mock_install.call_args[0]
         self.assertEqual(on_single, app.on_show_popup)
         self.assertEqual(on_double, app._run_quick_action)
+
+
+class TestDualTrayIcons(unittest.TestCase):
+    """Tests for the Windows-only secondary Codex tray icon."""
+
+    class _FakeIcon:
+        def __init__(self, name, icon=None, title='', menu=None):
+            self.name = name
+            self.icon = icon
+            self.title = title
+            self.menu = menu
+            self.run_calls = 0
+            self.stop_calls = 0
+
+        def run(self, setup=None):
+            self.run_calls += 1
+            if setup:
+                setup(self)
+
+        def stop(self):
+            self.stop_calls += 1
+
+    def _build(self):
+        fake_pystray = MagicMock()
+        fake_pystray.Icon.side_effect = self._FakeIcon
+        fake_pystray.Menu.SEPARATOR = object()
+        with patch('usage_monitor_for_claude.app.pystray', fake_pystray), \
+             patch('usage_monitor_for_claude.app.dual_tray_supported', return_value=True), \
+             patch('usage_monitor_for_claude.app.create_icon_image'), \
+             patch('usage_monitor_for_claude.app.create_codex_icon_image'):
+            app = UsageMonitorForClaude()
+        return app, fake_pystray
+
+    def test_constructs_distinct_claude_and_codex_icons(self):
+        """Windows creates separate named icons while retaining the Claude icon as ``icon``."""
+        app, fake_pystray = self._build()
+
+        self.assertEqual(app.icon.name, 'usage_monitor')
+        # The constructor calls the factory twice; names identify each shell icon.
+        names = [call.args[0] for call in fake_pystray.Icon.call_args_list]
+        self.assertEqual(names, ['usage_monitor', 'usage_monitor_codex'])
+        self.assertIsNotNone(app.codex_icon)
+        self.assertNotEqual(app.icon, app.codex_icon)
+        self.assertTrue(app.icon.title.startswith('Claude Usage'))
+        self.assertEqual(app.codex_icon.title, 'Codex Usage')
+
+    @patch('usage_monitor_for_claude.app.format_codex_tooltip', return_value='Codex Usage\n5h: 42%\n7d: 17%')
+    @patch('usage_monitor_for_claude.app.elapsed_pct', return_value=None)
+    @patch('usage_monitor_for_claude.app.create_codex_icon_image')
+    def test_codex_icon_renders_snapshot_usage(self, mock_image, _elapsed, _tooltip):
+        """The Codex icon reads both percentages from the shared cache snapshot."""
+        app, _fake_pystray = self._build()
+        app.cache._codex_usage = {
+            'five_hour': {'utilization': 42.0},
+            'seven_day': {'utilization': 17.0},
+        }
+
+        app._render_codex_tray()
+
+        mock_image.assert_called_once_with(42.0, 17.0, False, time_pct_top=None, time_pct_bottom=None)
+        self.assertEqual(app.codex_icon.title, 'Codex Usage\n5h: 42%\n7d: 17%')
+
+    def test_quit_stops_both_icons(self):
+        """Quitting from either menu stops both tray loops."""
+        app, _fake_pystray = self._build()
+
+        app.on_quit()
+
+        self.assertEqual(app.icon.stop_calls, 1)
+        self.assertEqual(app.codex_icon.stop_calls, 1)
+        self.assertFalse(app.running)
+
+    def test_run_starts_codex_loop_without_serially_blocking(self):
+        """The Codex loop starts in a thread before the Claude loop is run."""
+        app, _fake_pystray = self._build()
+
+        with patch('usage_monitor_for_claude.app.threading.Thread') as mock_thread, \
+             patch.object(app, '_on_icon_ready'):
+            app.run()
+
+        mock_thread.assert_called_once_with(target=app._run_codex_icon, daemon=True)
+        mock_thread.return_value.start.assert_called_once()
+        self.assertEqual(app.icon.run_calls, 1)
 
 
 if __name__ == '__main__':

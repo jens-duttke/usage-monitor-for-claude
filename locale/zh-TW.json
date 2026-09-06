@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "顯示Claude用量",
     "menu_quick_action": "執行 Quick Action",
-    "tooltip_title": "Claude用量",
+    "tooltip_title": "Claude Usage",
     "account": "帳戶",
     "usage": "用量",
     "email": "電子郵件",
@@ -36,8 +36,8 @@
         "週六",
         "週日"
     ],
-    "loading": "Usage Monitor: 載入中...",
-    "error_label": "Usage Monitor: 錯誤",
+    "loading": "Claude Usage: 載入中...",
+    "error_label": "Claude Usage: 錯誤",
     "connection_error": "無法連線到 Anthropic API。",
     "certificate_error": "無法驗證 Anthropic API 的憑證。",
     "http_error": "API 請求失敗 (HTTP {code})。",
@@ -70,6 +70,10 @@
     "status_updated_s": "{s}秒前更新",
     "status_next_update": "{duration}後更新",
     "status_refreshing": "重新整理中...",
-    "already_running": "Usage Monitor for Claude v{running_version} 已在執行中。\n\n是否要取代正在執行的執行個體？",
+    "codex_snapshot_notice": "Codex 資料可能會在 {duration} 內更新。",
+    "codex_snapshot_due": "Codex 資料需要更新。",
+    "codex_snapshot_unavailable": "Codex 資料無法使用。將在 {duration} 內重試。",
+    "codex_snapshot_unavailable_due": "Codex 資料無法使用。需要更新。",
+    "already_running": "Claude&CodexUsage v{running_version} 已在執行中。\n\n是否要取代正在執行的執行個體？",
     "replace_failed": "無法取代正在執行的執行個體。\n\n請手動關閉後再試一次。"
 }

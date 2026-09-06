@@ -1,8 +1,6 @@
 """
-Single-Instance Dispatch
-=========================
-
-Selects the single-instance guard for the running system.
+Windows Single-Instance Guard
+==============================
 
 Kept out of :mod:`usage_monitor_for_claude.platforms` on purpose: the guard
 needs the translations, and ``i18n`` imports ``settings``, which imports the
@@ -11,11 +9,6 @@ would close that cycle.
 """
 from __future__ import annotations
 
-import sys
-
-if sys.platform == 'win32':
-    from .instance_win32 import ensure_single_instance, release_instance_lock
-else:
-    from .instance_linux import ensure_single_instance, release_instance_lock
+from .instance_win32 import ensure_single_instance, release_instance_lock
 
 __all__ = ['ensure_single_instance', 'release_instance_lock']

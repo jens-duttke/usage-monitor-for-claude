@@ -278,6 +278,14 @@ class TestLocaleConsistency(unittest.TestCase):
                     f'{lang}.json key "{key}" does not end with the login command: {data[key]!r}',
                 )
 
+    def test_claude_tray_tooltip_uses_consistent_display_name(self):
+        """Every locale uses the Claude tray display name for all tooltip states."""
+        for lang, data in self.translations.items():
+            with self.subTest(locale=lang):
+                self.assertEqual(data['tooltip_title'], 'Claude Usage')
+                self.assertTrue(data['loading'].startswith('Claude Usage'))
+                self.assertTrue(data['error_label'].startswith('Claude Usage'))
+
     def test_no_empty_translations(self):
         """No translation value should be an empty string."""
         for lang, data in self.translations.items():
