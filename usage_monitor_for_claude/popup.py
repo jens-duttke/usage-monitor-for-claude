@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
+from .cache import CODEX_TTL
 from .claude_cli import CHANGELOG_URL, find_installations
 from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
 from .i18n import T
@@ -61,8 +62,58 @@ def _prepaid_balance_text(prepaid: dict[str, Any] | None) -> str:
         return ''
 
     balance = format_credits(amount, prepaid.get('currency'), prepaid.get('decimal_places'))
-
     return T['extra_usage_balance'].format(balance=balance)
+
+
+def _codex_usage_entries(usage: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Convert normalized Codex quota data to popup bar entries."""
+    if not usage:
+        return []
+
+    entries = []
+    for key, label, period in (
+        ('five_hour', T.get('codex_session_label', 'Codex Session (5h)'), 5 * 60 * 60),
+        ('seven_day', T.get('codex_weekly_label', 'Codex Weekly (7d)'), 7 * 24 * 60 * 60),
+    ):
+        entry = usage.get(key)
+        pct = entry.get('utilization') if isinstance(entry, dict) else None
+        if (
+            not isinstance(pct, (int, float))
+            or isinstance(pct, bool)
+        ):
+            continue
+        resets_at = entry.get('resets_at') or ''
+        time_pct = elapsed_pct(resets_at, period) if resets_at else None
+        entries.append({
+            'key': f'codex_{key}',
+            'label': label,
+            'pct_text': f'{pct:.0f}%',
+            'fill_pct': max(0.0, min(1.0, pct / 100)),
+            'warn': pct >= 100 or (time_pct is not None and pct > time_pct),
+            'reset_text': time_until(resets_at) if resets_at else '',
+            'dividers': divider_positions(resets_at, period) if resets_at else [],
+            'marker_rel': max(0.0, min(1.0, time_pct / 100)) if time_pct is not None else None,
+        })
+    return entries
+
+def _codex_snapshot_status(snap: CacheSnapshot) -> dict[str, Any] | None:
+    """Return the Codex snapshot TTL state for the popup."""
+    if snap.codex_usage is None and snap.codex_last_attempt_time is None:
+        return None
+
+    now = time.monotonic()
+    reference_time = snap.codex_last_success_time
+    if reference_time is None:
+        reference_time = snap.codex_last_attempt_time
+
+    remaining_seconds = None
+    if reference_time is not None:
+        remaining_seconds = max(0.0, CODEX_TTL - (now - reference_time))
+
+    return {
+        'remaining_seconds': remaining_seconds,
+        'refresh_failed': snap.codex_refresh_failed,
+    }
 
 
 def _snapshot_to_dict(
@@ -148,6 +199,8 @@ def _snapshot_to_dict(
                         ),
                         'balance_text': balance_text,
                     }
+    codex_usage = _codex_usage_entries(snap.codex_usage)
+    codex_snapshot = _codex_snapshot_status(snap)
 
     # Installations
     if installations is None:
@@ -170,11 +223,12 @@ def _snapshot_to_dict(
     return {
         'profile': profile,
         'usage': usage,
+        'codex_usage': codex_usage,
+        'codex_snapshot': codex_snapshot,
         'extra': extra,
         'installations': installations,
         'status': status,
     }
-
 
 def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> dict[str, Any]:
     """Build the config object passed to JS ``init()`` after the page loads."""
@@ -185,7 +239,12 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
         },
         't': {
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
-            'usage': T['usage'], 'extra_usage': T['extra_usage'],
+            'usage': T['usage'], 'codex_usage': T.get('codex_usage', 'CODEX USAGE'),
+            'codex_snapshot_notice': T['codex_snapshot_notice'],
+            'codex_snapshot_due': T['codex_snapshot_due'],
+            'codex_snapshot_unavailable': T['codex_snapshot_unavailable'],
+            'codex_snapshot_unavailable_due': T['codex_snapshot_unavailable_due'],
+            'extra_usage': T['extra_usage'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],
@@ -389,7 +448,16 @@ class UsagePopup:
 
     def _update_loop(self) -> None:
         """Poll for data changes and push updates to the popup."""
-        cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
+        cached_installations: list[dict[str, str]] = []
+        installations_available = False
+        try:
+            cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
+            installations_available = True
+        except Exception:
+            # A transient filesystem or subprocess failure must not terminate the
+            # popup thread or make a failed discovery permanent.
+            pass
+
         last_next_poll_time = self.app._next_poll_time
         while self._running:
             time.sleep(self._CHECK_MS / 1000)
@@ -398,10 +466,12 @@ class UsagePopup:
             try:
                 snap = self.app.cache.snapshot
                 next_poll_time = self.app._next_poll_time
-                if snap.version == self._last_version and next_poll_time == last_next_poll_time:
+                markers_unchanged = snap.version == self._last_version and next_poll_time == last_next_poll_time
+                if markers_unchanged and (installations_available or snap.refreshing):
                     continue
-                if snap.version != self._last_version:
+                if not snap.refreshing and (snap.version != self._last_version or not installations_available):
                     cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
+                    installations_available = True
                 data = _snapshot_to_dict(snap, installations=cached_installations, next_poll_time=next_poll_time)
                 self._window.evaluate_js(f'updateData({json.dumps(data)})')
                 # Commit the markers only after a successful push, so a failed

@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "Показати використання Claude",
     "menu_quick_action": "Виконати Quick Action",
-    "tooltip_title": "Використання Claude",
+    "tooltip_title": "Claude Usage",
     "account": "АКАУНТ",
     "usage": "ВИКОРИСТАННЯ",
     "email": "Email",
@@ -36,8 +36,8 @@
         "Сб",
         "Нд"
     ],
-    "loading": "Usage Monitor: Завантаження...",
-    "error_label": "Usage Monitor: Помилка",
+    "loading": "Claude Usage: Завантаження...",
+    "error_label": "Claude Usage: Помилка",
     "connection_error": "Не вдалося підключитися до Anthropic API.",
     "certificate_error": "Не вдалося перевірити сертифікат Anthropic API.",
     "http_error": "Запит до API не вдався (HTTP {code}).",
@@ -70,6 +70,10 @@
     "status_updated_s": "Оновлено {s}с тому",
     "status_next_update": "Наст. оновл.: {duration}",
     "status_refreshing": "Оновлення...",
-    "already_running": "Usage Monitor for Claude v{running_version} вже запущено.\n\nБажаєте замінити запущений екземпляр?",
+    "codex_snapshot_notice": "Дані Codex можуть оновитися протягом {duration}.",
+    "codex_snapshot_due": "Час оновити дані Codex.",
+    "codex_snapshot_unavailable": "Дані Codex недоступні. Повторна спроба протягом {duration}.",
+    "codex_snapshot_unavailable_due": "Дані Codex недоступні. Потрібне оновлення.",
+    "already_running": "Claude&CodexUsage v{running_version} вже запущено.\n\nБажаєте замінити запущений екземпляр?",
     "replace_failed": "Не вдалося замінити запущений екземпляр.\n\nЗакрийте його вручну та спробуйте ще раз."
 }

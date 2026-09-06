@@ -136,4 +136,4 @@ def _show_error_box(command: str, returncode: int, stderr: str) -> None:
     """Show an error message box reporting a failed command and its stderr."""
     detail = stderr.strip() or '(no error output on stderr)'
     message = f'The event command exited with code {returncode}:\n\n{command}\n\n{detail}'
-    show_error_box(message, 'Usage Monitor for Claude - Event Command Failed')
+    show_error_box(message, 'Claude&CodexUsage - Event Command Failed')

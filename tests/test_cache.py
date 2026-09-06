@@ -7,10 +7,11 @@ snapshot consistency, and state management.
 """
 from __future__ import annotations
 
+import threading
 import unittest
 from unittest.mock import patch
 
-from usage_monitor_for_claude.cache import CacheSnapshot, UpdateResult, UsageCache
+from usage_monitor_for_claude.cache import CODEX_TTL, CacheSnapshot, UpdateResult, UsageCache
 from usage_monitor_for_claude.claude_cli import RefreshResult
 
 _SUCCESS_DATA = {'five_hour': {'utilization': 42.0}}
@@ -109,7 +110,7 @@ class TestCooldownBehavior(unittest.TestCase):
         cache.update()
         mock_fetch.reset_mock()
 
-        mock_time.time.return_value = 1000.0 + 121  # > POLL_FAST (120s)
+        mock_time.time.return_value = 1000.0 + 31  # > POLL_FAST (30s)
         result = cache.update()
         self.assertIsNotNone(result.data)
 
@@ -173,6 +174,90 @@ class TestCooldownBehavior(unittest.TestCase):
         cache.update()
 
         self.assertLessEqual(cache._rate_limit_until - 5000.0, 900)
+
+
+# ---------------------------------------------------------------------------
+# Codex snapshot cadence
+# ---------------------------------------------------------------------------
+
+class TestCodexSnapshotCadence(unittest.TestCase):
+    """Tests for the independent Codex snapshot TTL and lock."""
+
+    @patch('usage_monitor_for_claude.cache.fetch_codex_usage', return_value={'five_hour': {'utilization': 10.0}})
+    def test_refreshes_only_after_ttl(self, mock_fetch):
+        cache = _make_cache()
+
+        with patch('usage_monitor_for_claude.cache.time.monotonic', return_value=1000.0):
+            self.assertTrue(cache.refresh_codex_if_stale())
+        with patch('usage_monitor_for_claude.cache.time.monotonic', return_value=1000.0 + CODEX_TTL - 1):
+            self.assertFalse(cache.refresh_codex_if_stale())
+        with patch('usage_monitor_for_claude.cache.time.monotonic', return_value=1000.0 + CODEX_TTL):
+            self.assertTrue(cache.refresh_codex_if_stale())
+
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.fetch_codex_usage')
+    def test_failed_refresh_preserves_last_valid_and_retries(self, mock_fetch):
+        cache = _make_cache()
+        previous = {'five_hour': {'utilization': 25.0}}
+        replacement = {'five_hour': {'utilization': 35.0}}
+        cache._codex_usage = previous
+        cache._codex_last_success = 0.0
+        cache._codex_last_attempt = 0.0
+        mock_fetch.side_effect = [None, replacement]
+
+        with patch('usage_monitor_for_claude.cache.time.monotonic', return_value=CODEX_TTL + 1):
+            self.assertFalse(cache.refresh_codex_if_stale())
+        self.assertIs(cache.snapshot.codex_usage, previous)
+
+        with patch('usage_monitor_for_claude.cache.time.monotonic', return_value=CODEX_TTL * 2 + 2):
+            self.assertTrue(cache.refresh_codex_if_stale())
+        self.assertEqual(cache.snapshot.codex_usage, replacement)
+
+    @patch('usage_monitor_for_claude.cache.fetch_codex_usage', return_value=None)
+    def test_failed_refresh_increments_version_for_popup(self, mock_fetch):
+        """A failed Codex refresh changes the snapshot so an open popup can show it."""
+        cache = _make_cache()
+        with patch('usage_monitor_for_claude.cache.time.monotonic', return_value=1000.0):
+            self.assertFalse(cache.refresh_codex_if_stale())
+
+        self.assertEqual(cache.version, 1)
+        self.assertTrue(cache.snapshot.codex_refresh_failed)
+        mock_fetch.assert_called_once()
+    @patch('usage_monitor_for_claude.cache.fetch_codex_usage', return_value=None)
+    def test_force_does_not_hammer_after_failed_attempt(self, mock_fetch):
+        """Repeated popup demand honors the retry TTL after an unavailable app-server."""
+        cache = _make_cache()
+        with patch('usage_monitor_for_claude.cache.time.monotonic', return_value=1000.0):
+            self.assertFalse(cache.refresh_codex_if_stale(force=True))
+            self.assertFalse(cache.refresh_codex_if_stale(force=True))
+
+        mock_fetch.assert_called_once()
+
+
+
+    @patch('usage_monitor_for_claude.cache.fetch_codex_usage')
+    def test_only_one_codex_query_runs_concurrently(self, mock_fetch):
+        entered = threading.Event()
+        release = threading.Event()
+        snapshot = {'five_hour': {'utilization': 40.0}}
+
+        def fetch() -> dict:
+            entered.set()
+            release.wait(timeout=2)
+            return snapshot
+
+        mock_fetch.side_effect = fetch
+        cache = _make_cache()
+        first = threading.Thread(target=cache.refresh_codex_if_stale)
+        first.start()
+        self.assertTrue(entered.wait(timeout=2))
+        self.assertFalse(cache.refresh_codex_if_stale())
+        release.set()
+        first.join(timeout=2)
+
+        mock_fetch.assert_called_once()
+        self.assertEqual(cache.snapshot.codex_usage, snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -401,8 +486,8 @@ class TestRateLimitGuard(unittest.TestCase):
         cache.update()
         mock_fetch.reset_mock()
 
-        # Still within backoff window
-        mock_time.time.return_value = 1050.0
+        # Still within the 30-second backoff window.
+        mock_time.time.return_value = 1010.0
         result = cache.update()
         self.assertIsNone(result.data)
         mock_fetch.assert_not_called()
@@ -434,7 +519,7 @@ class TestRateLimitGuard(unittest.TestCase):
         cache.update()
 
         mock_fetch.return_value = _SUCCESS_DATA
-        mock_time.time.return_value = 1000.0 + 190  # Well past POLL_INTERVAL (180s)
+        mock_time.time.return_value = 1000.0 + 31  # Well past POLL_INTERVAL (30s)
         result = cache.update()
         self.assertIsNotNone(result.data)
 
@@ -479,20 +564,19 @@ class TestRateLimitGuard(unittest.TestCase):
         """Repeated 429s without retry_after use exponential backoff."""
         mock_fetch.return_value = {'error': 'HTTP 429', 'rate_limited': True}
         cache = _make_cache()
-
-        # First 429: backoff = POLL_INTERVAL (180s)
         mock_time.time.return_value = 1000.0
+        # First 429: backoff = POLL_INTERVAL (30s)
         cache.update()
         self.assertEqual(cache.consecutive_errors, 1)
 
-        # At 190s: past first backoff (180s) - proceed to second 429
-        mock_time.time.return_value = 1190.0
+        # At 1040s: past first backoff (30s) - proceed to second 429.
+        mock_time.time.return_value = 1040.0
         cache.update()
         self.assertEqual(cache.consecutive_errors, 2)
 
         mock_fetch.reset_mock()
-        # At 250s: within second backoff (360s from 1190)
-        mock_time.time.return_value = 1440.0
+        # At 1050s: within second 60s backoff (until 1100s).
+        mock_time.time.return_value = 1050.0
         result = cache.update()
         self.assertIsNone(result.data)
         mock_fetch.assert_not_called()

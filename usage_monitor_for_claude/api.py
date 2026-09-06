@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -42,13 +43,22 @@ _PREPAID_DEFAULT_DECIMAL_PLACES = 2
 # via group policy.  This replaces ssl.SSLContext process-wide; requests is
 # the only TLS client in this process.
 truststore.inject_into_ssl()
+_credentials_cache: tuple[Path, int, int, str | None] | None = None
+_credentials_cache_lock = threading.Lock()
 
 
-def read_access_token() -> str | None:
-    """Read the current access token from the Claude credentials file."""
-    if not CLAUDE_CREDENTIALS.exists():
+def _credentials_signature() -> tuple[Path, int, int] | None:
+    """Return the credentials path and file metadata, or ``None`` when unavailable."""
+    try:
+        stat = CLAUDE_CREDENTIALS.stat()
+    except OSError:
         return None
 
+    return CLAUDE_CREDENTIALS, stat.st_mtime_ns, stat.st_size
+
+
+def _read_access_token_uncached() -> str | None:
+    """Parse the access token from the credentials file."""
     try:
         creds = json.loads(CLAUDE_CREDENTIALS.read_text())
         oauth = creds.get('claudeAiOauth') if isinstance(creds, dict) else None
@@ -58,6 +68,25 @@ def read_access_token() -> str | None:
         # rewritten on token rotation/account switch); treat it as "no token
         # right now" rather than letting it crash a caller.
         return None
+
+
+def read_access_token() -> str | None:
+    """Read the current access token from the Claude credentials file."""
+    global _credentials_cache
+
+    with _credentials_cache_lock:
+        signature = _credentials_signature()
+        if signature is None:
+            _credentials_cache = None
+            return None
+
+        path, mtime_ns, size = signature
+        if _credentials_cache is not None and _credentials_cache[:3] == signature:
+            return _credentials_cache[3]
+
+        token = _read_access_token_uncached()
+        _credentials_cache = (path, mtime_ns, size, token)
+        return token
 
 
 def api_headers() -> dict[str, str] | None:

@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "显示Claude用量",
     "menu_quick_action": "运行 Quick Action",
-    "tooltip_title": "Claude用量",
+    "tooltip_title": "Claude Usage",
     "account": "账户",
     "usage": "用量",
     "email": "邮箱",
@@ -36,8 +36,8 @@
         "周六",
         "周日"
     ],
-    "loading": "Usage Monitor: 加载中...",
-    "error_label": "Usage Monitor: 错误",
+    "loading": "Claude Usage: 加载中...",
+    "error_label": "Claude Usage: 错误",
     "connection_error": "无法连接到 Anthropic API。",
     "certificate_error": "无法验证 Anthropic API 的证书。",
     "http_error": "API 请求失败 (HTTP {code})。",
@@ -70,6 +70,10 @@
     "status_updated_s": "{s}秒前更新",
     "status_next_update": "{duration}后更新",
     "status_refreshing": "刷新中...",
-    "already_running": "Usage Monitor for Claude v{running_version} 已在运行中。\n\n是否要替换正在运行的实例？",
+    "codex_snapshot_notice": "Codex 数据可能会在 {duration} 内更新。",
+    "codex_snapshot_due": "Codex 数据需要更新。",
+    "codex_snapshot_unavailable": "Codex 数据不可用。将在 {duration} 内重试。",
+    "codex_snapshot_unavailable_due": "Codex 数据不可用。需要更新。",
+    "already_running": "Claude&CodexUsage v{running_version} 已在运行中。\n\n是否要替换正在运行的实例？",
     "replace_failed": "无法替换正在运行的实例。\n\n请手动关闭后重试。"
 }

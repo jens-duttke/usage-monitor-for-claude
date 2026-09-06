@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "Claude使用状況を表示",
     "menu_quick_action": "Quick Action を実行",
-    "tooltip_title": "Claude使用状況",
+    "tooltip_title": "Claude Usage",
     "account": "アカウント",
     "usage": "使用状況",
     "email": "メール",
@@ -36,8 +36,8 @@
         "土",
         "日"
     ],
-    "loading": "Usage Monitor: 読み込み中...",
-    "error_label": "Usage Monitor: エラー",
+    "loading": "Claude Usage: 読み込み中...",
+    "error_label": "Claude Usage: エラー",
     "connection_error": "Anthropic APIに接続できません。",
     "certificate_error": "Anthropic APIの証明書を検証できません。",
     "http_error": "APIリクエスト失敗 (HTTP {code})。",
@@ -70,6 +70,10 @@
     "status_updated_s": "{s}秒前に更新",
     "status_next_update": "次の更新まで{duration}",
     "status_refreshing": "更新中...",
-    "already_running": "Usage Monitor for Claude v{running_version} は既に実行中です。\n\n実行中のインスタンスを置き換えますか？",
+    "codex_snapshot_notice": "Codex データは {duration} 以内に更新されることがあります。",
+    "codex_snapshot_due": "Codex データの更新時期です。",
+    "codex_snapshot_unavailable": "Codex データを利用できません。{duration} 以内に再試行します。",
+    "codex_snapshot_unavailable_due": "Codex データを利用できません。更新が必要です。",
+    "already_running": "Claude&CodexUsage v{running_version} は既に実行中です。\n\n実行中のインスタンスを置き換えますか？",
     "replace_failed": "実行中のインスタンスを置き換えられませんでした。\n\n手動で終了してから、もう一度お試しください。"
 }

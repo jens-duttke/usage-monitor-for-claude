@@ -1,7 +1,7 @@
 # Privacy Policy
 
-**Usage Monitor for Claude** is a local desktop application that monitors your Claude API usage.
-It runs on Windows and Linux.
+**Claude&CodexUsage** is a local desktop application that monitors Claude and Codex usage.
+It runs on Windows.
 
 ## Data Collection
 
@@ -9,22 +9,31 @@ This application does **not** collect, store, or transmit any personal data.
 
 ## Network Communication
 
-The application communicates exclusively with `api.anthropic.com` to retrieve your current API usage
-data and, when extra usage is enabled for your account, your prepaid credit balance. No other network
-connections are made.
+The application's direct network requests go exclusively to `api.anthropic.com` to retrieve your
+current Claude usage data and, when extra usage is enabled for your account, your prepaid credit
+balance.
 
-The server certificate is verified against the Windows certificate store, the same store your browser
-uses. A proxy that your organization has installed with its own root certificate can therefore inspect
-this connection, as it does in the browser. Windows performs this check itself, as it does for any other
-application, and may download a missing certificate authority certificate in the process.
+When Codex monitoring is available, the application starts the local `codex app-server` process
+and requests its rate-limit snapshot over that process's standard input/output. The monitor does
+not contact a Codex service directly. The Codex CLI owns any network communication and
+authentication required by that process, using its own credentials.
+
+The server certificate for the application's Anthropic connection is verified against the Windows
+certificate store, the same store your browser uses. A proxy that your organization has installed
+with its own root certificate can therefore inspect this connection, as it does in the browser.
+Windows performs this check itself, as it does for any other application, and may download a
+missing certificate authority certificate in the process.
 
 ## Credentials
 
 The application reads your existing Claude OAuth token from the local Claude CLI configuration file
-(`~/.claude/.credentials.json`, the same path on both platforms). This token is:
+(`~/.claude/.credentials.json`, or the path selected by `CLAUDE_CONFIG_DIR`). This token is:
 
 - Used solely in HTTP Authorization headers to authenticate with the Anthropic API
 - Never logged, stored elsewhere, copied, or transmitted to any third party
+
+The application does **not** read Codex credential files. Codex authentication remains inside the
+local Codex app-server process.
 
 ## Local Storage
 
@@ -40,13 +49,6 @@ application changes on your system follows - there is nothing else.
 - `Software\Microsoft\Windows\CurrentVersion\Run` - the autostart entry. Written only when you
   enable autostart from the tray menu, removed when you disable it again.
 
-**On Linux** the registry has no equivalent, so the same two concerns need files:
-
-- `~/.config/autostart/usage-monitor-for-claude.desktop` - the autostart entry. Written only when
-  you enable autostart from the tray menu, removed when you disable it again.
-- `$XDG_RUNTIME_DIR/usage-monitor-for-claude.lock` - a lock file that prevents a second instance
-  from running. It holds the process id and version, is created with owner-only permissions
-  (`0600`), and lives in the session's runtime directory, which the system clears at logout.
 
 Monitoring a second Claude account (`--config-dir`) adds a suffix to those names, so each account
 gets its own entry.

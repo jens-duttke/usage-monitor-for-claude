@@ -7,7 +7,7 @@ labels: ''
 <!-- Tip: If the app fails to start or behaves unexpectedly, running with
 --verbose prints system diagnostics that help identify the problem:
 
-  UsageMonitorForClaude.exe --verbose
+  "Claude&CodexUsage.exe" --verbose
 
 or from source:
 
@@ -15,7 +15,7 @@ or from source:
 
 To collect the output as a file, redirect both streams (cmd.exe):
 
-  UsageMonitorForClaude.exe --verbose > log.txt 2>&1
+  "Claude&CodexUsage.exe" --verbose > log.txt 2>&1
 
 Paste the output below if you can - it saves a lot of back and forth. -->
 

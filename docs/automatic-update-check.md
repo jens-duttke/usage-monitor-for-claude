@@ -1,6 +1,6 @@
 # Automatic Update Check
 
-The app itself never contacts GitHub - it communicates exclusively with `api.anthropic.com`. Update checking is available as an optional script that you run via [event commands](event-commands.md) - one for Windows, one for Linux.
+The app itself never contacts GitHub - it communicates exclusively with `api.anthropic.com`. Update checking is available as an optional Windows PowerShell script that you run via [event commands](event-commands.md).
 
 The script queries the GitHub Releases API and shows a desktop notification if a newer release exists.
 
@@ -8,7 +8,7 @@ The script queries the GitHub Releases API and shows a desktop notification if a
 
 ### 1. Save the script
 
-Save it next to your `UsageMonitorForClaude.exe`, or in the project root when running from source.
+Save it next to your `Claude&CodexUsage.exe`, or in the project root when running from source.
 
 #### Windows
 
@@ -33,7 +33,7 @@ try {
         $xml = [Windows.Data.Xml.Dom.XmlDocument]::new()
         $xml.LoadXml("<toast activationType='protocol' launch='$($release.html_url)'>
             <visual><binding template='ToastGeneric'>
-                <text>Usage Monitor for Claude</text>
+                <text>Claude&CodexUsage</text>
                 <text>Version $latest available (current: $currentVersion)</text>
             </binding></visual>
         </toast>")
@@ -50,40 +50,6 @@ catch {
 
 Clicking the notification opens the release page in your browser.
 
-#### Linux
-
-Save as `check-update.sh` and make it executable with `chmod +x check-update.sh`:
-
-```sh
-#!/usr/bin/env sh
-set -eu
-
-current="${USAGE_MONITOR_VERSION:-0.0.0}"
-release_api='https://api.github.com/repos/jens-duttke/usage-monitor-for-claude/releases/latest'
-
-# Any failure exits quietly - a failed update check must never disturb the app.
-release=$(curl -fsS --max-time 10 "$release_api") || exit 0
-info=$(printf '%s' "$release" | python3 -c \
-    'import json, sys; r = json.load(sys.stdin); print(r["tag_name"].lstrip("v"), r["html_url"])') || exit 0
-
-latest=${info%% *}
-url=${info#* }
-
-# sort -V orders version strings; stop when the newest of the two is the one running.
-newest=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -n 1)
-[ "$newest" = "$current" ] && exit 0
-
-notify-send \
-    --app-name='Usage Monitor for Claude' \
-    --icon=software-update-available \
-    'Usage Monitor for Claude' \
-    "Version $latest available (current: $current)
-$url"
-```
-
-The release page appears as a link in the notification. GNOME's notification server does not support clickable actions, so the URL goes into the message rather than behind a button.
-
-Needs `curl`; `python3`, `sort` and `notify-send` are already there on any system that runs the app.
 
 ### 2. Configure the event command
 
@@ -97,13 +63,6 @@ Add the script to your [`usage-monitor-settings.json`](configuration.md). The ap
 }
 ```
 
-On Linux:
-
-```json
-{
-  "on_reset_command": "./check-update.sh"
-}
-```
 
 **Check only on weekly resets** (once every 7 days):
 
@@ -113,13 +72,6 @@ On Linux:
 }
 ```
 
-On Linux:
-
-```json
-{
-  "on_reset_command": "[ \"$USAGE_MONITOR_VARIANT\" = seven_day ] && ./check-update.sh"
-}
-```
 
 > [!NOTE]
 > If you already have an `on_reset_command`, use an array to run both:
@@ -127,7 +79,7 @@ On Linux:
 > {
 >   "on_reset_command": [
 >     "your-existing-command",
->     "./check-update.sh"
+>     "powershell -ExecutionPolicy Bypass -File .\\check-update.ps1"
 >   ]
 > }
 > ```
@@ -141,7 +93,7 @@ Use the **Restart** option in the tray context menu to load the new settings.
 1. On each configured event, the app launches the script as a background process (no console window, no focus stealing)
 2. The script sends a single HTTPS request to `https://api.github.com/repos/jens-duttke/usage-monitor-for-claude/releases/latest`
 3. If the latest release tag is newer than `USAGE_MONITOR_VERSION`, a desktop notification appears
-4. The notification carries the release page - on Windows behind a click, on Linux as a link in the message
+4. The notification carries the release page behind a click
 5. If the request fails (no internet, API down, rate-limited), the script exits silently
 
 ## Customizing the notification appearance (Windows)
@@ -161,7 +113,6 @@ Some examples:
 | `Microsoft.Windows.ControlPanel` | Settings (gear icon) |
 | `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe` | Windows PowerShell |
 
-On Linux, change the `--icon` value to any icon name from your theme.
 
 ## Security notes
 

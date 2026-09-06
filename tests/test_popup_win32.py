@@ -11,7 +11,7 @@ from __future__ import annotations
 import ctypes
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 if sys.platform != 'win32':
     raise unittest.SkipTest('Win32 popup host is only usable on Windows')
@@ -19,7 +19,8 @@ if sys.platform != 'win32':
 import ctypes.wintypes  # noqa: E402
 
 from usage_monitor_for_claude.platforms.popup_win32 import (  # noqa: E402
-    _BASELINE_DPI, _MONITORINFO, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER, PopupHost,
+    _BASELINE_DPI, _GWL_EXSTYLE, _LWA_ALPHA, _MONITORINFO, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER,
+    _WS_EX_APPWINDOW, _WS_EX_LAYERED, _WS_EX_TOOLWINDOW, PopupHost,
 )
 
 WIDTH = 340
@@ -120,6 +121,18 @@ class TestAnchor(unittest.TestCase):
         self.assertEqual(x, 3840 - 340 - 12)
         self.assertEqual(y, 1040 - 400 - 12)
 
+    def test_taskbar_on_left_with_negative_virtual_coordinates(self):
+        """A left-side taskbar remains left of a monitor at a negative virtual x."""
+        x, y = self._call(-1860, -1080, 0, 1040, _BASELINE_DPI, 340, 400, mon_left=-1920, mon_top=-1080)
+        self.assertEqual(x, -1860 + 12)
+        self.assertEqual(y, 1040 - 400 - 12)
+
+    def test_taskbar_on_top_with_negative_virtual_coordinates(self):
+        """A top taskbar remains above content on a monitor at a negative virtual y."""
+        x, y = self._call(-1920, -1040, 0, 0, _BASELINE_DPI, 340, 400, mon_left=-1920, mon_top=-1080)
+        self.assertEqual(x, 0 - 340 - 12)
+        self.assertEqual(y, -1040 + 12)
+
 
 class TestApplyGeometry(unittest.TestCase):
     """Tests for DPI-aware resize and positioning."""
@@ -182,6 +195,69 @@ class TestApplyGeometry(unittest.TestCase):
         window = self._call(500, _BASELINE_DPI, keep_position=True)
         window.resize.assert_called_once_with(WIDTH, 500)
         window.move.assert_not_called()
+
+    def test_geometry_converts_physical_anchor_dimensions_to_logical_move(self):
+        """resize() stays logical while anchor calculations receive physical dimensions."""
+        window = MagicMock()
+        host = _host(window)
+        anchor = MagicMock(return_value=(932, 212))
+
+        with patch.object(host, '_scale', return_value=1.5), patch.object(host, '_anchor', anchor):
+            host.apply_geometry(500, keep_position=False)
+
+        window.resize.assert_called_once_with(WIDTH, 500)
+        anchor.assert_called_once_with(510, 750, 1.5)
+        window.move.assert_called_once_with(932, 212)
+
+    def test_geometry_uses_window_dpi_when_taskbar_monitor_has_different_scale(self):
+        """Logical placement is converted with the HWND DPI, not the taskbar monitor's assumed scale."""
+        window = MagicMock()
+        host = _host(window)
+        with patch('ctypes.windll.user32.GetDpiForWindow', return_value=144), \
+             patch('ctypes.windll.user32.FindWindowW', return_value=99999), \
+             patch('ctypes.windll.user32.MonitorFromWindow', return_value=11111), \
+             patch('ctypes.windll.user32.GetMonitorInfoW', side_effect=_monitor_filler(0, 0, 1920, 1080)):
+            host.apply_geometry(500, keep_position=False)
+
+        window.resize.assert_called_once_with(WIDTH, 500)
+        window.move.assert_called_once_with(int((1920 - 510 - 12) / 1.5), int((1080 - 750 - 12) / 1.5))
+
+
+class TestPrepareReveal(unittest.TestCase):
+    """Tests for making the native window transparent before revealing it."""
+
+    def test_prepare_hides_taskbar_window_and_shows_transparent_host(self):
+        """Preparation applies tool-window and layered styles before showing the host."""
+        window = MagicMock()
+        window.native.Handle.ToInt32.return_value = 54321
+        host = PopupHost(window, WIDTH)
+        original_style = _WS_EX_APPWINDOW
+
+        with patch('ctypes.windll.user32.GetWindowLongW', return_value=original_style) as get_style, \
+             patch('ctypes.windll.user32.SetWindowLongW') as set_style, \
+             patch('ctypes.windll.user32.SetLayeredWindowAttributes') as set_alpha:
+            host.prepare()
+
+        expected_style = (original_style | _WS_EX_TOOLWINDOW | _WS_EX_LAYERED) & ~_WS_EX_APPWINDOW
+        self.assertEqual(host._hwnd, 54321)
+        get_style.assert_called_once_with(54321, _GWL_EXSTYLE)
+        set_style.assert_called_once_with(54321, _GWL_EXSTYLE, expected_style)
+        set_alpha.assert_called_once_with(54321, 0, 0, _LWA_ALPHA)
+        window.show.assert_called_once_with()
+
+    def test_reveal_removes_layered_style_without_recreating_window(self):
+        """Revealing drops transparency while retaining the existing native window."""
+        window = MagicMock()
+        host = _host(window)
+        original_style = _WS_EX_LAYERED | _WS_EX_TOOLWINDOW
+
+        with patch('ctypes.windll.user32.GetWindowLongW', return_value=original_style) as get_style, \
+             patch('ctypes.windll.user32.SetWindowLongW') as set_style:
+            host.reveal()
+
+        get_style.assert_called_once_with(12345, _GWL_EXSTYLE)
+        set_style.assert_called_once_with(12345, _GWL_EXSTYLE, _WS_EX_TOOLWINDOW)
+        window.show.assert_not_called()
 
 
 class TestDrag(unittest.TestCase):
@@ -271,6 +347,48 @@ class TestDrag(unittest.TestCase):
 
         self.assertFalse(host._dragging)
         window.resize.assert_not_called()
+
+
+class TestDismissHooks(unittest.TestCase):
+    """Tests for dismiss-watch hook installation and cleanup."""
+
+    def _run_watch(self, get_message):
+        host = _host()
+        raised = None
+        with patch('ctypes.windll.kernel32.GetCurrentThreadId', return_value=77), \
+             patch('ctypes.windll.user32.PeekMessageW'), \
+             patch('ctypes.windll.user32.CallNextHookEx'), \
+             patch('ctypes.windll.user32.SetWindowsHookExW', side_effect=[101, 202]), \
+             patch('ctypes.windll.user32.SetWinEventHook', return_value=303), \
+             patch('ctypes.windll.user32.GetMessageW', side_effect=get_message), \
+             patch('ctypes.windll.user32.UnhookWindowsHookEx') as unhook, \
+             patch('ctypes.windll.user32.UnhookWinEvent') as unhook_event:
+            try:
+                host.watch_dismiss(lambda: False, lambda: True)
+            except RuntimeError as error:
+                raised = error
+
+        return host, unhook, unhook_event, raised
+
+    def test_watch_removes_all_hooks_when_message_pump_exits(self):
+        """A normal WM_QUIT exits only after every installed hook is removed."""
+        host, unhook, unhook_event, raised = self._run_watch([0])
+
+        self.assertIsNone(raised)
+        unhook.assert_has_calls([call(101), call(202)])
+        unhook_event.assert_called_once_with(303)
+        self.assertEqual(host._pump_tid, 0)
+
+    def test_watch_removes_hooks_when_message_pump_fails(self):
+        """An exception from the message pump cannot leave system-wide hooks active."""
+        host, unhook, unhook_event, raised = self._run_watch([RuntimeError('message pump failed')])
+
+        self.assertIsInstance(raised, RuntimeError)
+        unhook.assert_has_calls([call(101), call(202)])
+        unhook_event.assert_called_once_with(303)
+        self.assertEqual(host._pump_tid, 0)
+
+
 
 
 class TestWindowOptions(unittest.TestCase):

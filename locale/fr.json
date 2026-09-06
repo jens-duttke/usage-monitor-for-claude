@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "Afficher l'utilisation Claude",
     "menu_quick_action": "Exécuter la Quick Action",
-    "tooltip_title": "Utilisation Claude",
+    "tooltip_title": "Claude Usage",
     "account": "COMPTE",
     "usage": "UTILISATION",
     "email": "E-mail",
@@ -36,8 +36,8 @@
         "sam",
         "dim"
     ],
-    "loading": "Usage Monitor : Chargement...",
-    "error_label": "Usage Monitor : Erreur",
+    "loading": "Claude Usage : Chargement...",
+    "error_label": "Claude Usage : Erreur",
     "connection_error": "Impossible de se connecter à l'API Anthropic.",
     "certificate_error": "Impossible de vérifier le certificat de l'API Anthropic.",
     "http_error": "Échec de la requête API (HTTP {code}).",
@@ -70,6 +70,10 @@
     "status_updated_s": "Mis à jour il y a {s}s",
     "status_next_update": "Prochaine MàJ : {duration}",
     "status_refreshing": "Actualisation...",
-    "already_running": "Usage Monitor for Claude v{running_version} est déjà en cours d'exécution.\n\nVoulez-vous remplacer l'instance en cours ?",
+    "codex_snapshot_notice": "Les données Codex peuvent être mises à jour dans {duration} au maximum.",
+    "codex_snapshot_due": "La mise à jour des données Codex est due.",
+    "codex_snapshot_unavailable": "Données Codex indisponibles. Nouvelle tentative dans {duration} au maximum.",
+    "codex_snapshot_unavailable_due": "Données Codex indisponibles. Une mise à jour est due.",
+    "already_running": "Claude&CodexUsage v{running_version} est déjà en cours d'exécution.\n\nVoulez-vous remplacer l'instance en cours ?",
     "replace_failed": "L'instance en cours n'a pas pu être remplacée.\n\nVeuillez la fermer manuellement et réessayer."
 }

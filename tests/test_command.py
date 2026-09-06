@@ -7,7 +7,6 @@ Unit tests for the command module: subprocess execution with environment variabl
 from __future__ import annotations
 
 import subprocess
-import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -16,9 +15,8 @@ from usage_monitor_for_claude import command
 from usage_monitor_for_claude.platforms import no_window_kwargs
 from usage_monitor_for_claude.command import run_event_command
 
-# A frozen build's executable, written the way the running platform does.
-_FROZEN_EXECUTABLE = str(Path('C:/Program Files/MyApp/app.exe') if sys.platform == 'win32'
-                         else Path('/opt/MyApp/app'))
+# A frozen build's executable, written the way the Windows build does.
+_FROZEN_EXECUTABLE = r'C:\Program Files\MyApp\app.exe'
 
 
 class TestRunEventCommand(unittest.TestCase):

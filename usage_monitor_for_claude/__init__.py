@@ -1,8 +1,8 @@
 """
-Usage Monitor for Claude
-=========================
+Claude&CodexUsage
+=================
 
-Displays the current Claude.ai usage as a system tray icon.
+Displays current Claude and Codex usage as a system tray icon.
 Left-click the icon to see a detailed usage popup.
 
 Authenticates via Claude Code OAuth token from the Claude config

@@ -1,33 +1,34 @@
-# Usage Monitor for Claude
+# Claude&CodexUsage
 
 [![Feature Ideas](https://img.shields.io/badge/Feature_Ideas-Vote_%26_Discuss-blue?style=for-the-badge&logo=github)](https://github.com/jens-duttke/usage-monitor-for-claude/discussions/categories/ideas)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4?style=for-the-badge&logo=github)](https://github.com/sponsors/jens-duttke)
 
-**Monitor your Claude rate limits in real time - right from your system tray.**
+**Monitor your Claude and Codex rate limits in real time - right from your system tray.**
 
-A native tray app for Windows and Linux that shows your Claude usage at a glance - lightweight and fully auditable. Rate limits are shared across claude.ai, Claude Code, Claude Code Cowork, and IDE extensions for VS Code and JetBrains - always know how much of your session and weekly limits (Sonnet, Opus, Fable, Cowork, and any future quota types) you have left.
+A native tray app for Windows that shows your Claude and Codex usage at a glance - lightweight and fully auditable. Claude rate limits are shared across claude.ai, Claude Code, Claude Code Cowork, and IDE extensions for VS Code and JetBrains.
 
 ![Detail popup showing account info and usage bars](screenshot.png)
 
 > [!TIP]
 > **Companion tool: [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)**
 >
-> Usage Monitor for Claude tells you *how much* of your rate limits you have left. Its companion tool, [**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude), tells you *what your agents are actually doing*: every running Claude Code agent across all your projects, grouped by project, with the ones that need attention on top - working, waiting for input, blocked, finished, or errored, each with its cost, tokens, model, and host. One click brings an agent's window to the foreground.
+> Claude&CodexUsage tells you *how much* of your rate limits you have left. Its companion tool, [**Agent Monitor for Claude**](https://github.com/jens-duttke/agent-monitor-for-claude), tells you *what your agents are actually doing*: every running Claude Code agent across all your projects, grouped by project, with the ones that need attention on top - working, waiting for input, blocked, finished, or errored, each with its cost, tokens, model, and host. One click brings an agent's window to the foreground.
 >
 > You can even [launch it straight from the tray icon](docs/event-commands.md#launch-agent-monitor-for-claude-as-your-quick-action).
 
 ## Features
 
-- **Portable on Windows** - single EXE (~12.5 MB), no installation, no Electron, no runtime required. Download, place anywhere, run. To uninstall, delete the file. On Linux it runs from source against the GTK and WebKit libraries your desktop already ships
+- **Portable on Windows** - single EXE (~12.5 MB), no installation, no Electron, no runtime required. Download, place anywhere, run. To uninstall, disable "Start at login" in the context menu first (if enabled), then delete the file
 - **Zero configuration** - authenticates through your existing Claude Code login, no API key or manual token entry needed
 - **Live tray icon** with two [configurable](docs/configuration.md#tray-icon-bars) progress bars (session + weekly by default), or both values as stacked percentages via `icon_style`. Plus a [configurable tooltip](docs/configuration.md#tooltip-fields), percentage display, and theme-aware colors for light and dark taskbars
-- **Detail popup** (left-click, or from the tray menu on Linux) with account info, reset countdowns, extra usage including the prepaid credits still available to pay for it, and dynamically detected bars for every active quota type (Session, Weekly, Sonnet, Opus, Fable, Cowork, and whatever Anthropic adds next), [selectable per field](docs/configuration.md#popup-fields). A stale-data indicator flags values that may be outdated. Pin it open and drag it anywhere to keep usage visible during long sessions - optionally as a [compact view](docs/configuration.md#compact-pinned-view) with only the parts you need. Reset times follow your system's clock format
+- **Detail popup** (left-click) with account info, reset countdowns, extra usage including the prepaid credits still available to pay for it, and dynamically detected bars for every active quota type (Session, Weekly, Sonnet, Opus, Fable, Cowork, and whatever Anthropic adds next), [selectable per field](docs/configuration.md#popup-fields). A stale-data indicator flags values that may be outdated. Pin it open and drag it anywhere to keep usage visible during long sessions - optionally as a [compact view](docs/configuration.md#compact-pinned-view) with only the parts you need. Reset times follow your system's clock format
 - **Claude Code versions** - the popup shows which version is installed in each environment (native CLI, VS Code, Cursor, Windsurf), so you can spot when your IDE extension is ahead of or behind the CLI. Installs the app cannot see, such as one inside WSL, are listed alongside the rest via the [`cli_command`](docs/configuration.md#claude-cli-command) setting
+- **Experimental Codex ChatGPT-plan monitoring** - when the Codex CLI is installed and signed in, the popup shows its 5-hour and 7-day rate limits. The monitor asks the local Codex app-server for this snapshot; it does not read Codex credentials.
 - **Smart alerts** - configurable threshold notifications per quota type, with time-aware mode that only alerts when usage outpaces elapsed time. Reset notifications when a nearly exhausted quota refills. Extra usage can also alert on absolute spending amounts (e.g. $50 / $100 / $150 spent), the only alert available when it has no monthly limit
 - **[Event commands](docs/event-commands.md)** - run a custom shell command when a quota resets, a usage threshold is crossed, the app starts up, or whenever you want via your **quick action** on the tray icon. Send push notifications to your phone, resume an AI agent, start a fresh 5-hour session automatically, play an alert sound, launch a companion tool like [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude), or trigger any custom workflow
 - **Time marker** on every bar, in the popup and on the tray icon alike, showing how much of the current period has elapsed - so you see at a glance whether your usage is ahead of or behind the clock. Bars that outpace it turn red
 - **Automatic token refresh** - when the OAuth session expires, runs `claude update` in the background to renew the token without user intervention. If a CLI update is installed, shows a notification (which you can turn off via the `notify_claude_update` setting)
-- **Adaptive polling** - speeds up during active usage, slows down to a 15-minute cadence when the computer is idle or locked, aligns to imminent quota resets, and backs off on rate-limit errors. An open detail popup always stays up to date. Quota resets and account switches are picked up as they happen, even on an unattended machine, so the tray never lingers on stale numbers or on the previous account's usage
+- **Adaptive polling** - refreshes background data every 30 seconds, slows down to a 15-minute cadence when the computer is idle or locked, aligns to imminent quota resets, and backs off on rate-limit errors. An open detail popup always stays up to date.
 - **Multi-account** - monitor several Claude accounts side by side: launch one instance per account with `--config-dir="<path>"` pointing at each account's Claude config directory. Each tray icon shows its account's usage, with a `[dir-name]` tooltip prefix, per-instance settings, and its own autostart entry
 - **13 languages** (English, German, French, Spanish, Portuguese, Italian, Japanese, Korean, Hindi, Indonesian, Chinese Simplified, Chinese Traditional, Ukrainian) - auto-detected from your system's display language, with optional manual override via the `language` setting
 - **[Customizable](docs/configuration.md)** - optionally override polling intervals, colors, alert thresholds, and more via a JSON settings file
@@ -38,9 +39,9 @@ A native tray app for Windows and Linux that shows your Claude usage at a glance
 
 This tool handles your Claude Code OAuth token, so you should be able to verify it is safe. The codebase is deliberately structured for easy auditing:
 
-- **Single network destination** - communicates exclusively with `api.anthropic.com`, no other hosts
-- **Credentials stay local** - the OAuth token is used only in HTTP Authorization headers, never logged, stored elsewhere, or transmitted to third parties
-- **Touches almost nothing** - usage data lives in memory only. On Windows the app writes no files at all; its only lasting traces are two `HKEY_CURRENT_USER` registry values (the toast notification identity, re-registered on every start, and the autostart entry, written only when you enable autostart). On Linux the same two concerns need files instead: an autostart `.desktop` entry, again only when you enable it, and a `0600` lock file in the session's runtime directory that keeps a second instance from starting. [PRIVACY.md](PRIVACY.md) lists every one of them. An expired OAuth token additionally triggers `claude update`, which may install a newer Claude Code version
+- **Network destinations** - direct API requests go exclusively to `api.anthropic.com`. When Codex monitoring is available, the app starts the local `codex app-server` and requests its rate-limit snapshot over local standard input/output; the Codex CLI owns any service communication needed for that snapshot
+- **Credentials stay local** - the Claude OAuth token is used only in HTTP Authorization headers, never logged, stored elsewhere, or transmitted to third parties. The monitor does not read Codex credential files; Codex authentication remains inside the local Codex app-server
+- **Touches almost nothing** - usage data lives in memory only. On Windows the app writes no files at all; its only lasting traces are two `HKEY_CURRENT_USER` registry values (the toast notification identity, re-registered on every start, and the autostart entry, written only when you enable autostart). [PRIVACY.md](PRIVACY.md) lists every one of them. An expired OAuth token additionally triggers `claude update`, which may install a newer Claude Code version
 - **No dynamic code execution** - no `eval()`, `exec()`, `compile()`, or dynamic imports
 - **No obfuscation** - no encoded strings, no hidden URLs, no minified logic
 - **Modular architecture** - small, focused modules with security-critical code (credentials, API calls) isolated in a single file ([`api.py`](usage_monitor_for_claude/api.py))
@@ -50,7 +51,7 @@ This tool handles your Claude Code OAuth token, so you should be able to verify 
 
 ## Requirements
 
-- **Windows 10 or Windows 11** (64-bit), or **Linux** with a freedesktop desktop environment (see [Linux](#linux) below)
+- **Windows 10 or Windows 11** (64-bit)
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and logged in (CLI, VS Code extension, or JetBrains plugin - any variant works). The app reads the OAuth token that Claude Code stores locally (`~/.claude/.credentials.json`), or from `CLAUDE_CONFIG_DIR` when that is set; the `--config-dir="<path>"` command-line parameter overrides both. To run one instance per Claude account, log each account in via Claude Code with `CLAUDE_CONFIG_DIR` pointing at its own directory first.
 
 > [!TIP]
@@ -60,7 +61,7 @@ This tool handles your Claude Code OAuth token, so you should be able to verify 
 
 ## Quick Start
 
-**No Python required.** Download the latest [**UsageMonitorForClaude.exe**](https://github.com/jens-duttke/usage-monitor-for-claude/releases/latest), place it wherever you like, and run it. To remove, disable "Start at login" in the context menu first (if enabled), then delete the file.
+**No Python required.** Download the latest [**Claude&CodexUsage.exe**](https://github.com/jens-duttke/usage-monitor-for-claude/releases/latest), place it wherever you like, and run it. To remove, disable "Start at login" in the context menu first (if enabled), then delete the file.
 
 Or install it from [WinGet](https://learn.microsoft.com/windows/package-manager/), where every release is published automatically:
 
@@ -68,59 +69,6 @@ Or install it from [WinGet](https://learn.microsoft.com/windows/package-manager/
 winget install jens-duttke.usage-monitor-for-claude
 ```
 
-### Linux
-
-There is no prebuilt binary: PyInstaller cannot bundle GTK and WebKit reliably, so the app runs from
-source against the libraries your desktop already ships. Tested on Ubuntu with GNOME.
-
-```bash
-sudo apt install python3-venv python3-gi gir1.2-webkit2-4.1 \
-                 gir1.2-ayatanaappindicator3-0.1 libayatana-appindicator3-1
-
-git clone https://github.com/jens-duttke/usage-monitor-for-claude.git
-cd usage-monitor-for-claude
-
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-python3 -m usage_monitor_for_claude
-```
-
-To start it again later, use the launcher - it needs no activated environment and works from any
-directory:
-
-```bash
-~/usage-monitor-for-claude/usage-monitor-for-claude
-```
-
-Symlink it once to get a global command, available in any shell and in your desktop's run dialog:
-
-```bash
-ln -s ~/usage-monitor-for-claude/usage-monitor-for-claude ~/.local/bin/usage-monitor-for-claude
-```
-
-Enable **Start at login** from the tray menu and the app takes care of the rest.
-
-Three notes specific to Linux:
-
-- **The virtual environment needs `--system-site-packages`.** PyGObject is installed by apt, not by
-  pip; without that flag the app stops at `ModuleNotFoundError: No module named 'gi'`. If you already
-  have a `.venv` created without it, set `include-system-site-packages = true` in `.venv/pyvenv.cfg`
-  rather than recreating it - no reinstall needed.
-- **The tray icon needs `gir1.2-ayatanaappindicator3-0.1`.** Without it no icon appears. Ubuntu
-  enables the required GNOME extension by default; on plain GNOME you need
-  [AppIndicator support](https://extensions.gnome.org/extension/615/appindicator-support/).
-- **The app runs as an XWayland client.** Wayland does not let a client place its own windows, so
-  the detail popup could not be anchored below the tray icon. The app sets `GDK_BACKEND=x11` itself;
-  set that variable explicitly if you want to try the native backend.
-
-The detail popup opens from the tray menu rather than a left-click: a StatusNotifierItem is drawn
-and driven by the panel, so a click opens the menu and never reaches the application.
-
-On startup the tray library prints `libayatana-appindicator is deprecated`. Nothing is broken - the
-icon works as it should. pystray still uses that library's GTK-3 API, and the replacement
-(`libayatana-appindicator-glib`) has no pystray support yet, so the message stays until it does.
 
 > [!NOTE]
 > Anyone can submit manifests for any package to the WinGet community repository, and its automated validation checks the installer domain (`github.com`) but not the repository path behind it, so a submission pointing at a different account would have to be caught by a human reviewer. Use that channel at your own risk - the download link above is the authoritative source.
@@ -133,7 +81,7 @@ icon works as it should. pystray still uses that library's GTK-3 API, and the re
 |---|---|
 | **Hover** over the tray icon | Tooltip shows 5h and 7d usage percentages with reset times |
 | **Left-click** the tray icon | Opens the detail popup with account info and all usage bars |
-| **Double-click** the tray icon | Runs your [quick action](docs/event-commands.md) if configured (e.g. launch [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)); otherwise does nothing. On Linux the desktop keeps the click, so the quick action sits in the tray menu instead |
+| **Double-click** the tray icon | Runs your [quick action](docs/event-commands.md) if configured (e.g. launch [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)); otherwise does nothing |
 | **Right-click** the tray icon | Context menu: open popup, autostart toggle, test event commands, restart, GitHub link, or quit |
 | **Escape** or click outside | Closes the detail popup |
 
@@ -143,7 +91,7 @@ Windows may hide new tray icons by default. To keep the icon always visible:
 
 1. Right-click the **taskbar** → **Taskbar settings**
 2. Expand **Other system tray icons** (Win 11) or **Select which icons appear on the taskbar** (Win 10)
-3. Toggle **UsageMonitorForClaude** to **On**
+3. Toggle **Claude&CodexUsage** to **On**
 
 ### Reading the progress bars
 
@@ -162,7 +110,7 @@ All settings work out of the box - no configuration file is needed. To customize
 
 ```json
 {
-  "poll_interval": 180,
+  "poll_interval": 30,
   "bar_fg": "#00cc66",
   "bar_fg_warn": "#ff6600"
 }
@@ -200,18 +148,6 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Linux - see [Linux](#linux) above for the apt packages this needs first:
-
-```bash
-git clone https://github.com/jens-duttke/usage-monitor-for-claude.git
-cd usage-monitor-for-claude
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-`--system-site-packages` lets the environment see the distribution's PyGObject; `pip install
-PyGObject` would build it from source and needs the GTK development headers.
 
 ### Run
 
@@ -225,8 +161,7 @@ python -m usage_monitor_for_claude
 python -m unittest discover -s tests
 ```
 
-The suite runs on both platforms. Tests for the backend of the *other* operating system skip
-themselves at module level, so a green run means everything applicable to your system passed.
+The suite runs on Windows.
 
 ### Build EXE (Windows)
 
@@ -234,10 +169,8 @@ themselves at module level, so a green run means everything applicable to your s
 python build.py
 ```
 
-Produces `dist/UsageMonitorForClaude.exe` (~12.5 MB), a single-file executable that bundles Python and all dependencies.
+Produces `dist/Claude&CodexUsage.exe` (~12.5 MB), a single-file executable that bundles Python and all dependencies.
 
-There is no equivalent Linux build: PyInstaller cannot reliably bundle GTK and WebKit, so the app is
-run from source there.
 
 ### Popup UI Development
 
@@ -247,11 +180,6 @@ The popup UI lives in [`usage_monitor_for_claude/popup/`](usage_monitor_for_clau
 start http://localhost:8080/usage_monitor_for_claude/popup/dev.html && python -m http.server 8080
 ```
 
-On Linux:
-
-```bash
-xdg-open http://localhost:8080/usage_monitor_for_claude/popup/dev.html && python -m http.server 8080
-```
 
 This starts a local server and opens the dev preview in your default browser. Use the buttons to switch between data presets (full, minimal, error, loading) and the language dropdown to preview every locale, which is how you spot strings that overflow the popup width.
 
@@ -264,7 +192,7 @@ This starts a local server and opens the dev preview in your default browser. Us
 5. Run the test suite: `python -m unittest discover -s tests`
 6. Smoke test: `python -m usage_monitor_for_claude` - verify tray icon, popup, and settings
 7. Build the EXE with `python build.py`
-8. Smoke test: `dist\UsageMonitorForClaude.exe` - verify tray icon, popup, and settings
+8. Smoke test: `& 'dist\Claude&CodexUsage.exe'` - verify tray icon, popup, and settings
 9. Stage the changes from steps 2 to 4
 10. Commit, tag, push, and publish:
 
@@ -272,7 +200,7 @@ This starts a local server and opens the dev preview in your default browser. Us
    git commit -m "Release v1.x.x"
    git tag v1.x.x
    git push origin main v1.x.x
-   gh release create v1.x.x dist/UsageMonitorForClaude.exe --title "v1.x.x" --notes "<release notes from CHANGELOG.md, followed by a [README for this version](https://github.com/jens-duttke/usage-monitor-for-claude/blob/v1.x.x/README.md) link>"
+   gh release create v1.x.x 'dist/Claude&CodexUsage.exe' --title "v1.x.x" --notes "<release notes from CHANGELOG.md, followed by a [README for this version](https://github.com/jens-duttke/usage-monitor-for-claude/blob/v1.x.x/README.md) link>"
    ```
 
 </details>
@@ -302,7 +230,7 @@ New features should follow the existing architecture. Key points from the guidel
 - Security-critical code (credentials, API calls) stays isolated in [`api.py`](usage_monitor_for_claude/api.py)
 - All user-facing changes need updates in [`CHANGELOG.md`](CHANGELOG.md), [`README.md`](README.md), and [`docs/configuration.md`](docs/configuration.md) where applicable
 - Tests are required - run `python -m unittest discover -s tests` before committing
-- The app must not write files beyond what [`PRIVACY.md`](PRIVACY.md) documents: nothing at all on Windows, where the only lasting state is two `HKEY_CURRENT_USER` registry values (notification identity, autostart entry), and on Linux the autostart `.desktop` entry plus the single-instance lock file. Any new persistent write needs `PRIVACY.md` and `README.md` updated in the same change
+- The app must not write files beyond what [`PRIVACY.md`](PRIVACY.md) documents: nothing at all on Windows, where the only lasting state is two `HKEY_CURRENT_USER` registry values (notification identity, autostart). Any new persistent write needs `PRIVACY.md` and `README.md` updated in the same change
 
 </details>
 

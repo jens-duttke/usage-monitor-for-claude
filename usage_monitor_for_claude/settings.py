@@ -111,7 +111,7 @@ def _load_settings() -> dict:
             except (json.JSONDecodeError, ValueError) as exc:
                 show_warning_box(
                     f'Invalid JSON in settings file:\n{path}\n\n{exc}',
-                    'Usage Monitor for Claude - Settings Error',
+                    'Claude&CodexUsage - Settings Error',
                 )
                 return {}
             except OSError:
@@ -307,7 +307,7 @@ def _validate(data: dict, path: Path) -> dict:
     if errors:
         show_warning_box(
             f'Invalid values in settings file:\n{path}\n\n' + '\n'.join(errors),
-            'Usage Monitor for Claude - Settings Error',
+            'Claude&CodexUsage - Settings Error',
         )
 
     return data
@@ -322,8 +322,8 @@ def _icon_colors(key: str, defaults: dict[str, tuple]) -> dict[str, tuple]:
 _S = _load_settings()
 
 # Polling intervals (seconds)
-POLL_INTERVAL = _S.get('poll_interval', 180)
-POLL_FAST = _S.get('poll_fast', 120)
+POLL_INTERVAL = _S.get('poll_interval', 30)
+POLL_FAST = _S.get('poll_fast', 30)
 POLL_FAST_EXTRA = _S.get('poll_fast_extra', 2)
 POLL_ERROR = _S.get('poll_error', 30)
 MAX_BACKOFF = _S.get('max_backoff', 900)

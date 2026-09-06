@@ -7,13 +7,12 @@ Renders the system tray icon.  Font loading and theme detection live in
 about drawing.
 """
 from __future__ import annotations
-
 from PIL import Image, ImageDraw
 
 from .platforms import load_font
 from .settings import ICON_DARK, ICON_LIGHT, ICON_STYLE
 
-__all__ = ['create_icon_image', 'create_status_image']
+__all__ = ['create_codex_icon_image', 'create_icon_image', 'create_status_image']
 
 TRANSPARENT = (0, 0, 0, 0)
 
@@ -31,13 +30,9 @@ def create_icon_image(
     pct_top: float, pct_bottom: float, light_taskbar: bool = False,
     *, mode_top: str = 'utilization', mode_bottom: str = 'utilization',
     time_pct_top: float | None = None, time_pct_bottom: float | None = None,
-    extra_usage_available: bool = False,
+    extra_usage_available: bool = False, brand: str = 'C',
 ) -> Image.Image:
-    """Create tray icon: 'C' letter + two usage bars.
-
-    With ``ICON_STYLE`` set to ``'numbers'`` the icon instead shows the two
-    utilization percentages as stacked rows without bars; the mode and
-    elapsed-time parameters have no effect in that style.
+    """Create a branded tray icon with two usage bars.
 
     Parameters
     ----------
@@ -47,21 +42,8 @@ def create_icon_image(
         Utilization percentage (0-100) for the lower bar.
     light_taskbar : bool
         Use dark-on-light colors for a light taskbar.
-    mode_top : str
-        Display mode for the upper bar: ``'utilization'`` (linear fill)
-        or ``'overage'`` (fills as usage exceeds the time marker).
-    mode_bottom : str
-        Display mode for the lower bar.  Same semantics as *mode_top*.
-    time_pct_top : float or None
-        Elapsed-time percentage for the upper bar.  Draws the reset-time
-        marker in ``utilization`` mode; required for ``overage`` mode.
-    time_pct_bottom : float or None
-        Elapsed-time percentage for the lower bar.  Same semantics as
-        *time_pct_top*.
-    extra_usage_available : bool
-        True if the account has paid extra-usage credits still available.
-        When a quota is fully exhausted, this decides whether to show ``$``
-        (continuing costs money) or ``✕`` (fully blocked).
+    brand : str
+        Glyph shown while both quotas are available.
     """
     colors = ICON_DARK if light_taskbar else ICON_LIGHT
     fg, fg_half, fg_warn = colors['fg'], colors['fg_half'], colors['fg_warn']
@@ -88,7 +70,7 @@ def create_icon_image(
 
     # Top glyph: "✕" when any quota exhausted and no extra credits left,
     # "$" when exhausted but paid extra-usage still available,
-    # "C" while usage is still zero, otherwise the percentage.
+    # ``brand`` is the neutral glyph while usage is still zero.
     stroke_width = 0
     any_exhausted = pct_top >= 100 or pct_bottom >= 100
     if any_exhausted and not extra_usage_available:
@@ -102,7 +84,7 @@ def create_icon_image(
         # '100' that overflows the canvas and reads as exhausted.
         text, font = f'{min(pct_top, 99):.0f}', load_font(40)
     else:
-        text, font = 'C', load_font(42)
+        text, font = brand, load_font(42)
 
     bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
     tw = bbox[2] - bbox[0]
@@ -192,6 +174,20 @@ def _draw_usage_bar(draw: ImageDraw.ImageDraw, y: int, pct: float, mode: str, ti
     marker_x = min(ICON_SIZE - MARKER_WIDTH, max(0, int(ICON_SIZE * time_pct / 100) - MARKER_WIDTH // 2))
     marker_end = marker_x + MARKER_WIDTH - 1
     draw.rectangle([marker_x, y, marker_end, y + BAR_HEIGHT - 1], fill=fg)
+def create_codex_icon_image(
+    pct_top: float, pct_bottom: float, light_taskbar: bool = False,
+    *, mode_top: str = 'utilization', mode_bottom: str = 'utilization',
+    time_pct_top: float | None = None, time_pct_bottom: float | None = None,
+) -> Image.Image:
+    """Create the Codex tray icon with the Codex brand glyph."""
+    return create_icon_image(
+        pct_top, pct_bottom, light_taskbar,
+        mode_top=mode_top, mode_bottom=mode_bottom,
+        time_pct_top=time_pct_top, time_pct_bottom=time_pct_bottom,
+        brand='O',
+    )
+
+
 
 
 def create_status_image(text: str, light_taskbar: bool = False) -> Image.Image:

@@ -10,32 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The Extra Usage section in the detail popup now also shows the prepaid usage credits you have left to pay for it, so you can tell whether work can continue instead of only seeing what has been spent (thanks to [@TheConfax](https://github.com/TheConfax) for the contribution)
+- **Experimental Codex ChatGPT-plan monitoring** - when the Codex CLI is installed and signed in, the popup shows its 5-hour and 7-day rate limits. The monitor asks the local Codex app-server for this snapshot without reading Codex credentials.
 
 ### Changed
 
 - Polling no longer stops while the computer is idle or locked - it continues on a 15-minute cadence, configurable via the new [`idle_interval`](docs/configuration.md#polling-intervals) setting. Quota resets, threshold alerts and event commands now fire on time on an unattended computer, and switching your Claude account is picked up right away instead of at your next keystroke
 - The expired-session and missing-token messages now name the Claude Code CLI and the command that fixes it (`claude auth login`) - previously they asked you to open Claude Code, which helps nobody whose Claude Code is already open and whose CLI login is the part that expired (thanks to [@mjtlsnelling-art](https://github.com/mjtlsnelling-art) for reporting [#89](https://github.com/jens-duttke/usage-monitor-for-claude/issues/89))
+- The application is now named **Claude&CodexUsage**, with Codex monitoring included alongside Claude throughout the tray, popup, notifications, and Windows executable metadata.
+- Background usage updates now run every 30 seconds by default while preserving cooldown, reset-alignment, and rate-limit backoff safeguards.
 
 ### Fixed
 
 - The detail popup no longer greys out and stops updating when you leave the mouse alone - while it is open and visible, usage keeps refreshing at the normal interval
-- Verbose output now follows a redirect, so `UsageMonitorForClaude.exe --verbose > log.txt` writes a usable file - previously the diagnostics always went to the console window and the file stayed empty, leaving no way to attach a log to a bug report (thanks to [@mjtlsnelling-art](https://github.com/mjtlsnelling-art) for reporting [#89](https://github.com/jens-duttke/usage-monitor-for-claude/issues/89))
+- Verbose output now follows a redirect, so `"Claude&CodexUsage.exe" --verbose > log.txt` writes a usable file - previously the diagnostics always went to the console window and the file stayed empty, leaving no way to attach a log to a bug report (thanks to [@mjtlsnelling-art](https://github.com/mjtlsnelling-art) for reporting [#89](https://github.com/jens-duttke/usage-monitor-for-claude/issues/89))
+
+### Removed
+
+- Linux support and its GTK/WebKit runtime, launcher, platform backends, and platform-specific documentation have been removed; the application now targets Windows exclusively
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.22.0...HEAD)
 
-## [1.22.0] - 2026-09-03
-
 ### Added
 
-- **Linux support** - the app now runs on Linux as well as Windows. The tray icon, detail popup, smart alerts, event commands, autostart and the single-instance guard all work there; see the [README](README.md#linux) for the packages it needs and for the launcher that starts the app from any directory, without activating its virtual environment
-- On Linux, the detail popup opens from the tray menu instead of a left-click, because a tray icon is drawn and driven by the desktop panel there, which handles the click itself and never passes it to the application. For the same reason there is no double-click to react to: when a quick action is configured, the tray menu offers a **Run Quick Action** entry instead, so it stays reachable
-- On Linux the app needs two files where Windows uses the registry: the autostart entry (`~/.config/autostart/`, written only when you enable autostart) and a lock file in the session's runtime directory that keeps a second instance from starting - [PRIVACY.md](PRIVACY.md) lists everything the app touches, per platform
 - [WinGet](https://learn.microsoft.com/windows/package-manager/) is now documented as an alternative way to install and update the app (`winget install jens-duttke.usage-monitor-for-claude`), together with a note on what the community repository verifies about a package and what it does not - the direct download stays the authoritative source
 - Every release now lists the SHA256 of `UsageMonitorForClaude.exe`, so a download can be verified against the official release page - including the file WinGet installs, independently of its validation pipeline
 
 ### Changed
 
-- The autostart menu entry is now called **Start at login** instead of "Start with Windows" - it describes what happens on both systems, and both write their entry for the login, not for boot
+- The autostart menu entry is now called **Start at login** instead of "Start with Windows" - it describes the Windows login action rather than system boot
 - **Breaking:** The quick action (formerly the double-click command) now passes `USAGE_MONITOR_EVENT=quick_action` to its command instead of `double_click`. Only scripts that branch on that variable are affected; a script that simply runs when invoked needs no change
 - The `on_double_click_command` setting is now called `quick_action_command`, and the tray menu names it **Run Quick Action** - the old name described one system's input method for something that is triggered differently elsewhere. Existing settings files keep working: `on_double_click_command` is still read, and `quick_action_command` wins when both are present
 - A failed certificate check is now reported as such instead of as a generic "could not connect" error, so the cause is visible in the popup

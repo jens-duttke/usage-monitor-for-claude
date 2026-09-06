@@ -1,8 +1,8 @@
 {
-    "popup_title": "Usage Monitor for Claude",
+    "popup_title": "Claude&CodexUsage",
     "menu_show": "Mostrar uso do Claude",
     "menu_quick_action": "Executar Quick Action",
-    "tooltip_title": "Uso do Claude",
+    "tooltip_title": "Claude Usage",
     "account": "CONTA",
     "usage": "USO",
     "email": "E-mail",
@@ -36,8 +36,8 @@
         "sáb",
         "dom"
     ],
-    "loading": "Usage Monitor: Carregando...",
-    "error_label": "Usage Monitor: Erro",
+    "loading": "Claude Usage: Carregando...",
+    "error_label": "Claude Usage: Erro",
     "connection_error": "Não foi possível conectar à API da Anthropic.",
     "certificate_error": "Não foi possível verificar o certificado da API da Anthropic.",
     "http_error": "Falha na requisição API (HTTP {code}).",
@@ -70,6 +70,10 @@
     "status_updated_s": "Atualizado há {s}s",
     "status_next_update": "Próx. atualiz.: {duration}",
     "status_refreshing": "Atualizando...",
-    "already_running": "Usage Monitor for Claude v{running_version} já está em execução.\n\nDeseja substituir a instância em execução?",
+    "codex_snapshot_notice": "Os dados do Codex podem ser atualizados em até {duration}.",
+    "codex_snapshot_due": "A atualização dos dados do Codex está pendente.",
+    "codex_snapshot_unavailable": "Dados do Codex indisponíveis. Nova tentativa em até {duration}.",
+    "codex_snapshot_unavailable_due": "Dados do Codex indisponíveis. Uma atualização está pendente.",
+    "already_running": "Claude&CodexUsage v{running_version} já está em execução.\n\nDeseja substituir a instância em execução?",
     "replace_failed": "Não foi possível substituir a instância em execução.\n\nFeche-a manualmente e tente novamente."
 }

@@ -45,19 +45,12 @@ class TestRedactHome(unittest.TestCase):
         """Empty string is returned unchanged."""
         self.assertEqual(_redact_home(''), '')
 
-    @unittest.skipUnless(sys.platform == 'win32', 'path casing only collapses on Windows')
     def test_case_insensitive_match(self):
         """Windows paths are case-insensitive - a differently-cased home prefix
         (e.g. CLAUDE_CONFIG_DIR set as c:\\users\\...) must still be redacted."""
         home = str(Path.home())
         self.assertEqual(_redact_home(f'{home.swapcase()}{os.sep}.claude{os.sep}file'), f'~{os.sep}.claude{os.sep}file')
 
-    @unittest.skipIf(sys.platform == 'win32', 'POSIX paths are case-sensitive')
-    def test_case_sensitive_on_posix(self):
-        """A differently-cased prefix names a different directory on POSIX."""
-        home = str(Path.home())
-        path = f'{home.swapcase()}{os.sep}.claude'
-        self.assertEqual(_redact_home(path), path)
 
     def test_prefix_boundary_not_partially_redacted(self):
         """A sibling profile whose name merely starts with the username

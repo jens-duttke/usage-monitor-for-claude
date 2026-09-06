@@ -99,6 +99,7 @@ function makeEls() {
     const names = [
         'accountSection', 'emailRow', 'emailValue', 'planRow', 'planValue',
         'usageSection', 'headingUsage', 'usageBars',
+        'codexSection', 'headingCodex', 'codexBars', 'codexNotice',
         'extraSection', 'extraSpent', 'extraPct', 'extraBarContainer', 'extraFill', 'extraBalance',
         'installSection', 'installRows', 'statusSection', 'statusText',
     ];
@@ -226,6 +227,103 @@ console.log(JSON.stringify({ text: els.extraBalance.textContent, display: els.ex
 ''')
         self.assertEqual(result, {'text': '', 'display': 'none'})
 
+@unittest.skipUnless(_NODE, 'Node.js not available')
+class TestStatusRendering(unittest.TestCase):
+    """Tests for the live status footer and stale section state."""
 
+    def test_live_status_renders_elapsed_time_and_refreshing_state(self):
+        """A live status update renders its base text and refreshing suffix."""
+        result = _run_scenario('''
+globalThis.setInterval = () => 1;
+globalThis.clearInterval = () => {};
+Date.now = () => 200000;
+els = makeEls();
+translations = {
+    status_updated_s: 'Updated {s}s ago',
+    status_updated: 'Updated {duration} ago',
+    duration_hm: '{h}h {m}m',
+    duration_m: '{m}m',
+    status_next_update: 'Next update in {duration}',
+    status_refreshing: 'Refreshing',
+    duration_s: '{s}s',
+};
+updateData({
+    profile: null,
+    usage: [],
+    codex_usage: [makeEntry({ key: 'codex_five_hour', label: 'Codex Session (5h)' })],
+    extra: null,
+    installations: [],
+    status: {
+        last_success_time: 100,
+        next_poll_time: 120,
+        refreshing: true,
+        error: null,
+    },
+});
+console.log(JSON.stringify({
+    text: els.statusText.textContent,
+    codexStale: els.codexSection.classList.contains('stale'),
+}));
+''')
+        self.assertEqual(result, {
+            'text': 'Updated 1m ago · Refreshing',
+            'codexStale': True,
+        })
+
+
+
+@unittest.skipUnless(_NODE, 'Node.js not available')
+class TestCodexUsageSection(unittest.TestCase):
+    """Tests for the separate Codex usage section."""
+
+    def test_codex_bars_use_shared_renderer(self):
+        result = _run_scenario('''
+els = makeEls();
+updateData({
+    profile: null,
+    usage: [],
+    codex_usage: [makeEntry({ key: 'codex_five_hour', label: 'Codex Session (5h)', pct_text: '42%', fill_pct: 0.42 })],
+    extra: null,
+    installations: [],
+    status: null,
+});
+console.log(JSON.stringify({
+    visible: els.codexSection.classList.contains('visible'),
+    label: els.codexBars.children[0].children[0].children[0].textContent,
+    pct: els.codexBars.children[0].querySelector('.bar-pct').textContent,
+}));
+''')
+        self.assertEqual(result, {
+            'visible': True,
+            'label': 'Codex Session (5h)',
+            'pct': '42%',
+        })
+
+
+
+    def test_codex_ttl_notice_shows_due_state(self):
+        """An expired Codex snapshot is visibly marked as due for refresh."""
+        result = _run_scenario('''
+els = makeEls();
+translations = {
+    codex_snapshot_notice: 'Codex may update in {duration}',
+    codex_snapshot_due: 'Codex update due',
+    codex_snapshot_unavailable: 'Codex unavailable; retrying in {duration}',
+    codex_snapshot_unavailable_due: 'Codex unavailable; update due',
+    duration_s: '{s}s',
+    duration_m: '{m}m',
+    duration_hm: '{h}h {m}m',
+};
+updateData({
+    profile: null, usage: [], codex_usage: [], codex_snapshot: { remaining_seconds: 0, refresh_failed: false },
+    extra: null, installations: [], status: null,
+});
+console.log(JSON.stringify({
+    visible: els.codexSection.classList.contains('visible'),
+    text: els.codexNotice.textContent,
+    stale: els.codexSection.classList.contains('stale'),
+}));
+''')
+        self.assertEqual(result, {'visible': True, 'text': 'Codex update due', 'stale': True})
 if __name__ == '__main__':
     unittest.main()
