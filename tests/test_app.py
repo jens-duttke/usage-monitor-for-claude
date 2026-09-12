@@ -3390,6 +3390,7 @@ class TestStartupCommand(unittest.TestCase):
         env = mock_cmd.call_args[0][1]
         self.assertIn('USAGE_MONITOR_UTILIZATION_FIVE_HOUR', env)
         self.assertNotIn('USAGE_MONITOR_UTILIZATION_SEVEN_DAY_OPUS', env)
+        self.assertNotIn('USAGE_MONITOR_RESETS_AT_SEVEN_DAY_OPUS', env)
 
     @patch('usage_monitor_for_claude.app.ON_STARTUP_COMMAND', ['echo startup'])
     @patch('usage_monitor_for_claude.app.run_event_command')

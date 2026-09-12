@@ -220,7 +220,9 @@ def _merge_scoped_limits(data: dict[str, Any]) -> dict[str, Any]:
     weekly limit scoped to Fable becomes ``seven_day_fable``).  Inactive
     scoped limits (no reset window) are still surfaced at 0% so the model's
     limit is visible before it is first used; an existing top-level field is
-    never overwritten (it carries higher-precision data).
+    never overwritten (it carries higher-precision data).  Each synthetic
+    field is marked ``from_account_limits``, so it stays visible even when
+    its inherited prefix is not a name the field-name parser can read.
 
     Parameters
     ----------
@@ -268,7 +270,7 @@ def _merge_scoped_limits(data: dict[str, Any]) -> dict[str, Any]:
         field = f'{prefix}_{_model_slug(display_name)}'
         if merged.get(field) is not None:
             continue
-        merged[field] = {'utilization': float(limit.get('percent') or 0), 'resets_at': limit.get('resets_at')}
+        merged[field] = {'utilization': float(limit.get('percent') or 0), 'resets_at': limit.get('resets_at'), 'from_account_limits': True}
 
     return merged
 

@@ -17,6 +17,7 @@ from usage_monitor_for_claude.api import (
     API_URL_USAGE, _extract_server_message, _merge_scoped_limits, _model_slug, _normalize_prepaid_credits, _parse_retry_after,
     fetch_prepaid_credits, fetch_usage, read_access_token,
 )
+from usage_monitor_for_claude.formatting import expand_popup_fields
 from usage_monitor_for_claude.i18n import LOCALE_DIR
 
 EN = json.loads((LOCALE_DIR / 'en.json').read_text(encoding='utf-8'))
@@ -739,7 +740,7 @@ class TestMergeScopedLimits(unittest.TestCase):
     def test_active_scoped_limit_becomes_field(self):
         """An active model-scoped weekly limit becomes a synthetic quota field."""
         result = _merge_scoped_limits(_response_with_scoped('Fable', 30, _SEVEN_DAY_RESET))
-        self.assertEqual(result['seven_day_fable'], {'utilization': 30.0, 'resets_at': _SEVEN_DAY_RESET})
+        self.assertEqual(result['seven_day_fable'], {'utilization': 30.0, 'resets_at': _SEVEN_DAY_RESET, 'from_account_limits': True})
 
     def test_percent_is_float(self):
         """The integer 'percent' is exposed as a float 'utilization'."""
@@ -749,7 +750,7 @@ class TestMergeScopedLimits(unittest.TestCase):
     def test_inactive_scoped_limit_still_exposed(self):
         """A scoped limit without a reset window is exposed at 0% with resets_at None."""
         result = _merge_scoped_limits(_response_with_scoped('Fable', 0, None))
-        self.assertEqual(result['seven_day_fable'], {'utilization': 0.0, 'resets_at': None})
+        self.assertEqual(result['seven_day_fable'], {'utilization': 0.0, 'resets_at': None, 'from_account_limits': True})
 
     def test_existing_top_level_field_not_overwritten(self):
         """A top-level field wins over a scoped limit for the same model."""
@@ -781,6 +782,25 @@ class TestMergeScopedLimits(unittest.TestCase):
         result = _merge_scoped_limits(_response_with_scoped('Fable', 30, _SEVEN_DAY_RESET))
         self.assertEqual(result['five_hour']['utilization'], 4.0)
         self.assertEqual(result['seven_day']['utilization'], 1.0)
+
+    def test_synthetic_field_marked(self):
+        """A synthetic field carries from_account_limits; the top-level fields it derives from do not."""
+        result = _merge_scoped_limits(_response_with_scoped('Fable', 0, None))
+        self.assertIs(result['seven_day_fable']['from_account_limits'], True)
+        self.assertNotIn('from_account_limits', result['seven_day'])
+
+    def test_inactive_scoped_limit_under_unparsable_prefix_shown(self):
+        """An unused model-scoped limit stays visible when its inherited prefix is not a number word."""
+        monthly_reset = '2026-10-01T00:00:00+00:00'
+        data = {
+            'monthly': {'utilization': 30.0, 'resets_at': monthly_reset},
+            'limits': [
+                {'kind': 'monthly_all', 'group': 'monthly', 'percent': 30, 'resets_at': monthly_reset, 'scope': None},
+                {'kind': 'monthly_model', 'group': 'monthly', 'percent': 0, 'resets_at': None,
+                 'scope': {'model': {'display_name': 'Sonnet'}}},
+            ],
+        }
+        self.assertEqual(expand_popup_fields(['*'], _merge_scoped_limits(data)), ['monthly', 'monthly_sonnet'])
 
 
 # ---------------------------------------------------------------------------
