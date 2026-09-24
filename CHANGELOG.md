@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- [Windows notifications](https://github.com/jens-duttke/usage-monitor-for-claude/issues/98) no longer show partly filled usage bars that look like current quota usage - they show the neutral app logo instead.
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.23.0...HEAD)
 
 ## [1.23.0] - 2026-09-22

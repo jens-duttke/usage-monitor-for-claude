@@ -47,7 +47,6 @@ a = Analysis(
         'PIL._avif', 'PIL._webp',
         'PIL._imagingcms', 'PIL._imagingmath', 'PIL._imagingtk', 'PIL._imagingmorph',
         'setuptools', '_distutils_hack',
-        'asyncio', 'concurrent',
         'multiprocessing',
         'xml', 'tomllib',
         'sqlite3',
@@ -73,6 +72,6 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    icon='usage_monitor_for_claude.ico',
+    icon='usage_monitor_for_claude/notification_logo.ico',
     version='version_info.py',
 )

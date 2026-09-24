@@ -470,6 +470,15 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
         self.assertIsNone(linux.register_notification_identity())
 
 
+class TestShowNotification(unittest.TestCase):
+
+    def test_forwards_to_icon_notify(self):
+        """Freedesktop notifications go through the tray icon's own balloon."""
+        icon = MagicMock()
+        linux.show_notification(icon, 'message', 'title')
+        icon.notify.assert_called_once_with('message', 'title')
+
+
 class TestSetupConsole(unittest.TestCase):
     """Tests for verbose console setup."""
 
