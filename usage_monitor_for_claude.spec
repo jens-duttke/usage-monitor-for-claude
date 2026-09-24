@@ -73,6 +73,6 @@ exe = EXE(
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    icon='usage_monitor_for_claude.ico',
+    icon='usage_monitor_for_claude/notification_logo.ico',
     version='version_info.py',
 )

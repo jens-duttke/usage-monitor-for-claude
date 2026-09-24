@@ -578,7 +578,7 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_skips_everything_when_logo_missing(self, mock_winreg, mock_ctypes):
-        """A missing logo leaves the default identity (tray icon) untouched."""
+        """A missing logo leaves the process identity untouched."""
         logo = MagicMock()
         logo.is_file.return_value = False
 
@@ -591,7 +591,7 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_does_not_adopt_aumid_when_registry_fails(self, mock_winreg, mock_ctypes):
-        """A registry write failure keeps the tray icon rather than an empty one."""
+        """A registry write failure does not set the process AppUserModelID."""
         mock_winreg.CreateKey.side_effect = OSError('access denied')
         logo = MagicMock()
         logo.is_file.return_value = True

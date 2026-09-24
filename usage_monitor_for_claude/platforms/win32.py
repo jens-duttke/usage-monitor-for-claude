@@ -297,15 +297,13 @@ def register_notification_identity() -> None:
     """Adopt a fixed notification identity for this process.
 
     Writes the ``DisplayName`` and ``IconUri`` registration to ``HKCU`` and,
-    only if that succeeds, sets the process ``AppUserModelID`` so toasts use
-    the registered name and logo.  Re-run on every startup because a frozen
-    build extracts the logo to a fresh temporary directory each run, changing
-    its path.
+    only if that succeeds, sets the process ``AppUserModelID``.  Re-run on
+    every startup because a frozen build extracts the logo to a fresh
+    temporary directory each run, changing its path.
 
     On any failure - a missing logo file or a registry write error - the
-    process keeps its default identity (the live tray icon).  This is never
-    fatal: a notification icon must not stop the app from starting, and
-    falling back to the tray icon is better than an empty one.
+    process keeps its default identity.  This is never fatal: a notification
+    icon must not stop the app from starting.
     """
     if not _NOTIFICATION_LOGO.is_file():
         return

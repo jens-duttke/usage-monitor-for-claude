@@ -483,9 +483,9 @@ def sync_autostart_path() -> None:
 def register_notification_identity() -> None:
     """No-op.
 
-    The Windows counterpart pins a toast identity so notifications do not
-    borrow the live tray icon.  Freedesktop notifications carry their icon
-    per message instead, so there is no process-wide identity to register.
+    The Windows counterpart registers an AppUserModelID and neutral logo.
+    Freedesktop notifications carry their icon per message instead, so there
+    is no process-wide identity to register.
     """
 
 
