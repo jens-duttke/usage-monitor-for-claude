@@ -8,8 +8,10 @@ at import time, so the whole file is skipped off Windows.
 from __future__ import annotations
 
 import sys
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 if sys.platform != 'win32':
@@ -548,28 +550,21 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_registers_name_icon_and_sets_aumid(self, mock_winreg, mock_ctypes):
-        """A present logo writes DisplayName + IconUri (the logo path) and then adopts the AUMID."""
-        logo = MagicMock()
-        logo.is_file.return_value = True
-        logo.__str__.return_value = r'C:\fake\notification_logo.ico'
-
-        with patch.object(win32, '_NOTIFICATION_LOGO', logo):
+        """A present logo gets a stable path before the process adopts the AUMID."""
+        with tempfile.TemporaryDirectory() as icon_dir, patch.object(win32, '_STABLE_ICON_DIR', Path(icon_dir)):
             win32.register_notification_identity()
 
         mock_winreg.CreateKey.assert_called_once_with(mock_winreg.HKEY_CURRENT_USER, win32._IDENTITY_REG_PATH)
         writes = {c.args[1]: c.args[4] for c in mock_winreg.SetValueEx.call_args_list}
         self.assertEqual(list(writes), ['DisplayName', 'IconUri'])
-        self.assertEqual(writes['IconUri'], r'C:\fake\notification_logo.ico')
+        self.assertEqual(writes['IconUri'], str(Path(icon_dir) / 'notification_logo.ico'))
         mock_ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.assert_called_once()
 
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_writes_configured_display_name(self, mock_winreg, mock_ctypes):
         """DisplayName is written with the module's brand name."""
-        logo = MagicMock()
-        logo.is_file.return_value = True
-
-        with patch.object(win32, '_NOTIFICATION_LOGO', logo):
+        with tempfile.TemporaryDirectory() as icon_dir, patch.object(win32, '_STABLE_ICON_DIR', Path(icon_dir)):
             win32.register_notification_identity()
 
         display_call = next(c for c in mock_winreg.SetValueEx.call_args_list if c.args[1] == 'DisplayName')
@@ -578,7 +573,7 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_skips_everything_when_logo_missing(self, mock_winreg, mock_ctypes):
-        """A missing logo leaves the default identity (tray icon) untouched."""
+        """A missing logo leaves the process identity untouched."""
         logo = MagicMock()
         logo.is_file.return_value = False
 
@@ -591,12 +586,9 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_does_not_adopt_aumid_when_registry_fails(self, mock_winreg, mock_ctypes):
-        """A registry write failure keeps the tray icon rather than an empty one."""
+        """A registry write failure does not set the process AppUserModelID."""
         mock_winreg.CreateKey.side_effect = OSError('access denied')
-        logo = MagicMock()
-        logo.is_file.return_value = True
-
-        with patch.object(win32, '_NOTIFICATION_LOGO', logo):
+        with tempfile.TemporaryDirectory() as icon_dir, patch.object(win32, '_STABLE_ICON_DIR', Path(icon_dir)):
             win32.register_notification_identity()
 
         mock_ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.assert_not_called()
@@ -605,6 +597,48 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
         """The registry path targets the same AUMID the process adopts."""
         self.assertTrue(win32._IDENTITY_REG_PATH.endswith(win32.APP_USER_MODEL_ID))
         self.assertIn(r'Software\Classes\AppUserModelId', win32._IDENTITY_REG_PATH)
+
+
+class TestShowNotification(unittest.TestCase):
+    """Tests for show_notification()."""
+
+    def test_shows_toast_with_escaped_text_and_registered_aumid(self):
+        """Title and message are escaped into a text-only ToastGeneric binding, notified under the app's AUMID."""
+        mock_xml_document_cls = MagicMock()
+        mock_toast_xml = mock_xml_document_cls.return_value
+        mock_notifier = MagicMock()
+        with patch('winrt.windows.data.xml.dom.XmlDocument', mock_xml_document_cls), \
+             patch('winrt.windows.ui.notifications.ToastNotification') as mock_toast_notification_cls, \
+             patch('winrt.windows.ui.notifications.ToastNotificationManager') as mock_manager:
+            mock_manager.create_toast_notifier_with_id.return_value = mock_notifier
+            icon = MagicMock()
+            win32.show_notification(icon, 'usage <100%>', 'Title & Co')
+
+        loaded_xml = mock_toast_xml.load_xml.call_args[0][0]
+        self.assertIn('usage &lt;100%&gt;', loaded_xml)
+        self.assertIn('Title &amp; Co', loaded_xml)
+        mock_manager.create_toast_notifier_with_id.assert_called_once_with(win32.APP_USER_MODEL_ID)
+        mock_notifier.show.assert_called_once_with(mock_toast_notification_cls.return_value)
+        icon.notify.assert_not_called()
+
+    def test_falls_back_to_icon_notify_when_winrt_unavailable(self):
+        """A missing or failing WinRT toast API falls back to the tray balloon."""
+        with patch.dict(sys.modules, {'winrt.windows.data.xml.dom': None}):
+            icon = MagicMock()
+            win32.show_notification(icon, 'message', 'title')
+
+        icon.notify.assert_called_once_with('message', 'title')
+
+    def test_falls_back_to_icon_notify_when_notifier_raises(self):
+        """A WinRT call that raises at runtime (not just at import) still falls back."""
+        with patch('winrt.windows.data.xml.dom.XmlDocument'), \
+             patch('winrt.windows.ui.notifications.ToastNotification'), \
+             patch('winrt.windows.ui.notifications.ToastNotificationManager') as mock_manager:
+            mock_manager.create_toast_notifier_with_id.side_effect = OSError('no notifier')
+            icon = MagicMock()
+            win32.show_notification(icon, 'message', 'title')
+
+        icon.notify.assert_called_once_with('message', 'title')
 
 
 class TestWebview2Version(unittest.TestCase):

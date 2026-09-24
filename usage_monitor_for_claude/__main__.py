@@ -107,7 +107,6 @@ try:
         sys.exit(0)
     _verbose_step('ensure_single_instance... OK')
 
-    # Give notifications a fixed logo instead of the live tray icon.
     # Must run before any window is created (AppUserModelID requirement).
     _verbose_step('register_notification_identity...')
     register_notification_identity()

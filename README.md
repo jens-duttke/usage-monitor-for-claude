@@ -18,7 +18,7 @@ A native tray app for Windows and Linux that shows your Claude usage at a glance
 
 ## Features
 
-- **Portable on Windows** - single EXE (~12.5 MB), no installation, no Electron, no runtime required. Download, place anywhere, run. To uninstall, delete the file. On Linux it runs from source against the GTK and WebKit libraries your desktop already ships
+- **Portable on Windows** - single EXE (~18 MB), no installation, no Electron, no runtime required. Download, place anywhere, run. To uninstall, disable autostart if enabled, then delete the EXE and its notification icon from `%LOCALAPPDATA%\JensDuttke\UsageMonitorForClaude`. On Linux it runs from source against the GTK and WebKit libraries your desktop already ships
 - **Zero configuration** - authenticates through your existing Claude Code login, no API key or manual token entry needed
 - **Live tray icon** with two [configurable](docs/configuration.md#tray-icon-bars) progress bars (session + weekly by default), or both values as stacked percentages via `icon_style`. Plus a [configurable tooltip](docs/configuration.md#tooltip-fields), percentage display, and theme-aware colors for light and dark taskbars
 - **Detail popup** (left-click, or from the tray menu on Linux) with account info, reset countdowns, extra usage including the prepaid credits still available to pay for it, and dynamically detected bars for every active quota type (Session, Weekly, Sonnet, Opus, Fable, Cowork, and whatever Anthropic adds next), [selectable per field](docs/configuration.md#popup-fields). A stale-data indicator flags values that may be outdated. Pin it open and drag it anywhere to keep usage visible during long sessions - optionally as a [compact view](docs/configuration.md#compact-pinned-view) with only the parts you need. Reset times follow your system's clock format
@@ -40,7 +40,7 @@ This tool handles your Claude Code OAuth token, so you should be able to verify 
 
 - **Single network destination** - communicates exclusively with `api.anthropic.com`, no other hosts
 - **Credentials stay local** - the OAuth token is used only in HTTP Authorization headers, never logged, stored elsewhere, or transmitted to third parties
-- **Touches almost nothing** - usage data lives in memory only. On Windows the app writes no files at all; its only lasting traces are two `HKEY_CURRENT_USER` registry values (the toast notification identity, re-registered on every start, and the autostart entry, written only when you enable autostart). On Linux the same two concerns need files instead: an autostart `.desktop` entry, again only when you enable it, and a `0600` lock file in the session's runtime directory that keeps a second instance from starting. [PRIVACY.md](PRIVACY.md) lists every one of them. An expired OAuth token additionally triggers `claude update`, which may install a newer Claude Code version
+- **Touches almost nothing** - usage data lives in memory only. On Windows the app stores a neutral notification icon in `%LOCALAPPDATA%\JensDuttke\UsageMonitorForClaude` and writes its notification identity under `HKEY_CURRENT_USER`; it writes an autostart entry only when you enable autostart. On Linux it writes an autostart `.desktop` entry only when you enable it, plus a `0600` lock file in the session's runtime directory that keeps a second instance from starting. [PRIVACY.md](PRIVACY.md) lists every one of them. An expired OAuth token additionally triggers `claude update`, which may install a newer Claude Code version
 - **No dynamic code execution** - no `eval()`, `exec()`, `compile()`, or dynamic imports
 - **No obfuscation** - no encoded strings, no hidden URLs, no minified logic
 - **Modular architecture** - small, focused modules with security-critical code (credentials, API calls) isolated in a single file ([`api.py`](usage_monitor_for_claude/api.py))
@@ -89,7 +89,7 @@ Chrome does not add a second opinion. It passes every downloaded executable to t
 
 ## Quick Start
 
-**No Python required.** Download the latest [**UsageMonitorForClaude.exe**](https://github.com/jens-duttke/usage-monitor-for-claude/releases/latest), place it wherever you like, and run it. The EXE is code signed, so Windows names *Jens Duttke* as its publisher. To remove, disable "Start at login" in the context menu first (if enabled), then delete the file.
+**No Python required.** Download the latest [**UsageMonitorForClaude.exe**](https://github.com/jens-duttke/usage-monitor-for-claude/releases/latest), place it wherever you like, and run it. The EXE is code signed, so Windows names *Jens Duttke* as its publisher. To remove, disable "Start at login" in the context menu first (if enabled), then delete the EXE and `%LOCALAPPDATA%\JensDuttke\UsageMonitorForClaude\notification_logo.ico`.
 
 Or install it from [WinGet](https://learn.microsoft.com/windows/package-manager/), where every release is published automatically:
 
@@ -266,7 +266,7 @@ themselves at module level, so a green run means everything applicable to your s
 python build.py
 ```
 
-Produces `dist/UsageMonitorForClaude.exe` (~12.5 MB), a single-file executable that bundles Python and all dependencies.
+Produces `dist/UsageMonitorForClaude.exe` (~18 MB), a single-file executable that bundles Python and all dependencies.
 
 Your own build is unsigned. To sign it, install the Windows SDK signing tools and put a `signing.env` next to `build.py` with `SIGNING_THUMBPRINT` (a code signing certificate in your Windows certificate store) and `SIGNING_TIMESTAMP_URL`. Add `SIGNING_TIMESTAMP_FALLBACK_URL` to have a second timestamp server tried when the first one does not answer. The build then signs the executable and verifies the result, and a failure of either stops it. If the certificate sits on a hardware token, the build stops partway through until you enter the PIN.
 
@@ -351,7 +351,7 @@ New features should follow the existing architecture. Key points from the guidel
 - Security-critical code (credentials, API calls) stays isolated in [`api.py`](usage_monitor_for_claude/api.py)
 - All user-facing changes need updates in [`CHANGELOG.md`](CHANGELOG.md), [`README.md`](README.md), and [`docs/configuration.md`](docs/configuration.md) where applicable
 - Tests are required - run `python -m unittest discover -s tests` before committing
-- The app must not write files beyond what [`PRIVACY.md`](PRIVACY.md) documents: nothing at all on Windows, where the only lasting state is two `HKEY_CURRENT_USER` registry values (notification identity, autostart entry), and on Linux the autostart `.desktop` entry plus the single-instance lock file. Any new persistent write needs `PRIVACY.md` and `README.md` updated in the same change
+- The app must not write files beyond what [`PRIVACY.md`](PRIVACY.md) documents: the neutral notification icon and two `HKEY_CURRENT_USER` registry entries on Windows (notification identity, autostart), and the autostart `.desktop` entry plus the single-instance lock file on Linux. Any new persistent write needs `PRIVACY.md` and `README.md` updated in the same change
 
 </details>
 

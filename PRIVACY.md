@@ -32,8 +32,9 @@ All usage data is kept in memory only and discarded when the application closes.
 settings file (`usage-monitor-settings.json`) is read-only. The complete list of what the
 application changes on your system follows - there is nothing else.
 
-**On Windows** no files are written at all. Two values are written to the registry, both under
-`HKEY_CURRENT_USER`:
+**On Windows** the neutral notification icon is copied to
+`%LOCALAPPDATA%\JensDuttke\UsageMonitorForClaude\notification_logo.ico`. The file is updated only when the
+bundled icon changes. Two entries are written to the registry under `HKEY_CURRENT_USER`:
 
 - `Software\Classes\AppUserModelId\JensDuttke.UsageMonitorForClaude` - the display name and icon
   shown in the header of the application's notifications. Re-registered on every start.
@@ -48,8 +49,8 @@ application changes on your system follows - there is nothing else.
   from running. It holds the process id and version, is created with owner-only permissions
   (`0600`), and lives in the session's runtime directory, which the system clears at logout.
 
-Monitoring a second Claude account (`--config-dir`) adds a suffix to those names, so each account
-gets its own entry.
+Monitoring a second Claude account (`--config-dir`) adds a suffix to its autostart and lock names.
+All Windows instances share the notification identity and neutral icon.
 
 ## Claude Code Installation
 

@@ -10,9 +10,11 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import functools
+import html
 import msvcrt
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import threading
@@ -30,13 +32,13 @@ __all__ = [
     'diagnostic_display_rows', 'diagnostic_post_init_rows', 'diagnostic_runtime_rows',
     'diagnostic_system_rows', 'double_click_seconds', 'get_idle_seconds',
     'is_autostart_enabled', 'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs',
-    'register_notification_identity', 'set_autostart', 'show_error_box', 'show_warning_box',
+    'register_notification_identity', 'set_autostart', 'show_error_box', 'show_notification', 'show_warning_box',
     'setup_console', 'show_topmost_error', 'sync_autostart_path', 'system_time_format',
     'taskbar_uses_light_theme', 'watch_theme_change',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.
-DIAGNOSTIC_PACKAGES = ('pywebview', 'pythonnet', 'clr-loader', 'pystray', 'Pillow', 'requests')
+DIAGNOSTIC_PACKAGES = ('pywebview', 'pythonnet', 'clr-loader', 'pystray', 'Pillow', 'requests', 'winrt-Windows.UI.Notifications')
 
 # WebView2 registry GUIDs (runtime, beta, dev, canary)
 _WEBVIEW2_GUIDS = [
@@ -58,6 +60,7 @@ DISPLAY_NAME = 'Usage Monitor for Claude'
 # A multi-size .ico (16-256 px) so Windows picks a crisp frame for the small
 # toast header instead of downscaling a single large image.
 _NOTIFICATION_LOGO = Path(__file__).resolve().parent.parent / 'notification_logo.ico'
+_STABLE_ICON_DIR = Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData' / 'Local')) / 'JensDuttke' / 'UsageMonitorForClaude'
 
 # HKCU key the shell reads to resolve the identity's display name and icon.
 # A registry entry is enough - no Start Menu shortcut is required.
@@ -297,27 +300,48 @@ def register_notification_identity() -> None:
     """Adopt a fixed notification identity for this process.
 
     Writes the ``DisplayName`` and ``IconUri`` registration to ``HKCU`` and,
-    only if that succeeds, sets the process ``AppUserModelID`` so toasts use
-    the registered name and logo.  Re-run on every startup because a frozen
-    build extracts the logo to a fresh temporary directory each run, changing
-    its path.
+    only if that succeeds, sets the process ``AppUserModelID``.  The icon
+    lives in a stable user directory so the shell can resolve it after a
+    frozen build's temporary extraction directory disappears.
 
     On any failure - a missing logo file or a registry write error - the
-    process keeps its default identity (the live tray icon).  This is never
-    fatal: a notification icon must not stop the app from starting, and
-    falling back to the tray icon is better than an empty one.
+    process keeps its default identity.  This is never fatal: a notification
+    icon must not stop the app from starting.
     """
     if not _NOTIFICATION_LOGO.is_file():
         return
 
     try:
+        _STABLE_ICON_DIR.mkdir(parents=True, exist_ok=True)
+        icon_path = _STABLE_ICON_DIR / 'notification_logo.ico'
+        if not icon_path.is_file() or icon_path.read_bytes() != _NOTIFICATION_LOGO.read_bytes():
+            shutil.copyfile(_NOTIFICATION_LOGO, icon_path)
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _IDENTITY_REG_PATH) as key:
             winreg.SetValueEx(key, 'DisplayName', 0, winreg.REG_SZ, DISPLAY_NAME)
-            winreg.SetValueEx(key, 'IconUri', 0, winreg.REG_EXPAND_SZ, str(_NOTIFICATION_LOGO))
+            winreg.SetValueEx(key, 'IconUri', 0, winreg.REG_EXPAND_SZ, str(icon_path))
     except OSError:
         return
 
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p(APP_USER_MODEL_ID))
+
+
+def show_notification(icon: Any, message: str, title: str) -> None:
+    """Show a Windows toast with the app's stable neutral image."""
+    try:
+        from winrt.windows.data.xml.dom import XmlDocument
+        from winrt.windows.ui.notifications import ToastNotification, ToastNotificationManager
+
+        toast_xml = XmlDocument()
+        toast_xml.load_xml(
+            '<toast><visual><binding template="ToastGeneric">'
+            f'<text>{html.escape(title)}</text>'
+            f'<text>{html.escape(message)}</text>'
+            '</binding></visual></toast>'
+        )
+        notifier = ToastNotificationManager.create_toast_notifier_with_id(APP_USER_MODEL_ID)
+        notifier.show(ToastNotification(toast_xml))
+    except Exception:
+        icon.notify(message, title)
 
 
 def setup_console() -> None:
