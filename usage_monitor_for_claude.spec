@@ -47,7 +47,6 @@ a = Analysis(
         'PIL._avif', 'PIL._webp',
         'PIL._imagingcms', 'PIL._imagingmath', 'PIL._imagingtk', 'PIL._imagingmorph',
         'setuptools', '_distutils_hack',
-        'asyncio', 'concurrent',
         'multiprocessing',
         'xml', 'tomllib',
         'sqlite3',

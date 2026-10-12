@@ -4,3 +4,5 @@ requests
 truststore
 pywebview
 pyinstaller
+winrt-Windows.UI.Notifications>=3.2.1; sys_platform == "win32"
+winrt-Windows.Data.Xml.Dom>=3.2.1; sys_platform == "win32"

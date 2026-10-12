@@ -38,13 +38,16 @@ def _make_app(thresholds: list[float] | None = None) -> UsageMonitorForClaude:
     # regardless of the real machine's idle/lock state (idle/lock tests override).
     # ICON_FIELDS is pinned to its default so render tests do not inherit a
     # usage-monitor-settings.json present on the machine running the suite
-    # (tests for custom fields override it per test).
+    # (tests for custom fields override it per test). show_notification is
+    # forwarded to icon.notify so existing assertions keep working without
+    # exercising the real platform toast implementation.
     app._patches = [
         patch('usage_monitor_for_claude.app.get_alert_thresholds', return_value=thresholds),
         patch('usage_monitor_for_claude.app.is_workstation_locked', return_value=False),
         patch('usage_monitor_for_claude.app.is_screensaver_running', return_value=False),
         patch('usage_monitor_for_claude.app.get_idle_seconds', return_value=0.0),
         patch('usage_monitor_for_claude.app.ICON_FIELDS', ['five_hour', 'seven_day']),
+        patch('usage_monitor_for_claude.app.show_notification', side_effect=lambda icon, message, title: icon.notify(message, title)),
     ]
     for active_patch in app._patches:
         active_patch.start()

@@ -10,12 +10,16 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 import functools
+import html
 import msvcrt
 import os
 import platform
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
+import traceback
 import winreg
 from pathlib import Path
 from typing import Any, Callable, TextIO
@@ -30,13 +34,13 @@ __all__ = [
     'diagnostic_display_rows', 'diagnostic_post_init_rows', 'diagnostic_runtime_rows',
     'diagnostic_system_rows', 'double_click_seconds', 'get_idle_seconds',
     'is_autostart_enabled', 'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs',
-    'register_notification_identity', 'set_autostart', 'show_error_box', 'show_warning_box',
+    'register_notification_identity', 'set_autostart', 'show_error_box', 'show_notification', 'show_warning_box',
     'setup_console', 'show_topmost_error', 'sync_autostart_path', 'system_time_format',
     'taskbar_uses_light_theme', 'watch_theme_change',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.
-DIAGNOSTIC_PACKAGES = ('pywebview', 'pythonnet', 'clr-loader', 'pystray', 'Pillow', 'requests')
+DIAGNOSTIC_PACKAGES = ('pywebview', 'pythonnet', 'clr-loader', 'pystray', 'Pillow', 'requests', 'winrt-Windows.UI.Notifications')
 
 # WebView2 registry GUIDs (runtime, beta, dev, canary)
 _WEBVIEW2_GUIDS = [
@@ -58,6 +62,11 @@ DISPLAY_NAME = 'Usage Monitor for Claude'
 # A multi-size .ico (16-256 px) so Windows picks a crisp frame for the small
 # toast header instead of downscaling a single large image.
 _NOTIFICATION_LOGO = Path(__file__).resolve().parent.parent / 'notification_logo.ico'
+_NOTIFICATION_LOGO_COPY = Path(tempfile.gettempdir()) / 'UsageMonitorForClaude_notification_logo.ico'
+
+# Set once the identity above is registered.  A toast posted under an unregistered
+# AppUserModelID can vanish without any error, so WinRT toasts wait for this.
+_notification_identity_registered = threading.Event()
 
 # HKCU key the shell reads to resolve the identity's display name and icon.
 # A registry entry is enough - no Start Menu shortcut is required.
@@ -296,28 +305,65 @@ def sync_autostart_path() -> None:
 def register_notification_identity() -> None:
     """Adopt a fixed notification identity for this process.
 
-    Writes the ``DisplayName`` and ``IconUri`` registration to ``HKCU`` and,
-    only if that succeeds, sets the process ``AppUserModelID`` so toasts use
-    the registered name and logo.  Re-run on every startup because a frozen
-    build extracts the logo to a fresh temporary directory each run, changing
-    its path.
+    Copies the logo into the user's temp folder, writes the
+    ``DisplayName`` and ``IconUri`` registration to ``HKCU`` and, only if that
+    succeeds, sets the process ``AppUserModelID`` so toasts use the registered
+    name and logo.  The copy is required: a frozen build extracts the logo to
+    a ``_MEI`` directory that only the current user may open, and the toast
+    header then stays empty, while a file in the temp folder is displayed.  The copy is refreshed on every start, so the temp folder being
+    cleared does no harm.
 
-    On any failure - a missing logo file or a registry write error - the
-    process keeps its default identity (the live tray icon).  This is never
-    fatal: a notification icon must not stop the app from starting, and
-    falling back to the tray icon is better than an empty one.
+    On any failure - a missing logo file, a failed copy or a registry write
+    error - the process keeps its default identity and
+    :func:`show_notification` falls back to the tray balloon.  This is never
+    fatal: a notification icon must not stop the app from starting.
     """
     if not _NOTIFICATION_LOGO.is_file():
         return
 
     try:
+        if not _NOTIFICATION_LOGO_COPY.is_file() or _NOTIFICATION_LOGO_COPY.read_bytes() != _NOTIFICATION_LOGO.read_bytes():
+            shutil.copyfile(_NOTIFICATION_LOGO, _NOTIFICATION_LOGO_COPY)
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _IDENTITY_REG_PATH) as key:
             winreg.SetValueEx(key, 'DisplayName', 0, winreg.REG_SZ, DISPLAY_NAME)
-            winreg.SetValueEx(key, 'IconUri', 0, winreg.REG_EXPAND_SZ, str(_NOTIFICATION_LOGO))
+            winreg.SetValueEx(key, 'IconUri', 0, winreg.REG_EXPAND_SZ, str(_NOTIFICATION_LOGO_COPY))
     except OSError:
         return
 
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p(APP_USER_MODEL_ID))
+    result = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p(APP_USER_MODEL_ID))
+    if result == 0:
+        _notification_identity_registered.set()
+
+
+def show_notification(icon: Any, message: str, title: str) -> None:
+    """Show a notification under the app's registered identity.
+
+    ``pystray.Icon.notify()`` posts a tray balloon, whose header always shows
+    the live tray icon - which reflects the most-exhausted quota and would
+    contradict the message.  A WinRT toast takes its header icon from the
+    registered ``AppUserModelID`` instead.  The balloon remains the fallback
+    when the identity is not registered or the WinRT call fails; a failure is
+    printed so a broken build is visible in the verbose output.
+    """
+    if not _notification_identity_registered.is_set():
+        icon.notify(message, title)
+        return
+
+    try:
+        from winrt.windows.data.xml.dom import XmlDocument
+        from winrt.windows.ui.notifications import ToastNotification, ToastNotificationManager
+
+        toast_xml = XmlDocument()
+        toast_xml.load_xml(
+            '<toast><visual><binding template="ToastGeneric">'
+            f'<text>{html.escape(title)}</text>'
+            f'<text>{html.escape(message)}</text>'
+            '</binding></visual></toast>'
+        )
+        ToastNotificationManager.create_toast_notifier_with_id(APP_USER_MODEL_ID).show(ToastNotification(toast_xml))
+    except Exception:
+        traceback.print_exc()
+        icon.notify(message, title)
 
 
 def setup_console() -> None:

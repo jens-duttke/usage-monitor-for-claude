@@ -8,8 +8,10 @@ at import time, so the whole file is skipped off Windows.
 from __future__ import annotations
 
 import sys
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 if sys.platform != 'win32':
@@ -545,32 +547,37 @@ class TestCustomConfigDirAutostart(unittest.TestCase):
 class TestRegisterNotificationIdentity(unittest.TestCase):
     """Tests for register_notification_identity()."""
 
+    def setUp(self):
+        win32._notification_identity_registered.clear()
+        self.addCleanup(win32._notification_identity_registered.clear)
+        workdir = tempfile.TemporaryDirectory()
+        self.addCleanup(workdir.cleanup)
+        self.logo = Path(workdir.name) / 'source' / 'notification_logo.ico'
+        self.logo.parent.mkdir()
+        self.logo.write_bytes(b'logo-v1')
+        self.logo_copy = Path(workdir.name) / 'copy.ico'
+        for target, value in (('_NOTIFICATION_LOGO', self.logo), ('_NOTIFICATION_LOGO_COPY', self.logo_copy)):
+            patcher = patch.object(win32, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_registers_name_icon_and_sets_aumid(self, mock_winreg, mock_ctypes):
-        """A present logo writes DisplayName + IconUri (the logo path) and then adopts the AUMID."""
-        logo = MagicMock()
-        logo.is_file.return_value = True
-        logo.__str__.return_value = r'C:\fake\notification_logo.ico'
-
-        with patch.object(win32, '_NOTIFICATION_LOGO', logo):
-            win32.register_notification_identity()
+        """A present logo is registered under its copied path before the process adopts the AUMID."""
+        win32.register_notification_identity()
 
         mock_winreg.CreateKey.assert_called_once_with(mock_winreg.HKEY_CURRENT_USER, win32._IDENTITY_REG_PATH)
         writes = {c.args[1]: c.args[4] for c in mock_winreg.SetValueEx.call_args_list}
         self.assertEqual(list(writes), ['DisplayName', 'IconUri'])
-        self.assertEqual(writes['IconUri'], r'C:\fake\notification_logo.ico')
+        self.assertEqual(writes['IconUri'], str(self.logo_copy))
         mock_ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.assert_called_once()
 
     @patch.object(win32, 'ctypes')
     @patch.object(win32, 'winreg')
     def test_writes_configured_display_name(self, mock_winreg, mock_ctypes):
         """DisplayName is written with the module's brand name."""
-        logo = MagicMock()
-        logo.is_file.return_value = True
-
-        with patch.object(win32, '_NOTIFICATION_LOGO', logo):
-            win32.register_notification_identity()
+        win32.register_notification_identity()
 
         display_call = next(c for c in mock_winreg.SetValueEx.call_args_list if c.args[1] == 'DisplayName')
         self.assertEqual(display_call.args[4], win32.DISPLAY_NAME)
@@ -579,11 +586,9 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
     @patch.object(win32, 'winreg')
     def test_skips_everything_when_logo_missing(self, mock_winreg, mock_ctypes):
         """A missing logo leaves the default identity (tray icon) untouched."""
-        logo = MagicMock()
-        logo.is_file.return_value = False
+        self.logo.unlink()
 
-        with patch.object(win32, '_NOTIFICATION_LOGO', logo):
-            win32.register_notification_identity()
+        win32.register_notification_identity()
 
         mock_winreg.CreateKey.assert_not_called()
         mock_ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.assert_not_called()
@@ -593,18 +598,147 @@ class TestRegisterNotificationIdentity(unittest.TestCase):
     def test_does_not_adopt_aumid_when_registry_fails(self, mock_winreg, mock_ctypes):
         """A registry write failure keeps the tray icon rather than an empty one."""
         mock_winreg.CreateKey.side_effect = OSError('access denied')
-        logo = MagicMock()
-        logo.is_file.return_value = True
-
-        with patch.object(win32, '_NOTIFICATION_LOGO', logo):
-            win32.register_notification_identity()
+        win32.register_notification_identity()
 
         mock_ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.assert_not_called()
+
+    @patch.object(win32, 'ctypes')
+    @patch.object(win32, 'winreg')
+    def test_copies_logo_to_temp_folder(self, mock_winreg, mock_ctypes):
+        """The registered icon is a copy in the temp folder, not the owner-only extraction path."""
+        win32.register_notification_identity()
+
+        self.assertEqual(self.logo_copy.read_bytes(), b'logo-v1')
+
+    @patch.object(win32, 'ctypes')
+    @patch.object(win32, 'winreg')
+    def test_refreshes_stale_copy(self, mock_winreg, mock_ctypes):
+        """A copy left by an older version is replaced when the bundled logo differs."""
+        self.logo_copy.write_bytes(b'old')
+
+        win32.register_notification_identity()
+
+        self.assertEqual(self.logo_copy.read_bytes(), b'logo-v1')
+
+    @patch.object(win32, 'ctypes')
+    @patch.object(win32, 'winreg')
+    def test_skips_registration_when_copy_fails(self, mock_winreg, mock_ctypes):
+        """A copy that cannot be written leaves the identity unregistered."""
+        with patch.object(win32.shutil, 'copyfile', side_effect=OSError('disk full')):
+            win32.register_notification_identity()
+
+        mock_winreg.CreateKey.assert_not_called()
+        self.assertFalse(win32._notification_identity_registered.is_set())
 
     def test_registry_path_matches_aumid(self):
         """The registry path targets the same AUMID the process adopts."""
         self.assertTrue(win32._IDENTITY_REG_PATH.endswith(win32.APP_USER_MODEL_ID))
         self.assertIn(r'Software\Classes\AppUserModelId', win32._IDENTITY_REG_PATH)
+
+    @patch.object(win32, 'ctypes')
+    @patch.object(win32, 'winreg')
+    def test_marks_identity_registered_when_aumid_accepted(self, mock_winreg, mock_ctypes):
+        """A successful HRESULT from SetCurrentProcessExplicitAppUserModelID enables WinRT toasts."""
+        mock_ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.return_value = 0
+        win32.register_notification_identity()
+
+        self.assertTrue(win32._notification_identity_registered.is_set())
+
+    @patch.object(win32, 'ctypes')
+    @patch.object(win32, 'winreg')
+    def test_identity_stays_unregistered_when_aumid_rejected(self, mock_winreg, mock_ctypes):
+        """A failing HRESULT keeps WinRT toasts disabled."""
+        mock_ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID.return_value = 0x80070057
+        win32.register_notification_identity()
+
+        self.assertFalse(win32._notification_identity_registered.is_set())
+
+    @patch.object(win32, 'ctypes')
+    @patch.object(win32, 'winreg')
+    def test_identity_stays_unregistered_when_registry_fails(self, mock_winreg, mock_ctypes):
+        """A registry write failure keeps WinRT toasts disabled."""
+        mock_winreg.CreateKey.side_effect = OSError('access denied')
+        win32.register_notification_identity()
+
+        self.assertFalse(win32._notification_identity_registered.is_set())
+
+
+class TestShowNotification(unittest.TestCase):
+    """Tests for show_notification().
+
+    The WinRT modules are stubbed through ``sys.modules`` so the tests do not
+    depend on the ``winrt`` packages being installed.
+    """
+
+    def setUp(self):
+        self.addCleanup(win32._notification_identity_registered.clear)
+
+    @staticmethod
+    def _winrt_modules():
+        xml_dom = MagicMock()
+        notifications = MagicMock()
+        modules = {
+            'winrt': MagicMock(),
+            'winrt.windows': MagicMock(),
+            'winrt.windows.data': MagicMock(),
+            'winrt.windows.data.xml': MagicMock(),
+            'winrt.windows.data.xml.dom': xml_dom,
+            'winrt.windows.ui': MagicMock(),
+            'winrt.windows.ui.notifications': notifications,
+        }
+        return modules, xml_dom, notifications
+
+    def test_shows_toast_with_escaped_text_and_registered_aumid(self):
+        """Title and message are escaped into a text-only ToastGeneric binding, notified under the app's AUMID."""
+        win32._notification_identity_registered.set()
+        modules, xml_dom, notifications = self._winrt_modules()
+        mock_notifier = notifications.ToastNotificationManager.create_toast_notifier_with_id.return_value
+        icon = MagicMock()
+
+        with patch.dict(sys.modules, modules):
+            win32.show_notification(icon, 'usage <100%>', 'Title & Co')
+
+        loaded_xml = xml_dom.XmlDocument.return_value.load_xml.call_args[0][0]
+        self.assertIn('usage &lt;100%&gt;', loaded_xml)
+        self.assertIn('Title &amp; Co', loaded_xml)
+        notifications.ToastNotificationManager.create_toast_notifier_with_id.assert_called_once_with(win32.APP_USER_MODEL_ID)
+        mock_notifier.show.assert_called_once_with(notifications.ToastNotification.return_value)
+        icon.notify.assert_not_called()
+
+    def test_uses_balloon_when_identity_not_registered(self):
+        """Without a registered identity the toast could vanish silently, so the balloon is used and WinRT is not touched."""
+        modules, _, notifications = self._winrt_modules()
+        icon = MagicMock()
+
+        with patch.dict(sys.modules, modules):
+            win32.show_notification(icon, 'message', 'title')
+
+        icon.notify.assert_called_once_with('message', 'title')
+        notifications.ToastNotificationManager.create_toast_notifier_with_id.assert_not_called()
+
+    def test_falls_back_and_reports_when_winrt_unavailable(self):
+        """A missing WinRT package falls back to the balloon and prints the failure."""
+        win32._notification_identity_registered.set()
+        icon = MagicMock()
+
+        with patch.dict(sys.modules, {'winrt.windows.data.xml.dom': None}), patch.object(win32.traceback, 'print_exc') as mock_print:
+            win32.show_notification(icon, 'message', 'title')
+
+        icon.notify.assert_called_once_with('message', 'title')
+        mock_print.assert_called_once()
+
+    def test_falls_back_and_reports_when_notifier_raises(self):
+        """A WinRT call that raises at runtime falls back to the balloon and prints the failure."""
+        win32._notification_identity_registered.set()
+        modules, _, notifications = self._winrt_modules()
+        notifications.ToastNotificationManager.create_toast_notifier_with_id.side_effect = OSError('no notifier')
+        icon = MagicMock()
+
+        with patch.dict(sys.modules, modules), patch.object(win32.traceback, 'print_exc') as mock_print:
+            win32.show_notification(icon, 'message', 'title')
+
+        icon.notify.assert_called_once_with('message', 'title')
+        mock_print.assert_called_once()
 
 
 class TestWebview2Version(unittest.TestCase):
