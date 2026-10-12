@@ -2,9 +2,10 @@
 Windows Popup Host Tests
 =========================
 
-Unit tests for the Win32 popup host: tray anchoring, DPI-aware geometry and
-the pinned-popup drag.  The module reaches into ``ctypes.windll`` at call
-time, so the whole file is skipped off Windows.
+Unit tests for the Win32 popup host: tray anchoring, DPI-aware geometry, the
+pinned-popup drag and the signatures of the dismiss-watch hooks.  The module
+reaches into ``ctypes.windll`` at import time, so the whole file is skipped off
+Windows.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ if sys.platform != 'win32':
 import ctypes.wintypes  # noqa: E402
 
 from usage_monitor_for_claude.platforms.popup_win32 import (  # noqa: E402
-    _BASELINE_DPI, _MONITORINFO, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER, PopupHost,
+    _BASELINE_DPI, _HOOKPROC, _MONITORINFO, _SWP_NOACTIVATE, _SWP_NOSIZE, _SWP_NOZORDER, PopupHost,
 )
 
 WIDTH = 340
@@ -271,6 +272,34 @@ class TestDrag(unittest.TestCase):
 
         self.assertFalse(host._dragging)
         window.resize.assert_not_called()
+
+
+class TestHookSignatures(unittest.TestCase):
+    """Tests for the Win32 signatures behind the dismiss watch.
+
+    A low-level hook procedure returns ``LRESULT``, which is pointer-sized.
+    Declared narrower, the upper half of the return register is left
+    undefined on 64-bit Windows, and any nonzero value makes Windows drop the
+    keystroke or click as consumed.
+    """
+
+    def test_hook_proc_returns_pointer_sized_lresult(self):
+        """Regression: a ``c_long`` return type swallowed keystrokes system-wide while the popup was open."""
+        self.assertEqual(ctypes.sizeof(_HOOKPROC._restype_), ctypes.sizeof(ctypes.c_void_p))
+
+    def test_hook_proc_takes_code_wparam_lparam(self):
+        """The hook procedure signature matches ``HOOKPROC``."""
+        self.assertEqual(_HOOKPROC._argtypes_, (ctypes.c_int, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM))
+
+    def test_call_next_hook_returns_pointer_sized_lresult(self):
+        """The next hook's result passes through untruncated."""
+        self.assertEqual(ctypes.sizeof(ctypes.windll.user32.CallNextHookEx.restype), ctypes.sizeof(ctypes.c_void_p))
+
+    def test_hook_handles_are_pointer_sized(self):
+        """Hook handles are not truncated to ``c_int`` on 64-bit."""
+        for name in ('SetWindowsHookExW', 'SetWinEventHook'):
+            with self.subTest(name=name):
+                self.assertEqual(ctypes.sizeof(getattr(ctypes.windll.user32, name).restype), ctypes.sizeof(ctypes.c_void_p))
 
 
 class TestWindowOptions(unittest.TestCase):
