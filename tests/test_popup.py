@@ -1270,3 +1270,15 @@ class TestNewWindowCache(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # _tray_position
 # ---------------------------------------------------------------------------
+
+
+class TestManualRefreshBridge(unittest.TestCase):
+    def test_bridge_returns_fresh_snapshot_after_refresh(self) -> None:
+        from usage_monitor_for_claude.popup import _PopupApi
+        popup = MagicMock()
+        popup.app._next_poll_time = None
+        with patch('usage_monitor_for_claude.popup._snapshot_to_dict', return_value={'fresh': True}) as serialize:
+            result = _PopupApi(popup).refresh()
+        popup.app.refresh_now.assert_called_once_with()
+        serialize.assert_called_once_with(popup.app.cache.snapshot, next_poll_time=None)
+        self.assertEqual(result, {'fresh': True})

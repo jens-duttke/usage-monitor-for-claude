@@ -71,5 +71,6 @@
     "status_next_update": "다음 업데이트 {duration} 후",
     "status_refreshing": "새로고침 중...",
     "already_running": "Usage Monitor for Claude v{running_version}가 실행 중입니다.\n\n실행 중인 인스턴스를 교체하시겠습니까?",
-    "replace_failed": "실행 중인 인스턴스를 교체할 수 없습니다.\n\n수동으로 종료한 후 다시 시도하세요."
+    "replace_failed": "실행 중인 인스턴스를 교체할 수 없습니다.\n\n수동으로 종료한 후 다시 시도하세요.",
+    "refresh": "지금 새로 고침"
 }

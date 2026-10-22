@@ -112,6 +112,8 @@ class UsageMonitorForClaude:
         """
         self.running = True
         self.cache = UsageCache()
+        self._manual_refresh_condition = threading.Condition()
+        self._manual_refresh_active = False
         self._notification_identity_registered = notification_identity_registered
 
         # Last raw API response (may contain 'error') - for icon and polling decisions
@@ -172,6 +174,7 @@ class UsageMonitorForClaude:
                     pystray.MenuItem(T['test_quick_action'], self.on_test_quick_action, enabled=bool(QUICK_ACTION_COMMAND)),
                 ), enabled=bool(ON_RESET_COMMAND or ON_STARTUP_COMMAND or ON_THRESHOLD_COMMAND or QUICK_ACTION_COMMAND)),
                 pystray.MenuItem(T['restart'], self.on_restart),
+                pystray.MenuItem(T['refresh'], self.on_refresh),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(T['menu_project'], self.on_open_project),
                 pystray.Menu.SEPARATOR,
@@ -218,6 +221,33 @@ class UsageMonitorForClaude:
     def on_restart(self, icon: Any = None, item: Any = None) -> None:
         self.restart_requested = True
         self.on_quit(icon, item)
+
+    def on_refresh(self, icon: Any = None, item: Any = None) -> None:
+        """Request a refresh without blocking the tray message pump."""
+        threading.Thread(target=self.refresh_now, daemon=True).start()
+
+    def refresh_now(self) -> bool:
+        """Refresh once, coalescing simultaneous manual requests.
+
+        Returns
+        -------
+        bool
+            True for the caller performing the update; False for a caller
+            whose request was satisfied by the in-progress manual update.
+        """
+        with self._manual_refresh_condition:
+            if self._manual_refresh_active:
+                while self._manual_refresh_active:
+                    self._manual_refresh_condition.wait()
+                return False
+            self._manual_refresh_active = True
+        try:
+            self.update(manual=True)
+        finally:
+            with self._manual_refresh_condition:
+                self._manual_refresh_active = False
+                self._manual_refresh_condition.notify_all()
+        return True
 
     def on_open_project(self, icon: Any = None, item: Any = None) -> None:
         webbrowser.open(PROJECT_URL)
@@ -409,18 +439,23 @@ class UsageMonitorForClaude:
 
     # Update orchestration
 
-    def update(self, force: bool = False) -> None:
+    def update(self, force: bool = False, *, manual: bool = False) -> None:
         """Request a data refresh from the cache and process the result.
 
         Parameters
         ----------
+        manual : bool
+            Bypass the successful-fetch cooldown, retaining rate-limit backoff.
         force : bool
             When True, bypass the cache cooldown and the 429 rate-limit
             backoff so the refresh happens immediately.  Used after a
             confirmed account switch, where the freshly selected account
             has no polling history that those throttles need to protect.
         """
-        result = self.cache.update(force=force, with_prepaid=self._popup_open)
+        if manual:
+            result = self.cache.update(force=force, manual=True, with_prepaid=self._popup_open)
+        else:
+            result = self.cache.update(force=force, with_prepaid=self._popup_open)
         if result.data is None:
             return
 

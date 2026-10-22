@@ -71,5 +71,6 @@
     "status_next_update": "Nächstes Update in {duration}",
     "status_refreshing": "Aktualisiere...",
     "already_running": "Usage Monitor for Claude v{running_version} wird bereits ausgeführt.\n\nMöchten Sie die laufende Instanz ersetzen?",
-    "replace_failed": "Die laufende Instanz konnte nicht ersetzt werden.\n\nBitte beenden Sie sie manuell und versuchen Sie es erneut."
+    "replace_failed": "Die laufende Instanz konnte nicht ersetzt werden.\n\nBitte beenden Sie sie manuell und versuchen Sie es erneut.",
+    "refresh": "Jetzt aktualisieren"
 }
