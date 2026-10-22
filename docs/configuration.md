@@ -261,3 +261,8 @@ Override individual channels as RGBA arrays `[R, G, B, A]` (0-255). Unspecified 
 | `bar_fg_warn` | `"#e05050"` | Progress bar fill when usage outpaces elapsed time, error text |
 | `bar_divider` | `"#000c"` | Time dividers on progress bars (hour marks on the session bar, midnights on weekly bars) |
 | `bar_marker` | `"#fffc"` | Time-position marker on progress bars |
+
+
+## Weekly pacing
+
+By default, weekly bars retain their calendar-day dividers. Set `"weekly_bar_parts": 5` to divide seven-day bars into five equal sections for workweek pacing. Integers from 1 to 31 are accepted; `1` hides internal dividers. Other quota durations are unchanged.

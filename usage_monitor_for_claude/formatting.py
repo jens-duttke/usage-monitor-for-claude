@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .i18n import T
+from .settings import WEEKLY_BAR_PARTS
 from .settings import CURRENCY_SYMBOL, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL
 
 __all__ = [
@@ -243,8 +244,11 @@ def elapsed_pct(resets_at: str, period_seconds: int) -> float | None:
         return None
 
 
-def divider_positions(resets_at: str, period_seconds: int) -> list[float]:
+def divider_positions(resets_at: str, period_seconds: int, weekly_parts: int | None = None) -> list[float]:
     """Return relative positions (0.0-1.0) of divider marks within a usage period.
+
+    ``weekly_parts`` overrides the optional ``weekly_bar_parts`` setting.
+    When omitted, existing calendar-day divisions remain in use.
 
     Five-hour periods are split into five equal hour sections, independent
     of clock alignment.  Periods of a day or longer are subdivided at local
@@ -266,6 +270,16 @@ def divider_positions(resets_at: str, period_seconds: int) -> list[float]:
         exclusive.  Positions that would round to 0px at typical bar
         widths are omitted.
     """
+    parts = WEEKLY_BAR_PARTS if weekly_parts is None else weekly_parts
+    if parts is not None and period_seconds == PERIOD_7D:
+        if not resets_at:
+            return []
+        try:
+            datetime.fromisoformat(resets_at)
+        except (ValueError, TypeError):
+            return []
+        return [index / parts for index in range(1, parts)]
+
     if not resets_at or period_seconds <= 0:
         return []
 

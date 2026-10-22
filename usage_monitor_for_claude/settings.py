@@ -25,6 +25,7 @@ from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import show_warning_box, system_time_format
 
 __all__ = [
+    'WEEKLY_BAR_PARTS',
     'ALERT_EXTRA_USAGE_SPENT', 'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
     'BAR_BG', 'BAR_DIVIDER', 'BAR_FG', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
     'CLI_COMMAND', 'COMPACT_HIDE', 'CURRENCY_SYMBOL',
@@ -40,6 +41,7 @@ __all__ = [
 SETTINGS_FILENAME = 'usage-monitor-settings.json'
 
 _NUMERIC_BOUNDS: dict[str, int] = {
+    'weekly_bar_parts': 1,
     'poll_interval': 1,
     'poll_fast': 1,
     'poll_fast_extra': 1,
@@ -141,6 +143,10 @@ def _validate(data: dict, path: Path) -> dict:
                 drop.append(key)
             elif value < min_val:
                 errors.append(f'  {key}: must be >= {min_val}, got {value}')
+                drop.append(key)
+
+            elif key == 'weekly_bar_parts' and value > 31:
+                errors.append(f'  {key}: must be <= 31, got {value}')
                 drop.append(key)
 
         elif key in _COLOR_KEYS:
@@ -461,3 +467,7 @@ def get_alert_thresholds(variant_key: str) -> list[float]:
             return _ALERT_THRESHOLDS[base_key]
 
     return []
+
+
+# None retains calendar-day pacing; explicit values select equal sections.
+WEEKLY_BAR_PARTS: int | None = _S.get('weekly_bar_parts')
