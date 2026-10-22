@@ -261,3 +261,8 @@ Override individual channels as RGBA arrays `[R, G, B, A]` (0-255). Unspecified 
 | `bar_fg_warn` | `"#e05050"` | Progress bar fill when usage outpaces elapsed time, error text |
 | `bar_divider` | `"#000c"` | Time dividers on progress bars (hour marks on the session bar, midnights on weekly bars) |
 | `bar_marker` | `"#fffc"` | Time-position marker on progress bars |
+
+
+## Local usage endpoint
+
+`status_server_enabled` defaults to `false`; `status_server_port` defaults to `45456` and accepts integers from 1024 to 65535. See [the endpoint reference](status-endpoint.md) for the response and local-access implications.

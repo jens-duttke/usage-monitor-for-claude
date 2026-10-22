@@ -378,3 +378,5 @@ MIT
 ## Disclaimer
 
 This is an independent, community-built project. It is **not** created, endorsed, or officially supported by [Anthropic](https://www.anthropic.com/). "Claude" and "Anthropic" are trademarks of Anthropic, PBC. Use of these names is solely for descriptive purposes to indicate compatibility.
+
+An optional [local usage endpoint](docs/status-endpoint.md) lets local programs read cached usage. It is disabled by default.

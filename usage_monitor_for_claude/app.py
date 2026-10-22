@@ -7,6 +7,7 @@ System tray application class with adaptive polling and event handling.
 from __future__ import annotations
 
 import math
+import logging
 import threading
 import time
 import traceback
@@ -20,6 +21,8 @@ from .api import api_headers, read_access_token
 from .cache import UsageCache
 from .claude_cli import PROJECT_URL
 from .command import run_event_command
+from .settings import STATUS_SERVER_ENABLED, STATUS_SERVER_PORT
+from .status_server import StatusServer
 from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import (
     autostart_supported, get_idle_seconds, install_tray_activate_handler, install_tray_click_handler,
@@ -1066,7 +1069,19 @@ class UsageMonitorForClaude:
             crash_log(traceback.format_exc())
 
     def run(self) -> None:
-        self.icon.run(setup=self._on_icon_ready)
+        status = None
+        try:
+            if STATUS_SERVER_ENABLED:
+                candidate = StatusServer(self.cache, 'claude', 'Claude', STATUS_SERVER_PORT)
+                try:
+                    candidate.start()
+                    status = candidate
+                except OSError:
+                    logging.getLogger(__name__).warning('local usage endpoint could not bind; continuing without it')
+            self.icon.run(setup=self._on_icon_ready)
+        finally:
+            if status is not None:
+                status.shutdown()
 
 
 def crash_log(msg: str) -> None:

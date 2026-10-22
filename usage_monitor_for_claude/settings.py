@@ -25,6 +25,7 @@ from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import show_warning_box, system_time_format
 
 __all__ = [
+    'STATUS_SERVER_ENABLED', 'STATUS_SERVER_PORT',
     'ALERT_EXTRA_USAGE_SPENT', 'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
     'BAR_BG', 'BAR_DIVIDER', 'BAR_FG', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
     'CLI_COMMAND', 'COMPACT_HIDE', 'CURRENCY_SYMBOL',
@@ -40,6 +41,7 @@ __all__ = [
 SETTINGS_FILENAME = 'usage-monitor-settings.json'
 
 _NUMERIC_BOUNDS: dict[str, int] = {
+    'status_server_port': 1024,
     'poll_interval': 1,
     'poll_fast': 1,
     'poll_fast_extra': 1,
@@ -58,7 +60,7 @@ _VALID_ICON_STYLES = frozenset({'number+bars', 'numbers'})
 _COMMAND_KEYS = frozenset({
     'quick_action_command', 'on_double_click_command', 'on_reset_command', 'on_startup_command', 'on_threshold_command',
 })
-_BOOL_KEYS = frozenset({'alert_time_aware', 'notify_claude_update'})
+_BOOL_KEYS = frozenset({'status_server_enabled', 'alert_time_aware', 'notify_claude_update'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields', 'compact_hide'})
 _WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
@@ -141,6 +143,10 @@ def _validate(data: dict, path: Path) -> dict:
                 drop.append(key)
             elif value < min_val:
                 errors.append(f'  {key}: must be >= {min_val}, got {value}')
+                drop.append(key)
+
+            elif key == 'status_server_port' and value > 65535:
+                errors.append(f'  {key}: must be <= 65535, got {value}')
                 drop.append(key)
 
         elif key in _COLOR_KEYS:
@@ -461,3 +467,7 @@ def get_alert_thresholds(variant_key: str) -> list[float]:
             return _ALERT_THRESHOLDS[base_key]
 
     return []
+
+
+STATUS_SERVER_ENABLED: bool = _S.get('status_server_enabled', False)
+STATUS_SERVER_PORT: int = _S.get('status_server_port', 45456)

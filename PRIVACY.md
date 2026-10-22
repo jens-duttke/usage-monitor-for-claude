@@ -65,3 +65,8 @@ The application does not integrate with any analytics, tracking, advertising, or
 
 For questions about this privacy policy, please open an issue at
 https://github.com/jens-duttke/usage-monitor-for-claude/issues
+
+
+## Optional local usage endpoint
+
+When explicitly enabled, the monitor serves cached normalized quotas and generic error state on IPv4 loopback. No profile information, account email, credentials, or raw provider payload is exposed. Other local programs can read this unauthenticated endpoint. Requests do not initiate provider calls. See [the endpoint reference](docs/status-endpoint.md).
