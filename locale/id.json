@@ -71,5 +71,6 @@
     "status_next_update": "Pembaruan berik.: {duration}",
     "status_refreshing": "Memperbarui...",
     "already_running": "Usage Monitor for Claude v{running_version} sudah berjalan.\n\nApakah Anda ingin mengganti instans yang sedang berjalan?",
-    "replace_failed": "Instans yang sedang berjalan tidak dapat digantikan.\n\nSilakan tutup secara manual lalu coba lagi."
+    "replace_failed": "Instans yang sedang berjalan tidak dapat digantikan.\n\nSilakan tutup secara manual lalu coba lagi.",
+    "refresh": "Segarkan sekarang"
 }

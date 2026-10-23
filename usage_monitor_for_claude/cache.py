@@ -209,11 +209,13 @@ class UsageCache:
 
             self._refresh_prepaid(self._usage, self._usage_token)
 
-    def update(self, *, force: bool = False, with_prepaid: bool = False) -> UpdateResult:
+    def update(self, *, manual: bool = False, force: bool = False, with_prepaid: bool = False) -> UpdateResult:
         """Fetch usage data with lock and cooldown protection.
 
         Parameters
         ----------
+        manual : bool
+            Bypass only the successful-fetch cooldown; retain rate-limit backoff.
         force : bool
             When True, bypass the ``POLL_FAST`` cooldown and the 429
             rate-limit backoff for this single fetch.  Used only for an
@@ -240,13 +242,13 @@ class UsageCache:
             return UpdateResult(data=None)
 
         try:
-            return self._update_locked(force=force, with_prepaid=with_prepaid)
+            return self._update_locked(manual=manual, force=force, with_prepaid=with_prepaid)
         finally:
             self._lock.release()
 
     # Private helpers
 
-    def _update_locked(self, *, force: bool = False, with_prepaid: bool = False) -> UpdateResult:
+    def _update_locked(self, *, manual: bool = False, force: bool = False, with_prepaid: bool = False) -> UpdateResult:
         """Execute the actual update while holding ``_lock``."""
         # Clamp epoch-based throttle state after a backward clock jump
         # (manual correction, NTP step, VM restore) - otherwise cooldown and
@@ -258,7 +260,7 @@ class UsageCache:
         if self._rate_limit_until - now > MAX_BACKOFF:
             self._rate_limit_until = now + MAX_BACKOFF
 
-        if not force and self._last_success_time is not None and time.time() - self._last_success_time < POLL_FAST:
+        if not (force or manual) and self._last_success_time is not None and time.time() - self._last_success_time < POLL_FAST:
             log.debug('update skipped (cooldown, %.0fs remaining)', POLL_FAST - (time.time() - self._last_success_time))
             return UpdateResult(data=None)
 

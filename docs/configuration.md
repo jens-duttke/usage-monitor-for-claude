@@ -265,3 +265,8 @@ Override individual channels as RGBA arrays `[R, G, B, A]` (0-255). Unspecified 
 | `bar_fg_warn` | `"#e05050"` | Progress bar fill when usage outpaces elapsed time, error text |
 | `bar_divider` | `"#000c"` | Time dividers on progress bars (hour marks on the session bar, midnights on weekly bars) |
 | `bar_marker` | `"#fffc"` | Time-position marker on progress bars |
+
+
+## Manual refresh
+
+Use **Refresh** in the tray menu or the popup to request an immediate update. It skips the normal successful-fetch cooldown but respects active provider rate-limit backoff. Repeated simultaneous requests share one refresh.
