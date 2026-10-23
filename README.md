@@ -182,8 +182,8 @@ Windows may hide new tray icons by default. To keep the icon always visible:
 Each bar in the detail popup has up to four visual elements:
 
 1. **Blue fill** - how much of the limit you have used
-2. **Time dividers** - subtle gaps splitting the session bar into equal hour sections and marking local midnights on the weekly bars
-3. **White vertical line** - how much *time* has passed in the current period. The fill turns **red** when it passes this marker, warning that you may hit the limit before the period resets.
+2. **Time dividers** - subtle gaps splitting the session bar into equal hour sections and marking local midnights on the weekly bars, or workday starts when an active schedule applies
+3. **White vertical line** - how much *time* has passed in the current period. An optional [active schedule](docs/configuration.md#work-hour-pacing) counts working time for long quotas and pauses this marker outside working hours. The five-hour session always uses wall-clock time. The fill turns **red** when it passes this marker, warning that you may hit the limit before the period resets.
 4. **Reset text** - when the limit resets, shown as a countdown with clock time
 
 ---

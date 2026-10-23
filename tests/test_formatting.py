@@ -8,9 +8,14 @@ time_until(), format_tooltip(), and format_credits().
 from __future__ import annotations
 
 import json
+import struct
 import unittest
-from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from io import BytesIO
+from typing import Iterator
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 from usage_monitor_for_claude.formatting import (
     PERIOD_5H, PERIOD_7D,
@@ -20,6 +25,51 @@ from usage_monitor_for_claude.formatting import (
 from usage_monitor_for_claude.i18n import LOCALE_DIR
 
 EN = json.loads((LOCALE_DIR / 'en.json').read_text(encoding='utf-8'))
+
+
+@contextmanager
+def _active_schedule(
+    schedule: dict[str, list[tuple[float, float]]] | None,
+    fields: list[str] | None = None,
+    local_zone: tzinfo = timezone.utc,
+) -> Iterator[None]:
+    """Use a deterministic local timezone without changing the host's settings."""
+    def local_boundary(day: date, hour: float) -> datetime:
+        return (datetime(day.year, day.month, day.day) + timedelta(hours=hour)).replace(tzinfo=local_zone).astimezone(timezone.utc)
+
+    with (
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', fields),
+        patch('usage_monitor_for_claude.formatting._local_boundary', side_effect=local_boundary),
+        patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda value: value.astimezone(local_zone).date()),
+    ):
+        yield
+
+
+def _workweek() -> dict[str, list[tuple[float, float]]]:
+    """Return the normalized Monday-Friday 09:00-17:00 review example."""
+    return {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+
+
+def _numeric_elapsed_pct(resets_at: str, period_seconds: int, field: str | None = None) -> float:
+    """Require a calculable elapsed fraction before numeric comparisons."""
+    result = elapsed_pct(resets_at, period_seconds, field)
+    assert result is not None
+    return result
+
+
+def _dst_test_zone() -> ZoneInfo:
+    """Build a tiny European DST timezone using only the standard library."""
+    transitions = [
+        int(datetime(2026, 3, 29, 1, tzinfo=timezone.utc).timestamp()),
+        int(datetime(2026, 10, 25, 1, tzinfo=timezone.utc).timestamp()),
+    ]
+    header = b'TZif\0' + b'\0' * 15 + struct.pack('>6l', 0, 0, 0, 2, 2, 9)
+    body = (
+        struct.pack('>2l', *transitions) + bytes([1, 0])
+        + struct.pack('>lbb', 3600, 0, 0) + struct.pack('>lbb', 7200, 1, 4) + b'CET\0CEST\0'
+    )
+    return ZoneInfo.from_file(BytesIO(header + body), key='Test/Europe')
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +544,119 @@ class TestElapsedPct(unittest.TestCase):
         self.assertAlmostEqual(result, 50.0)
 
 
+    def test_active_schedule_workweek_review_example(self, mock_dt):
+        """Thursday 10:00 to Thursday 10:00 reaches 37.5% on Monday at 09:00."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        with _active_schedule(_workweek()):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D, 'seven_day'), 37.5)
+
+    def test_active_schedule_freezes_over_weekend(self, mock_dt):
+        """Friday evening, Sunday, and Monday opening have the same active elapsed time."""
+        with _active_schedule(_workweek()):
+            for now in (datetime(2025, 1, 10, 17), datetime(2025, 1, 12, 12), datetime(2025, 1, 13, 9)):
+                with self.subTest(now=now):
+                    self._setup(mock_dt, now.replace(tzinfo=timezone.utc))
+                    self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D), 37.5)
+
+    def test_active_schedule_freezes_during_split_slot_break(self, mock_dt):
+        """A lunch break contributes no active time to a two-day quota."""
+        schedule = {'mon': [(9.0, 12.0), (13.0, 17.0)], 'tue': [(8.0, 12.0)]}
+        with _active_schedule(schedule):
+            for hour, minute in ((12, 0), (12, 30), (13, 0)):
+                with self.subTest(hour=hour, minute=minute):
+                    self._setup(mock_dt, datetime(2025, 1, 13, hour, minute, tzinfo=timezone.utc))
+                    self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 2 * 86400), 3 / 11 * 100)
+
+    def test_active_schedule_overnight_slots_are_clipped_to_window(self, mock_dt):
+        """A second overnight shift is clipped at the quota reset."""
+        self._setup(mock_dt, datetime(2025, 1, 14, 4, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(22.0, 6.0)]}):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 2 * 86400), 60.0)
+
+    def test_active_schedule_previous_day_overnight_is_included(self, mock_dt):
+        """An overnight shift beginning before the window retains its overlapping hours."""
+        self._setup(mock_dt, datetime(2025, 1, 14, 3, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(22.0, 6.0)]}):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 86400), 50.0)
+
+    def test_active_schedule_overlapping_slots_are_counted_once(self, mock_dt):
+        """Overlapping Tuesday and Monday overnight slots form one active interval."""
+        self._setup(mock_dt, datetime(2025, 1, 14, 4, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(0.0, 8.0)]}):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 2 * 86400), 60.0)
+
+    def test_active_schedule_empty_or_nonoverlapping_falls_back_to_wall_time(self, mock_dt):
+        """A quota containing no scheduled work uses the ordinary elapsed fraction."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, tzinfo=timezone.utc))
+        for schedule in ({}, {'fri': [(9.0, 17.0)]}):
+            with self.subTest(schedule=schedule), _active_schedule(schedule):
+                self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-14T00:00:00+00:00', 86400), 50.0)
+
+    def test_active_schedule_five_hour_always_uses_wall_time(self, mock_dt):
+        """Even an explicit wildcard filter cannot change five-hour pacing."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(11.0, 12.0)]}, ['*']):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-13T14:30:00+00:00', PERIOD_5H, 'five_hour'), 50.0)
+
+    def test_active_schedule_other_subday_windows_use_wall_time(self, mock_dt):
+        """The one-day eligibility boundary also excludes arbitrary shorter windows."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, 30, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(9.0, 17.0)]}, ['*']):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-14T00:00:00+00:00', 23 * 3600, 'twenty_three_hour'), 50.0)
+
+    def test_active_schedule_applies_to_daily_and_custom_durations(self, mock_dt):
+        """The default filter includes all periods of at least one day."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(9.0, 17.0)]}):
+            for seconds, field in ((86400, 'one_day'), (2 * 86400, 'two_day_custom')):
+                with self.subTest(seconds=seconds):
+                    self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-14T00:00:00+00:00', seconds, field), 37.5)
+
+    def test_active_schedule_fields_exact_wildcard_and_disabled(self, mock_dt):
+        """Only matching explicit field filters enable active-time pacing."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        reset = '2025-01-16T10:00:00+00:00'
+        wall_pct = 95 / 168 * 100
+        cases = (
+            (None, None, 37.5),
+            (['seven_day'], 'seven_day', 37.5),
+            (['seven_day'], 'seven_day_sonnet', wall_pct),
+            (['seven_day*'], 'seven_day_sonnet', 37.5),
+            (['*_sonnet'], 'seven_day_sonnet', 37.5),
+            (['five_hour', 'seven_day'], 'seven_day', 37.5),
+            ([], 'seven_day', wall_pct),
+            (['*'], None, wall_pct),
+        )
+        for fields, field, expected in cases:
+            with self.subTest(fields=fields, field=field), _active_schedule(_workweek(), fields):
+                self.assertAlmostEqual(_numeric_elapsed_pct(reset, PERIOD_7D, field), expected)
+
+    def test_active_schedule_clamps_before_and_after_window(self, mock_dt):
+        """Scheduled elapsed time remains bounded before start and after reset."""
+        with _active_schedule(_workweek()):
+            for now, expected in ((datetime(2025, 1, 1), 0.0), (datetime(2025, 2, 1), 100.0)):
+                with self.subTest(now=now):
+                    self._setup(mock_dt, now.replace(tzinfo=timezone.utc))
+                    self.assertEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D), expected)
+
+    def test_active_schedule_full_days_preserve_wall_time(self, mock_dt):
+        """An unrestricted seven-day schedule gives the original elapsed fraction."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        schedule = {day: [(0.0, 24.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')}
+        with _active_schedule(schedule):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D), 95 / 168 * 100)
+
+    def test_active_schedule_measures_real_time_across_both_dst_changes(self, mock_dt):
+        """Sunday 00:00-04:00 lasts three spring hours and five autumn hours."""
+        local_zone = _dst_test_zone()
+        for month, day, expected in ((3, 29, 2 / 3 * 100), (10, 25, 80.0)):
+            now = datetime(2026, month, day, 3, tzinfo=local_zone).astimezone(timezone.utc)
+            reset = datetime(2026, month, day + 1, tzinfo=local_zone).isoformat()
+            with self.subTest(month=month), _active_schedule({'sun': [(0.0, 4.0)]}, local_zone=local_zone):
+                self._setup(mock_dt, now)
+                self.assertAlmostEqual(_numeric_elapsed_pct(reset, PERIOD_7D), expected)
+
+
 # ---------------------------------------------------------------------------
 # divider_positions
 # ---------------------------------------------------------------------------
@@ -625,6 +788,89 @@ class TestDividerPositions(unittest.TestCase):
         result = divider_positions(reset_iso, PERIOD_7D)
         self.assertGreater(len(result), 0)
         self.assertAlmostEqual(result[0], 12 / 168, places=2)
+
+
+    def test_active_schedule_workday_dividers_use_cumulative_active_time(self):
+        """The Thursday review window marks five workday starts, including its final partial day."""
+        with _active_schedule(_workweek()):
+            result = divider_positions('2025-01-16T10:00:00+00:00', PERIOD_7D, 'seven_day')
+        self.assertEqual(result, [7 / 40, 15 / 40, 23 / 40, 31 / 40, 39 / 40])
+
+    def test_active_schedule_split_slots_do_not_add_lunch_dividers(self):
+        """Two daily slots still produce only the next workday's divider."""
+        schedule = {'mon': [(9.0, 12.0), (13.0, 17.0)], 'tue': [(8.0, 12.0)]}
+        with _active_schedule(schedule):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [7 / 11])
+
+    def test_active_schedule_near_edge_dividers_are_hidden(self):
+        """Fractional-hour workdays do not draw dividers on either bar edge."""
+        schedules = (
+            {'mon': [(23.99, 24.0)], 'tue': [(0.0, 8.0)]},
+            {'mon': [(0.0, 23.99)], 'tue': [(0.0, 0.01)]},
+        )
+        for schedule in schedules:
+            with self.subTest(schedule=schedule), _active_schedule(schedule):
+                self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [])
+
+    def test_active_schedule_overnight_continuation_adds_no_midnight_divider(self):
+        """An overnight workday is divided only when the following workday starts."""
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(22.0, 6.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [0.8])
+
+    def test_active_schedule_previous_day_overnight_has_no_invented_start(self):
+        """A carried-over shift contributes time without inventing an interior workday start."""
+        with _active_schedule({'mon': [(22.0, 6.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 86400), [])
+
+    def test_active_schedule_first_slot_is_chronological(self):
+        """Unsorted split slots select the actual first daily slot for the divider."""
+        with _active_schedule({'mon': [(9.0, 17.0)], 'tue': [(13.0, 17.0), (9.0, 12.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [8 / 15])
+
+    def test_active_schedule_overlapping_workdays_use_union_time(self):
+        """A workday starting inside an overnight shift uses the union of active seconds."""
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(0.0, 8.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [0.2])
+
+    def test_active_schedule_zero_time_uses_legacy_dividers(self):
+        """Empty and nonoverlapping schedules retain the ordinary calendar divider path."""
+        reset = '2025-01-14T12:00:00+00:00'
+        with _active_schedule(None):
+            expected = divider_positions(reset, 86400)
+        for schedule in ({}, {'fri': [(9.0, 17.0)]}):
+            with self.subTest(schedule=schedule), _active_schedule(schedule):
+                self.assertEqual(divider_positions(reset, 86400), expected)
+
+    def test_active_schedule_unmatched_and_empty_filters_keep_legacy_dividers(self):
+        """Explicit filters apply to dividers as well as to the elapsed marker."""
+        reset = '2025-01-16T10:00:00+00:00'
+        with _active_schedule(None):
+            expected = divider_positions(reset, PERIOD_7D)
+        for fields in ([], ['one_day'], ['seven_day']):
+            with self.subTest(fields=fields), _active_schedule(_workweek(), fields):
+                self.assertEqual(divider_positions(reset, PERIOD_7D, 'seven_day_sonnet'), expected)
+        with _active_schedule(_workweek(), ['seven_day*']):
+            self.assertEqual(divider_positions(reset, PERIOD_7D, 'seven_day_sonnet'), [7 / 40, 15 / 40, 23 / 40, 31 / 40, 39 / 40])
+
+    def test_active_schedule_five_hour_dividers_are_unchanged(self):
+        """Five-hour dividers remain equal hours even when the field filter matches."""
+        with _active_schedule({'mon': [(11.0, 12.0)]}, ['*']):
+            self.assertEqual(divider_positions('2025-01-13T14:30:00+00:00', PERIOD_5H, 'five_hour'), [0.2, 0.4, 0.6, 0.8])
+
+    def test_active_schedule_full_days_divide_at_daily_boundaries(self):
+        """An always-active UTC schedule places its daily dividers at UTC midnight."""
+        reset = '2025-01-16T10:00:00+00:00'
+        schedule = {day: [(0.0, 24.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')}
+        with _active_schedule(schedule):
+            self.assertEqual(divider_positions(reset, PERIOD_7D), [(14 + 24 * index) / 168 for index in range(7)])
+
+    def test_active_schedule_dst_workdays_use_real_local_boundaries(self):
+        """A Sunday DST change makes the next workday begin at three-sevenths or five-ninths."""
+        local_zone = _dst_test_zone()
+        for month, day, expected in ((3, 31, 3 / 7), (10, 27, 5 / 9)):
+            reset = datetime(2026, month, day, tzinfo=local_zone).isoformat()
+            with self.subTest(month=month), _active_schedule({'sun': [(0.0, 4.0)], 'mon': [(0.0, 4.0)]}, local_zone=local_zone):
+                self.assertEqual(divider_positions(reset, PERIOD_7D), [expected])
 
 
 # ---------------------------------------------------------------------------

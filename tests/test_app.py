@@ -8,7 +8,7 @@ tray rendering, polling interval, and reset notifications.
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.app import (
@@ -279,6 +279,29 @@ class TestCheckThresholdAlerts(unittest.TestCase):
 
 class TestTimeAwareAlerts(unittest.TestCase):
     """Tests for time-aware threshold alert suppression."""
+
+
+    def test_active_schedule_and_field_filter_control_alert_suppression(self):
+        """A weekly alert uses active time; an excluded field retains wall-clock suppression."""
+        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+        data = {'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'}}
+        with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule), \
+             patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', ['seven_day']), \
+             patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()), \
+             patch('usage_monitor_for_claude.formatting._local_boundary',
+                   side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)), \
+             patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock, \
+             patch('usage_monitor_for_claude.app.get_alert_thresholds', return_value=[40]):
+            clock.now.return_value = datetime(2026, 1, 12, 9, tzinfo=timezone.utc)
+            self.app._check_threshold_alerts(data)
+            self.app.icon.notify.assert_called_once()
+            self.app.icon.notify.reset_mock()
+            self.app._notified_thresholds.clear()
+            with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', []):
+                self.app._check_threshold_alerts(data)
+            self.app.icon.notify.assert_not_called()
+            self.assertEqual(self.app._notified_thresholds['seven_day'], 40)
+
 
     def setUp(self):
         self.app = _make_app()
@@ -1047,6 +1070,30 @@ class TestFastPolling(unittest.TestCase):
 
 class TestRenderTray(unittest.TestCase):
     """Tests for _render_tray() icon and tooltip rendering."""
+
+
+    def test_active_schedule_drives_tray_marker_and_overage(self):
+        """Both tray bars use scheduled elapsed time, including overage display mode."""
+        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+        self.app._last_response = {
+            'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
+            'seven_day_sonnet': {'utilization': 30.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
+        }
+        with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule), \
+             patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', None), \
+             patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()), \
+             patch('usage_monitor_for_claude.formatting._local_boundary',
+                   side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)), \
+             patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock, \
+             patch('usage_monitor_for_claude.app.ICON_FIELDS', ['seven_day:overage', 'seven_day_sonnet']), \
+             patch('usage_monitor_for_claude.app.create_icon_image') as image, \
+             patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip'):
+            clock.now.return_value = datetime(2026, 1, 12, 9, tzinfo=timezone.utc)
+            self.app._render_tray()
+        self.assertEqual(image.call_args.kwargs['mode_top'], 'overage')
+        self.assertAlmostEqual(image.call_args.kwargs['time_pct_top'], 37.5)
+        self.assertAlmostEqual(image.call_args.kwargs['time_pct_bottom'], 37.5)
+
 
     def setUp(self):
         self.app = _make_app()

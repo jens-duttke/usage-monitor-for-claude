@@ -381,8 +381,8 @@ class UsageMonitorForClaude:
             pct_bottom = bottom_entry.get('utilization', 0) or 0
             top_period = field_period(top_field)
             bottom_period = field_period(bottom_field)
-            time_pct_top = elapsed_pct(top_entry.get('resets_at', ''), top_period) if top_period else None
-            time_pct_bottom = elapsed_pct(bottom_entry.get('resets_at', ''), bottom_period) if bottom_period else None
+            time_pct_top = elapsed_pct(top_entry.get('resets_at', ''), top_period, field=top_field) if top_period else None
+            time_pct_bottom = elapsed_pct(bottom_entry.get('resets_at', ''), bottom_period, field=bottom_field) if bottom_period else None
             extra = data.get('extra_usage') or {}
             extra_limit = extra.get('monthly_limit') or 0
             extra_used = extra.get('used_credits') or 0
@@ -594,7 +594,7 @@ class UsageMonitorForClaude:
             if ALERT_TIME_AWARE and highest_exceeded > last_notified and highest_exceeded < ALERT_TIME_AWARE_BELOW:
                 period = field_period(variant_key)
                 if period:
-                    time_pct = elapsed_pct(entry.get('resets_at'), period)
+                    time_pct = elapsed_pct(entry.get('resets_at'), period, field=variant_key)
                     if time_pct is not None and pct <= time_pct:
                         self._notified_thresholds[variant_key] = highest_exceeded
                         continue
