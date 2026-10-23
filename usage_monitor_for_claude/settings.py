@@ -17,6 +17,7 @@ The app never creates this file - users place it manually.
 from __future__ import annotations
 
 import json
+import math
 import locale as _locale
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import show_warning_box, system_time_format
 
 __all__ = [
-    'WEEKLY_BAR_PARTS',
+    'ACTIVE_SCHEDULE', 'ACTIVE_SCHEDULE_FIELDS',
     'ALERT_EXTRA_USAGE_SPENT', 'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
     'BAR_BG', 'BAR_DIVIDER', 'BAR_FG', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
     'CLI_COMMAND', 'COMPACT_HIDE', 'CURRENCY_SYMBOL',
@@ -41,7 +42,6 @@ __all__ = [
 SETTINGS_FILENAME = 'usage-monitor-settings.json'
 
 _NUMERIC_BOUNDS: dict[str, int] = {
-    'weekly_bar_parts': 1,
     'poll_interval': 1,
     'poll_fast': 1,
     'poll_fast_extra': 1,
@@ -62,7 +62,7 @@ _COMMAND_KEYS = frozenset({
 })
 _BOOL_KEYS = frozenset({'alert_time_aware', 'notify_claude_update'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields', 'compact_hide'})
-_WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
+_WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields', 'active_schedule_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
 
 
@@ -130,23 +130,71 @@ def _valid_rgba(value: object) -> bool:
     )
 
 
+_WEEKDAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+
+
+def _schedule_errors(value: object) -> list[str]:
+    """Validate local weekday slots without partially accepting a bad schedule."""
+    if not isinstance(value, dict):
+        return ['  active_schedule: expected an object keyed by weekday']
+    errors = []
+    for day, slots in value.items():
+        path = f'active_schedule.{day}'
+        if day not in _WEEKDAYS:
+            errors.append(f'  {path}: expected a weekday key from mon to sun')
+            continue
+        if not isinstance(slots, list):
+            errors.append(f'  {path}: expected a slot [start, end] or an array of slots')
+            continue
+        if not slots:
+            continue
+        ranges = slots if isinstance(slots[0], list) else [slots]
+        for index, slot in enumerate(ranges):
+            location = f'{path}[{index}]'
+            if not isinstance(slot, list) or len(slot) != 2:
+                errors.append(f'  {location}: expected a slot [start, end]')
+                continue
+            start, end = slot
+            if any(isinstance(hour, bool) or not isinstance(hour, (int, float)) or (isinstance(hour, float) and not math.isfinite(hour)) for hour in slot):
+                errors.append(f'  {location}: hours must be finite numbers')
+            elif not (0 <= start < 24 and 0 <= end <= 24):
+                errors.append(f'  {location}: start must be >= 0 and < 24; end must be >= 0 and <= 24')
+            elif start == end:
+                errors.append(f'  {location}: start and end must differ; use [0, 24] for a full day')
+    return errors
+
+
+def _active_schedule(settings: dict) -> dict[str, list[tuple[float, float]]] | None:
+    """Normalize validated weekday slots for the shared pacing calculation."""
+    value = settings.get('active_schedule')
+    if value is None:
+        return None
+    normalized = {}
+    for day, slots in value.items():
+        ranges = slots if not slots or isinstance(slots[0], list) else [slots]
+        normalized[day] = [(float(start), float(end)) for start, end in ranges]
+    return normalized
+
+
 def _validate(data: dict, path: Path) -> dict:
     """Drop entries with invalid types or values and show a MessageBox listing errors."""
     errors: list[str] = []
     drop: list[str] = []
 
     for key, value in data.items():
-        if key in _NUMERIC_BOUNDS:
+        if key == 'active_schedule':
+            schedule_errors = _schedule_errors(value)
+            if schedule_errors:
+                errors.extend(schedule_errors)
+                drop.append(key)
+
+        elif key in _NUMERIC_BOUNDS:
             min_val = _NUMERIC_BOUNDS[key]
             if isinstance(value, bool) or not isinstance(value, int):
                 errors.append(f'  {key}: expected an integer, got {type(value).__name__}')
                 drop.append(key)
             elif value < min_val:
                 errors.append(f'  {key}: must be >= {min_val}, got {value}')
-                drop.append(key)
-
-            elif key == 'weekly_bar_parts' and value > 31:
-                errors.append(f'  {key}: must be <= 31, got {value}')
                 drop.append(key)
 
         elif key in _COLOR_KEYS:
@@ -469,5 +517,6 @@ def get_alert_thresholds(variant_key: str) -> list[float]:
     return []
 
 
-# None retains calendar-day pacing; explicit values select equal sections.
-WEEKLY_BAR_PARTS: int | None = _S.get('weekly_bar_parts')
+# Missing schedules preserve wall-clock pacing; an empty field list disables scaling.
+ACTIVE_SCHEDULE = _active_schedule(_S)
+ACTIVE_SCHEDULE_FIELDS: list[str] | None = _S.get('active_schedule_fields')
