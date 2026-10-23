@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- [Popup field exclusions](https://github.com/jens-duttke/usage-monitor-for-claude/issues/101) - use `"popup_fields": ["*", "-iguana_necktie"]` to hide a specific usage bar while keeping all other active quota types visible
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.24.0...HEAD)
 
 ## [1.24.0] - 2026-10-19

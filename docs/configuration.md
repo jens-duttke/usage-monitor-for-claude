@@ -96,9 +96,11 @@ The popup shows usage bars for all active quota types by default. Use `popup_fie
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `popup_fields` | `["*"]` | Which usage fields to show in the popup, in order. `"*"` is a wildcard meaning "all remaining active quota types in default order" |
+| `popup_fields` | `["*"]` | Which usage fields to show in the popup, in order. `"*"` includes all remaining active quota types in default order; `"-field_name"` excludes a field |
 
-Must be an array of non-empty strings. `"*"` may appear at most once. Duplicates are silently removed. Unknown field names are accepted. A field is skipped when it is `null` or missing from the API response, and also when it names a quota type that does not apply to your account - the API lists some under internal code names before they take effect.
+Must be an array of non-empty strings. `"*"` may appear at most once. Duplicates are silently removed. Unknown field names are accepted. Bare `"-"` and `"-*"` are invalid. A field is skipped when it is `null` or missing from the API response, and also when it names a quota type that does not apply to your account - the API lists some under internal code names before they take effect.
+
+Prefix a field name with `"-"` to hide its bar, for example `"-iguana_necktie"`. Exclusions match exact field names, not patterns, and override both explicit inclusions and `"*"` regardless of their position in the list. Unknown exclusions have no effect. A list containing only exclusions shows no bars; include `"*"` to keep the other active quota types.
 
 **Known field names:** `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`
 
@@ -111,6 +113,8 @@ Must be an array of non-empty strings. `"*"` may appear at most once. Duplicates
 | *(not set)* | All active quota types in default order |
 | `["five_hour", "seven_day_sonnet", "*"]` | Session first, then Sonnet, then all remaining |
 | `["five_hour", "seven_day"]` | Only these two, everything else hidden |
+| `["*", "-iguana_necktie"]` | All active quota types except `iguana_necktie` |
+| `["five_hour", "*", "-five_hour"]` | All active quota types except the session quota, even though it was explicitly included |
 | `["*"]` | Same as not set |
 
 ```json
@@ -133,7 +137,7 @@ Entries can be either a **section key** or a **usage field name**:
 
 **Section keys:** `account` (email and plan), `extra_usage` (paid overage bar and prepaid credit balance), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When nothing but the usage bars is left, the "Usage" heading is dropped automatically.
 
-**Usage field names:** any quota field, e.g. `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`. This hides that single bar in the pinned view, independent of [`popup_fields`](#popup-fields) (which controls the normal, unpinned popup).
+**Usage field names:** any quota field, e.g. `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`. This hides that single bar from the [`popup_fields`](#popup-fields) selection while the popup is pinned.
 
 **Example** - pin to a minimal view with only the session and weekly bars:
 

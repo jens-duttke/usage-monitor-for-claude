@@ -182,25 +182,31 @@ def expand_popup_fields(popup_fields: list[str], usage_data: dict[str, Any]) -> 
     Parameters
     ----------
     popup_fields : list[str]
-        User-configured field list, possibly containing ``'*'`` wildcard.
+        User-configured field list, possibly containing the ``'*'`` wildcard
+        and ``'-field'`` exclusions. Exclusions take precedence over all
+        inclusions, regardless of their position in the list.
     usage_data : dict
         Raw API response dict.
 
     Returns
     -------
     list[str]
-        Ordered list of field names to display, with null, missing and
-        not-yet-active fields removed.
+        Ordered list of field names to display, with excluded, null, missing
+        and not-yet-active fields removed.
     """
     available = {
         key for key, value in usage_data.items()
         if isinstance(value, dict) and 'resets_at' in value and is_active_quota(key, value)
     }
+    excluded = {field[1:] for field in popup_fields if field.startswith('-')}
+    available.difference_update(excluded)
 
     result: list[str] = []
     seen: set[str] = set()
 
     for field in popup_fields:
+        if field.startswith('-'):
+            continue
         if field == '*':
             remaining = sorted((f for f in available if f not in seen), key=_field_sort_key)
             for f in remaining:

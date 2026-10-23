@@ -217,6 +217,61 @@ class TestExpandPopupFields(unittest.TestCase):
         result = expand_popup_fields(['seven_day_sonnet', '*'], usage)
         self.assertEqual(result, ['seven_day_sonnet', 'five_hour', 'seven_day'])
 
+    def test_exclusion_applies_before_or_after_wildcard(self):
+        """An exclusion hides an active code-named quota wherever it appears."""
+        usage = self._usage(seven_day=20, five_hour=10)
+        usage['iguana_necktie'] = {'utilization': 30, 'resets_at': '2026-01-01T00:00:00Z'}
+        for fields in (['*', '-iguana_necktie'], ['-iguana_necktie', '*']):
+            with self.subTest(popup_fields=fields):
+                self.assertEqual(expand_popup_fields(fields, usage), ['five_hour', 'seven_day'])
+
+    def test_exclusion_overrides_explicit_inclusion(self):
+        """Explicitly naming a field cannot restore a globally excluded quota."""
+        usage = self._usage(five_hour=10, seven_day=20)
+        for fields in (
+            ['five_hour', '-five_hour', 'seven_day'],
+            ['-five_hour', 'five_hour', 'seven_day'],
+            ['five_hour', '*', '-five_hour'],
+            ['-five_hour', '*', 'five_hour'],
+        ):
+            with self.subTest(popup_fields=fields):
+                self.assertEqual(expand_popup_fields(fields, usage), ['seven_day'])
+
+    def test_exclusion_preserves_explicit_and_wildcard_order(self):
+        """Removing one quota preserves the configured positions of the others."""
+        usage = self._usage(seven_day_sonnet=30, seven_day_opus=40, seven_day=20, five_hour=10)
+        for fields in (
+            ['seven_day_sonnet', '*', '-seven_day'],
+            ['-seven_day', 'seven_day_sonnet', '*'],
+            ['seven_day_sonnet', '-seven_day', '*'],
+        ):
+            with self.subTest(popup_fields=fields):
+                self.assertEqual(expand_popup_fields(fields, usage), ['seven_day_sonnet', 'five_hour', 'seven_day_opus'])
+
+    def test_exclusions_match_exact_field_names(self):
+        """Excluding a base quota leaves variants and similarly named quotas visible."""
+        usage = self._usage(five_hour=10, five_hour_sonnet=20, seven_day=30)
+        self.assertEqual(expand_popup_fields(['*', '-five_hour'], usage), ['five_hour_sonnet', 'seven_day'])
+
+    def test_multiple_duplicate_and_unknown_exclusions(self):
+        """Repeated or unavailable exclusions do not disturb the remaining quotas."""
+        usage = self._usage(seven_day_sonnet=30, seven_day=20, five_hour=10)
+        fields = ['-five_hour', '*', '-seven_day', '-five_hour', '-unknown_quota']
+        self.assertEqual(expand_popup_fields(fields, usage), ['seven_day_sonnet'])
+
+    def test_exclusions_without_inclusions_show_no_fields(self):
+        """An exclusion-only list does not implicitly add a wildcard."""
+        usage = self._usage(five_hour=10, seven_day=20)
+        self.assertEqual(expand_popup_fields(['-five_hour'], usage), [])
+
+    def test_exclusions_with_empty_null_and_malformed_usage(self):
+        """Exclusions keep the existing filtering of unavailable quota data."""
+        for value in (None, {}, {'utilization': None, 'resets_at': ''}, 'error', [], 42, False):
+            with self.subTest(value=value):
+                usage = {'five_hour': value, 'seven_day': value}
+                self.assertEqual(expand_popup_fields(['*', '-five_hour'], usage), [])
+        self.assertEqual(expand_popup_fields(['*', '-five_hour'], {}), [])
+
     def test_null_fields_skipped(self):
         """Fields with None utilization are skipped."""
         usage = {'five_hour': {'utilization': 10, 'resets_at': ''}, 'seven_day': {'utilization': None, 'resets_at': ''}}

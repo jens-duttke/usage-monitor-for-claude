@@ -237,6 +237,9 @@ def _validate(data: dict, path: Path) -> dict:
             elif any(not isinstance(item, str) or not item for item in value):
                 errors.append(f'  {key}: all entries must be non-empty strings')
                 drop.append(key)
+            elif any(item in ('-', '-*') for item in value):
+                errors.append(f'  {key}: exclusions must name a field (e.g. "-iguana_necktie")')
+                drop.append(key)
             elif value.count('*') > 1:
                 errors.append(f'  {key}: "*" may appear at most once')
                 drop.append(key)
