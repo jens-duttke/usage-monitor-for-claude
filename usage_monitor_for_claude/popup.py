@@ -98,7 +98,7 @@ def _snapshot_to_dict(
                 continue
             pct = entry.get('utilization', 0) or 0
             resets_at = entry.get('resets_at', '')
-            time_pct = elapsed_pct(resets_at, period) if period else None
+            time_pct = elapsed_pct(resets_at, period, field=field) if period else None
             warn = pct >= 100 or (time_pct is not None and pct > time_pct)
             marker_rel = max(0.0, min(1.0, time_pct / 100)) if time_pct is not None else None
 
@@ -109,7 +109,7 @@ def _snapshot_to_dict(
                 'fill_pct': max(0.0, min(1.0, pct / 100)),
                 'warn': warn,
                 'reset_text': time_until(resets_at) if resets_at else '',
-                'dividers': divider_positions(resets_at, period) if period else [],
+                'dividers': divider_positions(resets_at, period, field=field) if period else [],
                 'marker_rel': marker_rel,
             })
 

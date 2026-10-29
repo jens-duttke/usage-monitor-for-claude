@@ -39,6 +39,39 @@ Threshold lookup uses a fallback chain: exact match (e.g. `alert_thresholds_seve
 }
 ```
 
+## Work-hour pacing
+
+By default the time marker advances around the clock, including nights and weekends. Set an active schedule to count only your working hours on quotas of a day or longer.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `active_schedule` | not set | Working hours per weekday in local 24-hour time. Not set means wall-clock pacing |
+| `active_schedule_fields` | not set | Which quotas use the schedule. Not set means every quota of a day or longer; `[]` means none |
+
+```json
+{
+    "active_schedule": {
+        "mon": [9, 17],
+        "tue": [[9, 12], [13, 17]],
+        "wed": [9, 17],
+        "thu": [9, 17],
+        "fri": [9, 15]
+    }
+}
+```
+
+Use the weekday keys `mon` through `sun`. A missing weekday or `[]` has no working hours. A day takes one `[start, end]` slot, or a list of slots for a split day. Fractional hours are allowed: `9.5` means 09:30. A start must be from 0 to below 24, an end from 0 to 24. Start and end must differ - use `[0, 24]` for a full day. If the end is before the start, the slot runs past midnight: `"fri": [22, 6]` lasts until Saturday 06:00. Overlapping slots count once.
+
+With a schedule, the popup marker, the red warning color, time-aware alerts and the tray icon marker (including `overage` mode) all use the share of working time that has passed. The marker stands still outside your working hours. The dividers mark the start of each working day instead of midnight; a lunch break adds no divider. Slots follow the local time of your computer, including daylight saving changes. If a quota period contains no working time at all, the bar falls back to wall-clock pacing and midnight dividers. Holidays and vacations are not supported. The five-hour session always uses wall-clock time.
+
+To limit the schedule to particular quotas, list their names in `active_schedule_fields`. A `*` matches any part of a name. Unlike in `popup_fields`, `-field` exclusions are not available:
+
+```json
+{
+    "active_schedule_fields": ["seven_day", "seven_day_*"]
+}
+```
+
 ## Update notification
 
 When a background token refresh installs a new Claude CLI version, the app shows a desktop notification reporting the version change. Set this to `false` to suppress that notification.
@@ -263,5 +296,5 @@ Override individual channels as RGBA arrays `[R, G, B, A]` (0-255). Unspecified 
 | `bar_bg` | `"#333333"` | Progress bar background |
 | `bar_fg` | `"#4a9eff"` | Progress bar fill |
 | `bar_fg_warn` | `"#e05050"` | Progress bar fill when usage outpaces elapsed time, error text |
-| `bar_divider` | `"#000c"` | Time dividers on progress bars (hour marks on the session bar, midnights on weekly bars) |
+| `bar_divider` | `"#000c"` | Time dividers on progress bars (hour marks on the session bar, midnights on weekly bars, or workday starts when an active schedule applies) |
 | `bar_marker` | `"#fffc"` | Time-position marker on progress bars |

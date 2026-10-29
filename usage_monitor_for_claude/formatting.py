@@ -8,11 +8,12 @@ elapsed period percentages, credit amounts, status lines, and tooltip text.
 from __future__ import annotations
 
 import locale as _locale
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from .i18n import T
-from .settings import CURRENCY_SYMBOL, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL
+from .settings import ACTIVE_SCHEDULE, ACTIVE_SCHEDULE_FIELDS, CURRENCY_SYMBOL, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL, _WEEKDAYS
 
 __all__ = [
     'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits',
@@ -219,7 +220,95 @@ def expand_popup_fields(popup_fields: list[str], usage_data: dict[str, Any]) -> 
     return result
 
 
-def elapsed_pct(resets_at: str, period_seconds: int) -> float | None:
+def _uses_active_schedule(period_seconds: int, field: str | None) -> bool:
+    """Choose scheduled pacing only for eligible long quota windows."""
+    if not ACTIVE_SCHEDULE or period_seconds < 24 * 3600:
+        return False
+    if ACTIVE_SCHEDULE_FIELDS is None:
+        return True
+    if field is None:
+        return False
+
+    for pattern in ACTIVE_SCHEDULE_FIELDS:
+        if re.fullmatch(re.escape(pattern).replace(r'\*', '.*'), field):
+            return True
+
+    return False
+
+
+def _local_date(when: datetime) -> date:
+    """Read a UTC instant's calendar date in the OS local timezone."""
+    return when.astimezone().date()
+
+
+def _local_boundary(day: date, hour: float) -> datetime:
+    """Resolve each local boundary separately, including its date's DST offset."""
+    local = datetime(day.year, day.month, day.day) + timedelta(hours=hour)
+    return local.astimezone(timezone.utc)
+
+
+def _schedule_period(reset: datetime, period_seconds: int) -> tuple[list[tuple[datetime, datetime]], list[datetime]]:
+    """Clip and union active slots in a quota period, retaining workday starts.
+
+    A previous day's overnight shift may overlap the period. Workday starts
+    come from each day's first slot, so lunch breaks and overnight midnight
+    crossings never create extra dividers. Intervals are unioned in UTC to
+    count overlapping slots once and preserve actual DST elapsed seconds.
+
+    Parameters
+    ----------
+    reset : datetime
+        Timezone-aware end of the quota period.
+    period_seconds : int
+        Total duration of the period in seconds.
+
+    Returns
+    -------
+    tuple
+        ``(intervals, starts)``: the sorted, disjoint UTC intervals of active
+        time inside the period, and the UTC start of every workday whose
+        first slot begins strictly inside it.
+    """
+    end = reset.astimezone(timezone.utc)
+    begin = end - timedelta(seconds=period_seconds)
+    day = _local_date(begin) - timedelta(days=1)
+    last_day = _local_date(end)
+    intervals: list[tuple[datetime, datetime]] = []
+    starts: list[datetime] = []
+
+    while day <= last_day:
+        day_starts: list[datetime] = []
+        for start_hour, end_hour in (ACTIVE_SCHEDULE or {}).get(_WEEKDAYS[day.weekday()], []):
+            slot_start = _local_boundary(day, start_hour)
+            end_day = day + timedelta(days=1) if end_hour < start_hour else day
+            slot_end = _local_boundary(end_day, end_hour)
+            day_starts.append(slot_start)
+            lower, upper = max(begin, slot_start), min(end, slot_end)
+            if lower < upper:
+                intervals.append((lower, upper))
+
+        if day_starts:
+            first_start = min(day_starts)
+            if begin < first_start < end:
+                starts.append(first_start)
+        day += timedelta(days=1)
+
+    merged: list[tuple[datetime, datetime]] = []
+    for lower, upper in sorted(intervals):
+        if merged and lower <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(upper, merged[-1][1]))
+        else:
+            merged.append((lower, upper))
+
+    return merged, starts
+
+
+def _active_seconds(intervals: list[tuple[datetime, datetime]], until: datetime) -> float:
+    """Sum elapsed real seconds in disjoint active intervals, clamped at both ends."""
+    return sum(max(0.0, (min(upper, until) - lower).total_seconds()) for lower, upper in intervals)
+
+
+def elapsed_pct(resets_at: str, period_seconds: int, field: str | None = None) -> float | None:
     """Return elapsed percentage of a usage period, or None if not calculable.
 
     Parameters
@@ -228,11 +317,15 @@ def elapsed_pct(resets_at: str, period_seconds: int) -> float | None:
         ISO 8601 timestamp when the limit resets.
     period_seconds : int
         Total duration of the period in seconds (e.g. 18000 for 5h).
+    field : str or None
+        Quota field used to match optional ``active_schedule_fields`` patterns.
+        Durations under one day always retain wall-clock pacing.
 
     Returns
     -------
     float or None
-        Percentage of the period that has already elapsed (0-100),
+        Percentage of the period - or of its working time, when an active
+        schedule applies to the field - that has already elapsed (0-100),
         or None if the value cannot be determined.
     """
     if not resets_at or period_seconds <= 0:
@@ -244,17 +337,25 @@ def elapsed_pct(resets_at: str, period_seconds: int) -> float | None:
         remaining = (reset - now).total_seconds()
         elapsed = period_seconds - remaining
 
+        if _uses_active_schedule(period_seconds, field):
+            intervals, _ = _schedule_period(reset, period_seconds)
+            total = _active_seconds(intervals, reset)
+            if total > 0:
+                return _active_seconds(intervals, now) / total * 100
+
         return max(0.0, min(100.0, elapsed / period_seconds * 100))
     except Exception:
         return None
 
 
-def divider_positions(resets_at: str, period_seconds: int) -> list[float]:
+def divider_positions(resets_at: str, period_seconds: int, field: str | None = None) -> list[float]:
     """Return relative positions (0.0-1.0) of divider marks within a usage period.
 
     Five-hour periods are split into five equal hour sections, independent
     of clock alignment.  Periods of a day or longer are subdivided at local
-    midnight boundaries (e.g. seven day marks on a weekly bar).  Other
+    midnight boundaries (e.g. seven day marks on a weekly bar), or - when an
+    active schedule applies to the field - at workday starts, placed on the
+    same working-time scale as the time marker.  Other
     sub-day periods have no dividers - their subdivision is a deliberate
     design decision for if and when such quota types exist.
 
@@ -264,6 +365,8 @@ def divider_positions(resets_at: str, period_seconds: int) -> list[float]:
         ISO 8601 timestamp when the limit resets.
     period_seconds : int
         Total duration of the period in seconds.
+    field : str or None
+        Quota field used to match optional active-schedule patterns.
 
     Returns
     -------
@@ -282,6 +385,13 @@ def divider_positions(resets_at: str, period_seconds: int) -> list[float]:
             if period_seconds != PERIOD_5H:
                 return []
             return [i / 5 for i in range(1, 5)]
+
+        if _uses_active_schedule(period_seconds, field):
+            intervals, starts = _schedule_period(reset_utc, period_seconds)
+            total = _active_seconds(intervals, reset_utc)
+            if total > 0:
+                positions = {_active_seconds(intervals, start) / total for start in starts}
+                return sorted(position for position in positions if 0.003 < position < 0.997)
 
         start_utc = reset_utc - timedelta(seconds=period_seconds)
 

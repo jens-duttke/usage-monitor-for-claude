@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- [Work-hour pacing](https://github.com/jens-duttke/usage-monitor-for-claude/discussions/39) - set your working hours per weekday in [`active_schedule`](docs/configuration.md#work-hour-pacing), and the time marker, red warning color, time-aware alerts and tray icon marker of the weekly bars count only those hours, with dividers at the start of each working day - so nights and weekends no longer make a bar look as if you were ahead of pace (thanks to [@regisbsb](https://github.com/regisbsb) for the contribution)
 - The detail popup can now hide a single usage bar while still showing every other quota - add the field name with a leading `-` to [`popup_fields`](docs/configuration.md#popup-fields), e.g. `["*", "-iguana_necktie"]` (thanks to [@TheConfax](https://github.com/TheConfax) for reporting [#101](https://github.com/jens-duttke/usage-monitor-for-claude/issues/101) and to [@regisbsb](https://github.com/regisbsb) for the contribution)
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.24.0...HEAD)
