@@ -162,24 +162,6 @@ class TestSnapshotToDict(unittest.TestCase):
 
     # -- profile --
 
-
-    def test_active_schedule_drives_marker_and_warning(self):
-        """Popup pacing follows the same working-time reference as alerts and tray bars."""
-        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
-        snap = _snap(usage={'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'}})
-        with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule), \
-             patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', None), \
-             patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()), \
-             patch('usage_monitor_for_claude.formatting._local_boundary',
-                   side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)), \
-             patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock:
-            clock.now.return_value = datetime(2026, 1, 12, 9, tzinfo=timezone.utc)
-            data = _snapshot_to_dict(snap, installations=[])
-        self.assertAlmostEqual(data['usage'][0]['marker_rel'], .375)
-        self.assertTrue(data['usage'][0]['warn'])
-        self.assertEqual(data['usage'][0]['pct_text'], '45%')
-
-
     def test_no_profile(self):
         """Profile is None when snapshot has no profile."""
         result = _snapshot_to_dict(_snap(), installations=[])
@@ -213,6 +195,27 @@ class TestSnapshotToDict(unittest.TestCase):
         self.assertEqual(result['profile']['plan'], '')
 
     # -- usage bars --
+
+    def test_active_schedule_drives_marker_and_warning(self):
+        """Popup pacing follows the same working-time reference as alerts and tray bars."""
+        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+        snap = _snap(usage={'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'}})
+        with (
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', None),
+            patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()),
+            patch(
+                'usage_monitor_for_claude.formatting._local_boundary',
+                side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour),
+            ),
+            patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock,
+        ):
+            clock.now.return_value = datetime(2026, 1, 12, 9, tzinfo=timezone.utc)
+            data = _snapshot_to_dict(snap, installations=[])
+
+        self.assertAlmostEqual(data['usage'][0]['marker_rel'], .375)
+        self.assertTrue(data['usage'][0]['warn'])
+        self.assertEqual(data['usage'][0]['pct_text'], '45%')
 
     def test_no_usage_data(self):
         """Empty usage dict produces empty usage list."""

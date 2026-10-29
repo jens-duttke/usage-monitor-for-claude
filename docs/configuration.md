@@ -41,7 +41,12 @@ Threshold lookup uses a fallback chain: exact match (e.g. `alert_thresholds_seve
 
 ## Work-hour pacing
 
-Leave `active_schedule` unset to keep wall-clock pacing. To count only your working hours on long quota windows, set a schedule using local 24-hour time:
+By default the time marker advances around the clock, including nights and weekends. Set an active schedule to count only your working hours on quotas of a day or longer.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `active_schedule` | not set | Working hours per weekday in local 24-hour time. Not set means wall-clock pacing |
+| `active_schedule_fields` | not set | Which quotas use the schedule. Not set means every quota of a day or longer; `[]` means none |
 
 ```json
 {
@@ -55,19 +60,17 @@ Leave `active_schedule` unset to keep wall-clock pacing. To count only your work
 }
 ```
 
-Use weekday keys `mon` through `sun`. Missing weekdays or `[]` are inactive. A day accepts one `[start, end]` slot or several slots for a split shift. Fractional hours are allowed (`9.5` means 09:30). Starts must be at least 0 and less than 24; ends may also be 24. Equal starts and ends are invalid; use `[0, 24]` for a full day. An end before its start crosses midnight, so `"fri": [22, 6]` runs until Saturday 06:00. Overlapping slots count once.
+Use the weekday keys `mon` through `sun`. A missing weekday or `[]` has no working hours. A day takes one `[start, end]` slot, or a list of slots for a split day. Fractional hours are allowed: `9.5` means 09:30. A start must be from 0 to below 24, an end from 0 to 24. Start and end must differ - use `[0, 24]` for a full day. If the end is before the start, the slot runs past midnight: `"fri": [22, 6]` lasts until Saturday 06:00. Overlapping slots count once.
 
-The popup marker, warning color, time-aware alerts, and tray marker/overage use the same elapsed working-time percentage. Workday dividers mark the first slot of each active day; lunch breaks do not add dividers. Time outside the schedule does not advance the marker. Slot boundaries follow the OS local timezone and its daylight-saving transitions. A quota period containing no active time falls back to wall-clock pacing and calendar dividers. Holidays and vacation dates are not supported.
+With a schedule, the popup marker, the red warning color, time-aware alerts and the tray icon marker (including `overage` mode) all use the share of working time that has passed. The marker stands still outside your working hours. The dividers mark the start of each working day instead of midnight; a lunch break adds no divider. Slots follow the local time of your computer, including daylight saving changes. If a quota period contains no working time at all, the bar falls back to wall-clock pacing and midnight dividers. Holidays and vacations are not supported. The five-hour session always uses wall-clock time.
 
-By default, the schedule applies to every quota lasting at least 24 hours, including future long-duration fields. The five-hour session always keeps wall-clock pacing. To select particular long quotas, set `active_schedule_fields` to exact names or `*` wildcard patterns:
+To limit the schedule to particular quotas, list their names in `active_schedule_fields`. A `*` matches any part of a name. Unlike in `popup_fields`, `-field` exclusions are not available:
 
 ```json
 {
-    "active_schedule_fields": ["seven_day", "seven_day_*", "thirty_day"]
+    "active_schedule_fields": ["seven_day", "seven_day_*"]
 }
 ```
-
-An empty `active_schedule_fields` list disables scheduled pacing everywhere. Fields that are excluded or have no recognized duration keep their existing behavior. Raw usage percentages, quota durations, and reset times are unchanged.
 
 ## Update notification
 

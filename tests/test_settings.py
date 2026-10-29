@@ -437,7 +437,7 @@ class TestSettingsValidation(unittest.TestCase):
         mock.assert_not_called()
 
     def test_active_schedule_empty_object_valid(self):
-        """An explicitly empty schedule is valid and distinct from omission."""
+        """An explicitly empty schedule is valid; pacing treats it like no schedule."""
         result, mock = self._run_validate({'active_schedule': {}})
         self.assertEqual(result['active_schedule'], {})
         mock.assert_not_called()
@@ -456,6 +456,7 @@ class TestSettingsValidation(unittest.TestCase):
                 result, mock = self._run_validate({'active_schedule': value})
                 self.assertNotIn('active_schedule', result)
                 mock.assert_called_once()
+                self.assertIn('active_schedule: expected an object keyed by weekday', mock.call_args.args[0])
 
     def test_active_schedule_unknown_day_drops_whole_setting(self):
         """Day names are the fixed lowercase mon-sun keys."""
@@ -511,22 +512,48 @@ class TestSettingsValidation(unittest.TestCase):
                 mock.assert_not_called()
 
     def test_active_schedule_fields_deduplicated(self):
-        """Repeated exact names are removed without moving the wildcard."""
-        result, mock = self._run_validate({'active_schedule_fields': ['seven_day', '*', 'seven_day', 'five_hour']})
-        self.assertEqual(result['active_schedule_fields'], ['seven_day', '*', 'five_hour'])
-        mock.assert_not_called()
+        """Repeated patterns, the wildcard included, are removed keeping the first position."""
+        cases = (
+            (['seven_day', '*', 'seven_day', 'five_hour'], ['seven_day', '*', 'five_hour']),
+            (['*', 'seven_day*', '*'], ['*', 'seven_day*']),
+        )
+        for fields, expected in cases:
+            with self.subTest(fields=fields):
+                result, mock = self._run_validate({'active_schedule_fields': fields})
+                self.assertEqual(result['active_schedule_fields'], expected)
+                mock.assert_not_called()
 
     def test_active_schedule_fields_invalid_dropped(self):
-        """Invalid field arrays follow popup_fields' whole-setting rejection."""
-        for fields in (None, 'seven_day', False, [42], ['seven_day', True], ['seven_day', ''], ['*', '*']):
+        """An invalid field array is rejected as a whole and named in the warning."""
+        for fields in (None, 'seven_day', False, [42], ['seven_day', True], ['seven_day', '']):
             with self.subTest(fields=fields):
                 result, mock = self._run_validate({'active_schedule_fields': fields, 'poll_fast': 60})
                 self.assertNotIn('active_schedule_fields', result)
                 self.assertEqual(result['poll_fast'], 60)
                 mock.assert_called_once()
+                self.assertIn('active_schedule_fields', mock.call_args.args[0])
+
+    def test_active_schedule_fields_exclusions_rejected(self):
+        """popup_fields' "-field" syntax is refused instead of being kept as a pattern that never matches."""
+        for fields in (['*', '-seven_day_sonnet'], ['-'], ['-*']):
+            with self.subTest(fields=fields):
+                result, mock = self._run_validate({'active_schedule_fields': fields, 'poll_fast': 60})
+                self.assertNotIn('active_schedule_fields', result)
+                self.assertEqual(result['poll_fast'], 60)
+                mock.assert_called_once()
+                message = mock.call_args.args[0]
+                self.assertIn('active_schedule_fields: exclusions are not supported', message)
+                self.assertNotIn('iguana_necktie', message)
+
+    def test_active_schedule_fields_validation_leaves_popup_fields_exclusions_alone(self):
+        """The separate validator does not change what popup_fields accepts."""
+        result, mock = self._run_validate({'popup_fields': ['*', '-seven_day_sonnet'], 'active_schedule_fields': ['seven_day*']})
+        self.assertEqual(result['popup_fields'], ['*', '-seven_day_sonnet'])
+        self.assertEqual(result['active_schedule_fields'], ['seven_day*'])
+        mock.assert_not_called()
 
     def test_active_schedule_settings_absent_by_default(self):
-        """No file enables neither schedule nor field selection."""
+        """Without a settings file neither a schedule nor a field selection is set."""
         with TemporaryDirectory() as app_tmp, TemporaryDirectory() as home_tmp:
             loaded = _load(Path(app_tmp), Path(home_tmp))
         self.assertNotIn('active_schedule', loaded)
@@ -543,7 +570,7 @@ class TestSettingsValidation(unittest.TestCase):
         mock.assert_not_called()
 
     def test_active_schedule_empty_runtime_value_preserved(self):
-        """The runtime keeps an explicit empty schedule for wall-clock fallback."""
+        """Normalizing an empty schedule yields an empty mapping, which pacing treats as unset."""
         self.assertEqual(settings_mod._active_schedule({'active_schedule': {}}), {})
 
     # time_format validation

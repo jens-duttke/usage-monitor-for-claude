@@ -17,8 +17,8 @@ The app never creates this file - users place it manually.
 from __future__ import annotations
 
 import json
-import math
 import locale as _locale
+import math
 import sys
 from pathlib import Path
 
@@ -62,8 +62,9 @@ _COMMAND_KEYS = frozenset({
 })
 _BOOL_KEYS = frozenset({'alert_time_aware', 'notify_claude_update'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields', 'compact_hide'})
-_WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields', 'active_schedule_fields'})
+_WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
+_WEEKDAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 
 
 def _quick_action_command(settings: dict) -> list[str]:
@@ -130,14 +131,20 @@ def _valid_rgba(value: object) -> bool:
     )
 
 
-_WEEKDAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+def _valid_hour(value: object) -> bool:
+    """Return True if *value* is a finite JSON number (booleans excluded)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+
+    return not isinstance(value, float) or math.isfinite(value)
 
 
 def _schedule_errors(value: object) -> list[str]:
     """Validate local weekday slots without partially accepting a bad schedule."""
     if not isinstance(value, dict):
         return ['  active_schedule: expected an object keyed by weekday']
-    errors = []
+
+    errors: list[str] = []
     for day, slots in value.items():
         path = f'active_schedule.{day}'
         if day not in _WEEKDAYS:
@@ -148,19 +155,22 @@ def _schedule_errors(value: object) -> list[str]:
             continue
         if not slots:
             continue
+
         ranges = slots if isinstance(slots[0], list) else [slots]
         for index, slot in enumerate(ranges):
             location = f'{path}[{index}]'
             if not isinstance(slot, list) or len(slot) != 2:
                 errors.append(f'  {location}: expected a slot [start, end]')
                 continue
+
             start, end = slot
-            if any(isinstance(hour, bool) or not isinstance(hour, (int, float)) or (isinstance(hour, float) and not math.isfinite(hour)) for hour in slot):
+            if not (_valid_hour(start) and _valid_hour(end)):
                 errors.append(f'  {location}: hours must be finite numbers')
             elif not (0 <= start < 24 and 0 <= end <= 24):
                 errors.append(f'  {location}: start must be >= 0 and < 24; end must be >= 0 and <= 24')
             elif start == end:
                 errors.append(f'  {location}: start and end must differ; use [0, 24] for a full day')
+
     return errors
 
 
@@ -169,10 +179,12 @@ def _active_schedule(settings: dict) -> dict[str, list[tuple[float, float]]] | N
     value = settings.get('active_schedule')
     if value is None:
         return None
-    normalized = {}
+
+    normalized: dict[str, list[tuple[float, float]]] = {}
     for day, slots in value.items():
         ranges = slots if not slots or isinstance(slots[0], list) else [slots]
         normalized[day] = [(float(start), float(end)) for start, end in ranges]
+
     return normalized
 
 
@@ -306,6 +318,21 @@ def _validate(data: dict, path: Path) -> dict:
                         deduped_wc.append(item)
                 data[key] = deduped_wc
 
+        elif key == 'active_schedule_fields':
+            # Entries are glob patterns, not popup_fields tokens: "*" matches
+            # inside a name and there are no "-field" exclusions.
+            if not isinstance(value, list):
+                errors.append(f'  {key}: expected an array, got {type(value).__name__}')
+                drop.append(key)
+            elif any(not isinstance(item, str) or not item for item in value):
+                errors.append(f'  {key}: all entries must be non-empty strings')
+                drop.append(key)
+            elif any(item.startswith('-') for item in value):
+                errors.append(f'  {key}: exclusions are not supported - list the fields to include (e.g. "seven_day*")')
+                drop.append(key)
+            else:
+                data[key] = list(dict.fromkeys(value))
+
         elif key == 'icon_fields':
             if not isinstance(value, list):
                 errors.append(f'  {key}: expected an array, got {type(value).__name__}')
@@ -426,6 +453,11 @@ TOOLTIP_FIELDS: list[str] = _S.get('tooltip_fields', ['five_hour', 'seven_day'])
 # Popup fields
 POPUP_FIELDS: list[str] = _S.get('popup_fields', ['*'])
 
+# Work-hour pacing: a missing schedule keeps wall-clock pacing, a missing field
+# list applies it to every quota of a day or longer, an empty one to none
+ACTIVE_SCHEDULE: dict[str, list[tuple[float, float]]] | None = _active_schedule(_S)
+ACTIVE_SCHEDULE_FIELDS: list[str] | None = _S.get('active_schedule_fields')
+
 # Sections and usage bars hidden while the popup is pinned (compact view)
 COMPACT_HIDE: list[str] = _S.get('compact_hide', [])
 
@@ -518,8 +550,3 @@ def get_alert_thresholds(variant_key: str) -> list[float]:
             return _ALERT_THRESHOLDS[base_key]
 
     return []
-
-
-# Missing schedules preserve wall-clock pacing; an empty field list disables scaling.
-ACTIVE_SCHEDULE = _active_schedule(_S)
-ACTIVE_SCHEDULE_FIELDS: list[str] | None = _S.get('active_schedule_fields')

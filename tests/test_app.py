@@ -8,7 +8,9 @@ tray rendering, polling interval, and reset notifications.
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
+from typing import Iterator
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.app import (
@@ -90,6 +92,34 @@ def _stop_after_one_pass(app: UsageMonitorForClaude):
         return False
 
     return polling_throttled
+
+
+@contextmanager
+def _utc_workweek(fields: list[str] | None, now: datetime) -> Iterator[None]:
+    """Pace long quotas by a Mon-Fri 09:00-17:00 schedule in UTC, with the clock at *now*.
+
+    Parameters
+    ----------
+    fields : list[str] or None
+        Value for ``active_schedule_fields``; ``None`` applies the schedule to
+        every quota of a day or longer.
+    now : datetime
+        Timezone-aware instant ``elapsed_pct()`` treats as the current time.
+    """
+    schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+
+    def utc_boundary(day: date, hour: float) -> datetime:
+        return datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)
+
+    with (
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', fields),
+        patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()),
+        patch('usage_monitor_for_claude.formatting._local_boundary', side_effect=utc_boundary),
+        patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock,
+    ):
+        clock.now.return_value = now
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -280,29 +310,6 @@ class TestCheckThresholdAlerts(unittest.TestCase):
 class TestTimeAwareAlerts(unittest.TestCase):
     """Tests for time-aware threshold alert suppression."""
 
-
-    def test_active_schedule_and_field_filter_control_alert_suppression(self):
-        """A weekly alert uses active time; an excluded field retains wall-clock suppression."""
-        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
-        data = {'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'}}
-        with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule), \
-             patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', ['seven_day']), \
-             patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()), \
-             patch('usage_monitor_for_claude.formatting._local_boundary',
-                   side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)), \
-             patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock, \
-             patch('usage_monitor_for_claude.app.get_alert_thresholds', return_value=[40]):
-            clock.now.return_value = datetime(2026, 1, 12, 9, tzinfo=timezone.utc)
-            self.app._check_threshold_alerts(data)
-            self.app.icon.notify.assert_called_once()
-            self.app.icon.notify.reset_mock()
-            self.app._notified_thresholds.clear()
-            with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', []):
-                self.app._check_threshold_alerts(data)
-            self.app.icon.notify.assert_not_called()
-            self.assertEqual(self.app._notified_thresholds['seven_day'], 40)
-
-
     def setUp(self):
         self.app = _make_app()
         self._cmd_patch = patch('usage_monitor_for_claude.app.run_event_command')
@@ -317,6 +324,25 @@ class TestTimeAwareAlerts(unittest.TestCase):
         self._time_aware_patch.stop()
         self._cmd_patch.stop()
         _cleanup(self.app)
+
+    def test_active_schedule_and_field_filter_control_alert_suppression(self):
+        """A weekly alert uses active time; an excluded field retains wall-clock suppression."""
+        data = {'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'}}
+        with (
+            _utc_workweek(['seven_day'], datetime(2026, 1, 12, 9, tzinfo=timezone.utc)),
+            patch('usage_monitor_for_claude.app.get_alert_thresholds', return_value=[40]),
+        ):
+            # 45% is ahead of the 37.5% working time that has passed
+            self.app._check_threshold_alerts(data)
+            self.app.icon.notify.assert_called_once()
+            self.app.icon.notify.reset_mock()
+            self.app._notified_thresholds.clear()
+
+            # Without the schedule 56.5% of the week has passed, so 45% is on pace
+            with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', []):
+                self.app._check_threshold_alerts(data)
+            self.app.icon.notify.assert_not_called()
+            self.assertEqual(self.app._notified_thresholds['seven_day'], 40)
 
     def test_alert_suppressed_when_usage_behind_time(self):
         """No notification when usage (82%) <= elapsed time (90%)."""
@@ -1071,35 +1097,29 @@ class TestFastPolling(unittest.TestCase):
 class TestRenderTray(unittest.TestCase):
     """Tests for _render_tray() icon and tooltip rendering."""
 
-
-    def test_active_schedule_drives_tray_marker_and_overage(self):
-        """Both tray bars use scheduled elapsed time, including overage display mode."""
-        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
-        self.app._last_response = {
-            'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
-            'seven_day_sonnet': {'utilization': 30.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
-        }
-        with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule), \
-             patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', None), \
-             patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()), \
-             patch('usage_monitor_for_claude.formatting._local_boundary',
-                   side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)), \
-             patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock, \
-             patch('usage_monitor_for_claude.app.ICON_FIELDS', ['seven_day:overage', 'seven_day_sonnet']), \
-             patch('usage_monitor_for_claude.app.create_icon_image') as image, \
-             patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip'):
-            clock.now.return_value = datetime(2026, 1, 12, 9, tzinfo=timezone.utc)
-            self.app._render_tray()
-        self.assertEqual(image.call_args.kwargs['mode_top'], 'overage')
-        self.assertAlmostEqual(image.call_args.kwargs['time_pct_top'], 37.5)
-        self.assertAlmostEqual(image.call_args.kwargs['time_pct_bottom'], 37.5)
-
-
     def setUp(self):
         self.app = _make_app()
 
     def tearDown(self):
         _cleanup(self.app)
+
+    def test_active_schedule_drives_tray_marker_and_overage(self):
+        """Both tray bars use scheduled elapsed time, including overage display mode."""
+        self.app._last_response = {
+            'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
+            'seven_day_sonnet': {'utilization': 30.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
+        }
+        with (
+            _utc_workweek(None, datetime(2026, 1, 12, 9, tzinfo=timezone.utc)),
+            patch('usage_monitor_for_claude.app.ICON_FIELDS', ['seven_day:overage', 'seven_day_sonnet']),
+            patch('usage_monitor_for_claude.app.create_icon_image') as image,
+            patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip'),
+        ):
+            self.app._render_tray()
+
+        self.assertEqual(image.call_args.kwargs['mode_top'], 'overage')
+        self.assertAlmostEqual(image.call_args.kwargs['time_pct_top'], 37.5)
+        self.assertAlmostEqual(image.call_args.kwargs['time_pct_bottom'], 37.5)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='Usage: 42%')
     @patch('usage_monitor_for_claude.app.create_icon_image')

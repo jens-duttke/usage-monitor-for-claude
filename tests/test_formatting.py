@@ -21,6 +21,7 @@ from usage_monitor_for_claude.formatting import (
     PERIOD_5H, PERIOD_7D,
     divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits,
     format_tooltip, parse_field_name, popup_label, time_until, tooltip_label,
+    _local_boundary, _local_date, _schedule_period,
 )
 from usage_monitor_for_claude.i18n import LOCALE_DIR
 
@@ -543,7 +544,6 @@ class TestElapsedPct(unittest.TestCase):
         assert result is not None
         self.assertAlmostEqual(result, 50.0)
 
-
     def test_active_schedule_workweek_review_example(self, mock_dt):
         """Thursday 10:00 to Thursday 10:00 reaches 37.5% on Monday at 09:00."""
         self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
@@ -591,6 +591,15 @@ class TestElapsedPct(unittest.TestCase):
         for schedule in ({}, {'fri': [(9.0, 17.0)]}):
             with self.subTest(schedule=schedule), _active_schedule(schedule):
                 self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-14T00:00:00+00:00', 86400), 50.0)
+
+    def test_active_schedule_unparseable_reset_returns_none(self, mock_dt):
+        """An empty or malformed resets_at stays uncalculable with a schedule, as without one."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        with _active_schedule(_workweek()):
+            for resets_at in ('', 'not-a-date'):
+                with self.subTest(resets_at=resets_at):
+                    self.assertIsNone(elapsed_pct(resets_at, PERIOD_7D, 'seven_day'))
+                    self.assertEqual(divider_positions(resets_at, PERIOD_7D, 'seven_day'), [])
 
     def test_active_schedule_five_hour_always_uses_wall_time(self, mock_dt):
         """Even an explicit wildcard filter cannot change five-hour pacing."""
@@ -789,7 +798,6 @@ class TestDividerPositions(unittest.TestCase):
         self.assertGreater(len(result), 0)
         self.assertAlmostEqual(result[0], 12 / 168, places=2)
 
-
     def test_active_schedule_workday_dividers_use_cumulative_active_time(self):
         """The Thursday review window marks five workday starts, including its final partial day."""
         with _active_schedule(_workweek()):
@@ -871,6 +879,59 @@ class TestDividerPositions(unittest.TestCase):
             reset = datetime(2026, month, day, tzinfo=local_zone).isoformat()
             with self.subTest(month=month), _active_schedule({'sun': [(0.0, 4.0)], 'mon': [(0.0, 4.0)]}, local_zone=local_zone):
                 self.assertEqual(divider_positions(reset, PERIOD_7D), [expected])
+
+    def test_local_boundary_resolves_wall_time_around_dst(self):
+        """The real helper maps a date and fractional hour to that local wall time
+        on both sides of the EU and US changeovers, and 24 to the next midnight."""
+        days = (
+            date(2026, 3, 7), date(2026, 3, 9), date(2026, 3, 28), date(2026, 3, 30),
+            date(2026, 10, 24), date(2026, 10, 26), date(2026, 10, 31), date(2026, 11, 2),
+        )
+        for day in days:
+            with self.subTest(day=day):
+                morning = _local_boundary(day, 9.5).astimezone()
+                self.assertEqual((morning.date(), morning.hour, morning.minute), (day, 9, 30))
+                end_of_day = _local_boundary(day, 24.0).astimezone()
+                self.assertEqual((end_of_day.date(), end_of_day.hour, end_of_day.minute), (day + timedelta(days=1), 0, 0))
+                self.assertEqual(_local_date(_local_boundary(day, 0.5)), day)
+                self.assertEqual(_local_date(_local_boundary(day, 23.5)), day)
+
+    def _assert_schedule_on_local_hours(self, reset_iso: str):
+        """Every boundary of an unpatched daily 09:30-17:00 schedule must land on
+        those local hours - also when a DST changeover falls inside the period.
+        Unlike the other schedule tests this runs the real _local_boundary() and
+        _local_date() against the system timezone."""
+        schedule = {day: [(9.5, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')}
+        end = datetime.fromisoformat(reset_iso)
+        begin = end - timedelta(seconds=PERIOD_7D)
+        with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule):
+            intervals, starts = _schedule_period(end, PERIOD_7D)
+
+        self.assertIn(len(intervals), (7, 8))
+        for lower, upper in intervals:
+            local_start, local_end = lower.astimezone(), upper.astimezone()
+            if lower != begin:
+                self.assertEqual((local_start.hour, local_start.minute), (9, 30), f'slot starts at {local_start.isoformat()}')
+            if upper != end:
+                self.assertEqual((local_end.hour, local_end.minute), (17, 0), f'slot ends at {local_end.isoformat()}')
+
+        self.assertIn(len(starts), (6, 7))
+        self.assertEqual(len({start.astimezone().date() for start in starts}), len(starts))
+        for start in starts:
+            local_start = start.astimezone()
+            self.assertEqual((local_start.hour, local_start.minute), (9, 30), f'workday starts at {local_start.isoformat()}')
+
+    def test_schedule_stays_on_local_hours_across_autumn_dst(self):
+        """A week spanning the late-October changeover (EU zones) keeps every slot on its local hours."""
+        self._assert_schedule_on_local_hours('2026-10-28T11:00:00+00:00')
+
+    def test_schedule_stays_on_local_hours_across_early_november_dst(self):
+        """A week spanning the early-November changeover (US zones) keeps every slot on its local hours."""
+        self._assert_schedule_on_local_hours('2026-11-04T11:00:00+00:00')
+
+    def test_schedule_stays_on_local_hours_across_spring_dst(self):
+        """A week spanning the late-March changeover (EU zones) keeps every slot on its local hours."""
+        self._assert_schedule_on_local_hours('2027-03-31T11:00:00+00:00')
 
 
 # ---------------------------------------------------------------------------
