@@ -71,5 +71,6 @@
     "status_next_update": "Prochaine MàJ : {duration}",
     "status_refreshing": "Actualisation...",
     "already_running": "Usage Monitor for Claude v{running_version} est déjà en cours d'exécution.\n\nVoulez-vous remplacer l'instance en cours ?",
-    "replace_failed": "L'instance en cours n'a pas pu être remplacée.\n\nVeuillez la fermer manuellement et réessayer."
+    "replace_failed": "L'instance en cours n'a pas pu être remplacée.\n\nVeuillez la fermer manuellement et réessayer.",
+    "refresh": "Actualiser maintenant"
 }

@@ -71,5 +71,6 @@
     "status_next_update": "{duration}后更新",
     "status_refreshing": "刷新中...",
     "already_running": "Usage Monitor for Claude v{running_version} 已在运行中。\n\n是否要替换正在运行的实例？",
-    "replace_failed": "无法替换正在运行的实例。\n\n请手动关闭后重试。"
+    "replace_failed": "无法替换正在运行的实例。\n\n请手动关闭后重试。",
+    "refresh": "立即刷新"
 }

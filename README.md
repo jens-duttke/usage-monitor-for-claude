@@ -378,3 +378,5 @@ MIT
 ## Disclaimer
 
 This is an independent, community-built project. It is **not** created, endorsed, or officially supported by [Anthropic](https://www.anthropic.com/). "Claude" and "Anthropic" are trademarks of Anthropic, PBC. Use of these names is solely for descriptive purposes to indicate compatibility.
+
+Refresh usage from the popup button or tray menu without waiting for the next poll. Active rate-limit backoff is still respected.

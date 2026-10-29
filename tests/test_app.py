@@ -7,6 +7,7 @@ tray rendering, polling interval, and reset notifications.
 """
 from __future__ import annotations
 
+import threading
 import unittest
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -3840,6 +3841,59 @@ class TestDoubleClickWiring(unittest.TestCase):
         _icon, on_single, on_double = mock_install.call_args[0]
         self.assertEqual(on_single, app.on_show_popup)
         self.assertEqual(on_double, app._run_quick_action)
+
+
+class TestManualRefresh(unittest.TestCase):
+    """Manual requests coalesce without blocking the tray thread."""
+
+    def test_overlapping_requests_share_update(self) -> None:
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
+        results = []
+        original_wait = app._manual_refresh_condition.wait
+        def wait_for_update():
+            waiting.set()
+            return original_wait()
+        def update(*, manual=False):
+            self.assertTrue(manual)
+            entered.set()
+            self.assertTrue(release.wait(3))
+        with patch.object(app, 'update', side_effect=update) as called, \
+             patch.object(app._manual_refresh_condition, 'wait', side_effect=wait_for_update):
+            first = threading.Thread(target=lambda: results.append(app.refresh_now()))
+            second = threading.Thread(target=lambda: results.append(app.refresh_now()))
+            first.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                second.start()
+                self.assertTrue(waiting.wait(3))
+            finally:
+                release.set()
+                first.join(3)
+                if second.ident is not None:
+                    second.join(3)
+            called.assert_called_once_with(manual=True)
+        self.assertCountEqual(results, [True, False])
+        self.assertFalse(app._manual_refresh_active)
+
+    def test_failure_releases_manual_guard(self) -> None:
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        with patch.object(app, 'update', side_effect=RuntimeError('synthetic failure')):
+            with self.assertRaises(RuntimeError):
+                app.refresh_now()
+        self.assertFalse(app._manual_refresh_active)
+        with patch.object(app, 'update'):
+            self.assertTrue(app.refresh_now())
+
+    def test_tray_action_is_asynchronous(self) -> None:
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        with patch('usage_monitor_for_claude.app.threading.Thread') as worker:
+            app.on_refresh()
+        worker.assert_called_once_with(target=app.refresh_now, daemon=True)
+        worker.return_value.start.assert_called_once_with()
 
 
 if __name__ == '__main__':

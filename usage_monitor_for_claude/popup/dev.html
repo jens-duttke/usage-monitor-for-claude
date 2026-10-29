@@ -156,6 +156,7 @@ let currentPreset = 'full';
 // Map locale JSON keys onto the compact translation object popup.js expects.
 function buildTranslations(loc) {
     return {
+        refresh: loc.refresh,
         title: loc.popup_title, account: loc.account, email: loc.email, plan: loc.plan,
         usage: loc.usage, extra_usage: loc.extra_usage, claude_code: loc.claude_code, changelog: loc.changelog,
         status_updated_s: loc.status_updated_s, status_updated: loc.status_updated,
@@ -240,7 +241,7 @@ async function applyLanguage(code) {
     currentLang = code;
     currentLocale = await loadLocale(code);
     await reloadFrame();
-    win().pywebview = { api: { close() {}, open_url() {},
+    win().pywebview = { api: { close() {}, open_url() {}, refresh: async () => resolveData(currentPreset, currentLocale),
         set_pinned(pinned) { return Promise.resolve(pinned); },
         begin_drag() { return Promise.resolve(true); },
         drag() { return Promise.resolve(true); },

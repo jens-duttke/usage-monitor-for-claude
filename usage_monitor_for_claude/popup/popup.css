@@ -208,3 +208,18 @@ footer {
 
     &.error > #statusText { color: var(--bar-fg-warn); }
 }
+
+
+#statusText { flex: 1 1 auto; }
+#refreshBtn {
+    flex: 0 0 auto;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+}
+#refreshBtn:disabled { cursor: default; }
+#refreshBtn.refreshing { animation: refresh-spin 0.8s linear infinite; }
+@keyframes refresh-spin { to { transform: rotate(360deg); } }

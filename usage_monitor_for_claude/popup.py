@@ -187,6 +187,7 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
             'usage': T['usage'], 'extra_usage': T['extra_usage'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
+            'refresh': T['refresh'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],
             'status_next_update': T['status_next_update'], 'status_refreshing': T['status_refreshing'],
@@ -213,6 +214,11 @@ class _PopupApi:
 
     def open_url(self) -> None:
         webbrowser.open(CHANGELOG_URL)
+
+    def refresh(self) -> dict[str, Any]:
+        """Refresh usage and return the latest popup data."""
+        self._popup.app.refresh_now()
+        return _snapshot_to_dict(self._popup.app.cache.snapshot, next_poll_time=self._popup.app._next_poll_time)
 
     def set_pinned(self, pinned: bool) -> bool:
         return self._popup._set_pinned(pinned)
