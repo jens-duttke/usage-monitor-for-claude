@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The detail popup can now hide a single usage bar while still showing every other quota - add the field name with a leading `-` to [`popup_fields`](docs/configuration.md#popup-fields), e.g. `["*", "-iguana_necktie"]` (thanks to [@TheConfax](https://github.com/TheConfax) for reporting [#101](https://github.com/jens-duttke/usage-monitor-for-claude/issues/101) and to [@regisbsb](https://github.com/regisbsb) for the contribution)
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.24.0...HEAD)
 
 ## [1.24.0] - 2026-10-19

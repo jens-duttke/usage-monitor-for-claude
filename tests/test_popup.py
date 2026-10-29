@@ -363,6 +363,22 @@ class TestSnapshotToDict(unittest.TestCase):
         keys = [bar['key'] for bar in result['usage']]
         self.assertEqual(keys, ['five_hour', 'seven_day_opus'])
 
+    @patch('usage_monitor_for_claude.popup.POPUP_FIELDS', ['*', '-iguana_necktie'])
+    @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
+    @patch('usage_monitor_for_claude.popup.time_until', return_value='')
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_excluded_active_code_named_quota_not_rendered(self, _mock_div, _mock_tu, _mock_ep):
+        """The wildcard keeps other and newly introduced quotas after one is hidden."""
+        usage = {
+            'iguana_necktie': {'utilization': 40, 'resets_at': '2026-01-01T05:00:00Z'},
+            'nimbus_quill': {'utilization': 30, 'resets_at': '2026-01-01T05:00:00Z'},
+            'seven_day_fable': {'utilization': 20, 'resets_at': None},
+            'five_hour': {'utilization': 10, 'resets_at': '2026-01-01T05:00:00Z'},
+        }
+        result = _snapshot_to_dict(_snap(usage=usage), installations=[])
+        self.assertEqual([bar['key'] for bar in result['usage']], ['five_hour', 'seven_day_fable', 'nimbus_quill'])
+        self.assertEqual([bar['pct_text'] for bar in result['usage']], ['10%', '20%', '30%'])
+
     @patch('usage_monitor_for_claude.popup.POPUP_FIELDS', ['typo_field', 'seven_day'])
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')

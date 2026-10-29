@@ -1248,6 +1248,35 @@ class TestPopupFieldsValidation(unittest.TestCase):
         self.assertEqual(result['popup_fields'], ['five_hour', 'seven_day'])
         mock.assert_not_called()
 
+    def test_exclusions_are_valid(self):
+        """Exact field exclusions are valid with a wildcard or explicit field list."""
+        for fields in (
+            ['*', '-iguana_necktie'],
+            ['-iguana_necktie', '*', '-unknown_quota'],
+            ['five_hour', '-five_hour', 'seven_day'],
+            ['-iguana_necktie'],
+        ):
+            with self.subTest(popup_fields=fields):
+                result, mock = self._run_validate({'popup_fields': fields})
+                self.assertEqual(result['popup_fields'], fields)
+                mock.assert_not_called()
+
+    def test_duplicate_exclusions_removed(self):
+        """Deduplication preserves the order of exclusions and inclusions."""
+        fields = ['-iguana_necktie', 'five_hour', '-iguana_necktie', '*', '-seven_day', 'five_hour']
+        result, mock = self._run_validate({'popup_fields': fields})
+        self.assertEqual(result['popup_fields'], ['-iguana_necktie', 'five_hour', '*', '-seven_day'])
+        mock.assert_not_called()
+
+    def test_exclusion_without_field_dropped(self):
+        """A bare minus or wildcard exclusion reports an invalid setting."""
+        for field in ('-', '-*'):
+            with self.subTest(field=field):
+                result, mock = self._run_validate({'popup_fields': ['*', field]})
+                self.assertNotIn('popup_fields', result)
+                mock.assert_called_once()
+                self.assertIn('exclusions must name a field', mock.call_args.args[0])
+
     def test_empty_list_valid(self):
         """Empty list is valid (no bars shown)."""
         result, mock = self._run_validate({'popup_fields': []})
