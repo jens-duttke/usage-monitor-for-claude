@@ -3,7 +3,7 @@ Formatting Tests
 =================
 
 Unit tests for parse_field_name(), tooltip_label(), elapsed_pct(),
-time_until(), format_tooltip(), and format_credits().
+time_until(), format_tooltip(), format_credits(), and resolve_icon_fields().
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from usage_monitor_for_claude.formatting import (
     PERIOD_5H, PERIOD_7D,
     divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits,
-    format_tooltip, parse_field_name, popup_label, time_until, tooltip_label,
+    format_tooltip, parse_field_name, popup_label, resolve_icon_fields, time_until, tooltip_label,
     _local_boundary, _local_date, _schedule_period,
 )
 from usage_monitor_for_claude.i18n import LOCALE_DIR
@@ -449,6 +449,76 @@ class TestExpandPopupFields(unittest.TestCase):
         usage = {'five_hour': {'utilization': 0, 'resets_at': ''}}
         result = expand_popup_fields(['*'], usage)
         self.assertEqual(result, ['five_hour'])
+
+
+# ---------------------------------------------------------------------------
+# resolve_icon_fields
+# ---------------------------------------------------------------------------
+
+class TestResolveIconFields(unittest.TestCase):
+    """Tests for resolve_icon_fields()."""
+
+    WEEKLY = {'utilization': 50.0, 'resets_at': '2026-11-05T19:00:00+00:00'}
+    FABLE = {'utilization': 5.0, 'resets_at': '2026-11-05T19:00:00+00:00', 'from_account_limits': True}
+
+    def test_available_fields_keep_their_slots_and_modes(self):
+        """Configured fields present in the response are used unchanged."""
+        usage = {'five_hour': {'utilization': 10.0, 'resets_at': ''}, 'seven_day': self.WEEKLY}
+        result = resolve_icon_fields(['five_hour:overage', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('five_hour', 'overage'), ('seven_day', 'utilization')])
+
+    def test_null_top_field_promotes_bottom_and_fills_from_popup(self):
+        """A plan without a five-hour session shows the weekly quota on top."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE, 'extra_usage': {'utilization': None}}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('seven_day_fable', 'utilization')])
+
+    def test_missing_field_is_treated_like_null(self):
+        """A configured field absent from the response gives up its slot."""
+        usage = {'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE}
+        result = resolve_icon_fields(['seven_day_opus', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('seven_day_fable', 'utilization')])
+
+    def test_null_bottom_field_is_filled_without_moving_top(self):
+        """Only the unavailable slot is replaced."""
+        usage = {'five_hour': {'utilization': 10.0, 'resets_at': ''}, 'seven_day': self.WEEKLY, 'seven_day_sonnet': None}
+        result = resolve_icon_fields(['five_hour', 'seven_day_sonnet'], ['*'], usage)
+        self.assertEqual(result, [('five_hour', 'utilization'), ('seven_day', 'utilization')])
+
+    def test_fallback_skips_fields_already_shown(self):
+        """A fallback never repeats a field that already holds a slot."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY}
+        result = resolve_icon_fields(['seven_day', 'five_hour'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('five_hour', 'utilization')])
+
+    def test_fallback_respects_popup_exclusions(self):
+        """A field hidden from the popup is not used as a fallback either."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['*', '-seven_day_fable'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('five_hour', 'utilization')])
+
+    def test_fallback_follows_popup_order(self):
+        """Fallbacks are taken in the order the popup lists its bars."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE, 'seven_day_sonnet': self.WEEKLY}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['seven_day_sonnet', '*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('seven_day_sonnet', 'utilization')])
+
+    def test_nothing_available_keeps_configured_fields(self):
+        """With no quota at all the configured fields stay in place (rendered as 0%)."""
+        result = resolve_icon_fields(['five_hour:overage', 'seven_day'], ['*'], {'five_hour': None})
+        self.assertEqual(result, [('five_hour', 'overage'), ('seven_day', 'utilization')])
+
+    def test_zero_utilization_between_windows_stays(self):
+        """A named quota at 0% with no reset window (right after a reset) keeps its slot."""
+        usage = {'five_hour': {'utilization': 0.0, 'resets_at': None}, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('five_hour', 'utilization'), ('seven_day', 'utilization')])
+
+    def test_non_dict_field_is_unavailable(self):
+        """A field pointing at a non-dict value (e.g. the limits array) is replaced."""
+        usage = {'limits': [{'percent': 12}], 'seven_day': self.WEEKLY}
+        result = resolve_icon_fields(['limits', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('limits', 'utilization')])
 
 
 # ---------------------------------------------------------------------------
