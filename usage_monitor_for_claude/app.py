@@ -29,9 +29,11 @@ from .platforms import (
 from .settings import (
     ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_INTERVAL, IDLE_PAUSE,
     NOTIFY_CLAUDE_UPDATE, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND, POLL_ERROR, POLL_FAST,
-    POLL_FAST_EXTRA, POLL_INTERVAL, QUICK_ACTION_COMMAND, get_alert_thresholds,
+    POLL_FAST_EXTRA, POLL_INTERVAL, POPUP_FIELDS, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
-from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label
+from .formatting import (
+    elapsed_pct, field_period, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label, resolve_icon_fields,
+)
 from .i18n import T
 from .popup import UsagePopup, new_window_cache
 from .tray_icon import create_icon_image, create_status_image
@@ -367,8 +369,7 @@ class UsageMonitorForClaude:
         if 'error' in data:
             self.icon.icon = create_status_image('C!' if data.get('auth_error') else '!', self._light_taskbar)
         else:
-            top_field, top_mode = ICON_FIELDS[0].split(':', 1) if ':' in ICON_FIELDS[0] else (ICON_FIELDS[0], 'utilization')
-            bottom_field, bottom_mode = ICON_FIELDS[1].split(':', 1) if ':' in ICON_FIELDS[1] else (ICON_FIELDS[1], 'utilization')
+            (top_field, top_mode), (bottom_field, bottom_mode) = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, data)
             # isinstance instead of truthiness: a configured field may point at
             # a non-dict response value (e.g. the raw limits array).
             top_entry = data.get(top_field)
@@ -513,7 +514,7 @@ class UsageMonitorForClaude:
         self._check_threshold_alerts(result.data)
 
         # Adaptive polling: speed up when icon top field usage is increasing
-        icon_top_key = ICON_FIELDS[0].split(':', 1)[0]
+        icon_top_key = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, result.data)[0][0]
         icon_top_pct = quota_fields.get(icon_top_key, 0)
         icon_top_prev = self._prev_utilization.get(icon_top_key)
         if icon_top_prev is not None and icon_top_pct > icon_top_prev:

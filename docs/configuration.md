@@ -189,7 +189,7 @@ The tray icon displays two small progress bars. By default, these show the sessi
 | `icon_fields` | `["five_hour", "seven_day"]` | Which two usage fields to show as icon bars. The first entry is the top bar (also determines the icon text), the second is the bottom bar |
 | `icon_style` | `"number+bars"` | Icon layout: `"number+bars"` shows the first field's percentage above two progress bars; `"numbers"` shows both fields as two stacked percentages without bars |
 
-Must be an array of exactly 2 non-empty strings. Unknown field names are accepted - if a field is `null` or missing from the API response, the bar shows 0%.
+Must be an array of exactly 2 non-empty strings. Unknown field names are accepted. A field gives up its place when it is `null` or missing from the API response, for example the session quota on a plan without one, and also when it names a quota type that does not apply to your account. The remaining field then moves to the top if needed, and the next bar of the detail popup fills the free place. A bar shows 0% only when no other quota is left.
 
 **Known field names:** `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`
 

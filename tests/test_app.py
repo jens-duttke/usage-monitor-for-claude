@@ -1063,6 +1063,19 @@ class TestFastPolling(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_fast_polling_follows_weekly_without_session_quota(self, _icon, _tooltip):
+        """With five_hour null, rising weekly usage (now the icon's top field) starts fast polls."""
+        self.app._prev_utilization = {'seven_day': 40.0}
+        data = {'five_hour': None, 'seven_day': {'utilization': 45.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        self.app.cache = MagicMock()
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        self.assertGreater(self.app._fast_polls_remaining, 0)
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
     def test_fast_polling_decrements(self, _icon, _tooltip):
         """Fast poll counter decrements when usage is stable."""
         self.app._prev_utilization = {'five_hour': 40.0, 'seven_day': 10.0}
@@ -1174,22 +1187,22 @@ class TestRenderTray(unittest.TestCase):
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     @patch('usage_monitor_for_claude.app.ICON_FIELDS', ['unknown_field', 'five_hour'])
-    def test_icon_fields_missing_from_response_defaults_to_zero(self, mock_icon, _tooltip):
-        """Icon field not present in API response defaults to 0%."""
+    def test_icon_fields_missing_from_response_gives_up_slot(self, mock_icon, _tooltip):
+        """Icon field not present in API response moves the next field up; the empty slot shows 0%."""
         self.app._last_response = {'five_hour': {'utilization': 42.0}}
         self.app._render_tray()
 
-        mock_icon.assert_called_once_with(0, 42.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+        mock_icon.assert_called_once_with(42.0, 0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     @patch('usage_monitor_for_claude.app.ICON_FIELDS', ['seven_day_sonnet', 'five_hour'])
-    def test_icon_fields_null_in_response_defaults_to_zero(self, mock_icon, _tooltip):
-        """Icon field present but null in API response defaults to 0%."""
+    def test_icon_fields_null_in_response_gives_up_slot(self, mock_icon, _tooltip):
+        """Icon field present but null in API response moves the next field up; the empty slot shows 0%."""
         self.app._last_response = {'five_hour': {'utilization': 42.0}, 'seven_day_sonnet': None}
         self.app._render_tray()
 
-        mock_icon.assert_called_once_with(0, 42.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+        mock_icon.assert_called_once_with(42.0, 0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
@@ -1200,7 +1213,23 @@ class TestRenderTray(unittest.TestCase):
         self.app._last_response = {'five_hour': {'utilization': 42.0}, 'limits': [{'percent': 12}]}
         self.app._render_tray()
 
-        mock_icon.assert_called_once_with(0, 42.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+        mock_icon.assert_called_once_with(42.0, 0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_plan_without_session_quota_shows_weekly_on_top(self, mock_icon, _tooltip):
+        """With five_hour null (plans without a session limit) the icon text shows the weekly quota, not an idle 'C'."""
+        self.app._last_response = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': '2026-11-05T19:00:00+00:00'},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': '2026-11-05T19:00:00+00:00', 'from_account_limits': True},
+        }
+        with patch('usage_monitor_for_claude.app.elapsed_pct', return_value=30.0):
+            self.app._render_tray()
+
+        args = mock_icon.call_args
+        self.assertEqual(args.args[:2], (50.0, 5.0))
+        self.assertEqual(args.kwargs['time_pct_top'], 30.0)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')

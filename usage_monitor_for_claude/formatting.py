@@ -17,7 +17,7 @@ from .settings import ACTIVE_SCHEDULE, ACTIVE_SCHEDULE_FIELDS, CURRENCY_SYMBOL, 
 
 __all__ = [
     'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits',
-    'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'time_until', 'tooltip_label',
+    'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'resolve_icon_fields', 'time_until', 'tooltip_label',
 ]
 
 PERIOD_5H = 5 * 3600
@@ -218,6 +218,48 @@ def expand_popup_fields(popup_fields: list[str], usage_data: dict[str, Any]) -> 
             result.append(field)
 
     return result
+
+
+def resolve_icon_fields(icon_fields: list[str], popup_fields: list[str], usage_data: dict[str, Any]) -> list[tuple[str, str]]:
+    """Resolve the icon_fields setting into the fields the tray icon shows.
+
+    A configured field that is not an active quota (``is_active_quota()``:
+    reported as ``null``, omitted - e.g. the five-hour session on plans
+    without one - or listed under a code name before it applies) gives up
+    its slot: the remaining configured fields move up, and the free slots
+    are filled with the next bars of the popup, in popup order.  Only when
+    no other quota is left does a configured field stay in place, showing 0%.
+
+    Parameters
+    ----------
+    icon_fields : list[str]
+        User-configured icon fields, each ``'field'`` or ``'field:mode'``.
+    popup_fields : list[str]
+        User-configured popup fields, the source of the fallback bars.
+    usage_data : dict
+        Raw API response dict.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        ``(field, mode)`` per icon slot, top first.  Fallback fields use
+        the ``'utilization'`` mode.
+    """
+    configured = [tuple(entry.split(':', 1)) if ':' in entry else (entry, 'utilization') for entry in icon_fields]
+    resolved = [slot for slot in configured if is_active_quota(slot[0], usage_data.get(slot[0]))]
+    unavailable = [slot for slot in configured if slot not in resolved]
+
+    shown = {field for field, _mode in resolved}
+    for field in expand_popup_fields(popup_fields, usage_data):
+        if len(resolved) == len(configured):
+            break
+        if field not in shown:
+            shown.add(field)
+            resolved.append((field, 'utilization'))
+
+    resolved.extend(unavailable[:len(configured) - len(resolved)])
+
+    return resolved
 
 
 def _uses_active_schedule(period_seconds: int, field: str | None) -> bool:
