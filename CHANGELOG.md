@@ -12,9 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [Work-hour pacing](https://github.com/jens-duttke/usage-monitor-for-claude/discussions/39) - set your working hours per weekday in [`active_schedule`](docs/configuration.md#work-hour-pacing), and the time marker, red warning color, time-aware alerts and tray icon marker of the weekly bars count only those hours, with dividers at the start of each working day - so nights and weekends no longer make a bar look as if you were ahead of pace (thanks to [@regisbsb](https://github.com/regisbsb) for the contribution)
 - The detail popup can now hide a single usage bar while still showing every other quota - add the field name with a leading `-` to [`popup_fields`](docs/configuration.md#popup-fields), e.g. `["*", "-iguana_necktie"]` (thanks to [@TheConfax](https://github.com/TheConfax) for reporting [#101](https://github.com/jens-duttke/usage-monitor-for-claude/issues/101) and to [@regisbsb](https://github.com/regisbsb) for the contribution)
 
+### Changed
+
+- The tray tooltip lists the same quotas as the tray icon - a quota from [`tooltip_fields`](docs/configuration.md#tooltip-fields) that does not apply to the account gives up its line to the next quota of the detail popup, and each line now reads like `Sonnet 7d: 12%` without the reset time, which stays in the detail popup
+
 ### Fixed
 
 - On plans without a five-hour session limit, the tray icon now shows the weekly usage percentage instead of an idle "C" with an empty top bar - a quota from [`icon_fields`](docs/configuration.md#tray-icon-bars) that does not apply to the account gives up its place to the next quota of the detail popup (thanks to [@VictorZakharov](https://github.com/VictorZakharov) for the contribution)
+- On Windows, a tooltip longer than 127 characters - possible with the `--config-dir` account prefix or a long [`tooltip_fields`](docs/configuration.md#tooltip-fields) list - no longer stops all updates with an error message; lines that do not fit are left out
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.24.0...HEAD)
 

@@ -163,7 +163,7 @@ icon works as it should. pystray still uses that library's GTK-3 API, and the re
 
 | Action | What happens |
 |---|---|
-| **Hover** over the tray icon | Tooltip shows 5h and 7d usage percentages with reset times |
+| **Hover** over the tray icon | Tooltip shows the 5h and 7d usage percentages |
 | **Left-click** the tray icon | Opens the detail popup with account info and all usage bars |
 | **Double-click** the tray icon | Runs your [quick action](docs/event-commands.md) if configured (e.g. launch [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)); otherwise does nothing. On Linux the desktop keeps the click, so the quick action sits in the tray menu instead |
 | **Right-click** the tray icon | Context menu: open popup, autostart toggle, test event commands, restart, GitHub link, or quit |

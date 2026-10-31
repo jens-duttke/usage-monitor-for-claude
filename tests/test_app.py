@@ -1144,6 +1144,17 @@ class TestRenderTray(unittest.TestCase):
         mock_icon.assert_called_once_with(42.0, 10.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
         self.assertEqual(self.app.icon.title, 'Usage: 42%')
 
+    @patch('usage_monitor_for_claude.app.TOOLTIP_MAX_LENGTH', 30)
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='Claude Usage\n5h: 42%\n7d: 15%')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_tooltip_fitted_to_platform_limit_with_prefix(self, _icon, _tooltip):
+        """The account prefix counts toward the limit, and a line that no longer fits is dropped whole."""
+        self.app._tooltip_prefix = '[work] '
+        self.app._last_response = {'five_hour': {'utilization': 42.0}}
+        self.app._render_tray()
+
+        self.assertEqual(self.app.icon.title, '[work] Claude Usage\n5h: 42%')
+
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='Error')
     @patch('usage_monitor_for_claude.app.create_status_image')
     def test_error_renders_exclamation(self, mock_status, _tooltip):

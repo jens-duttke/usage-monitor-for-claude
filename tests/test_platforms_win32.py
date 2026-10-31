@@ -18,6 +18,34 @@ if sys.platform != 'win32':
 import usage_monitor_for_claude.platforms.win32 as win32  # noqa: E402
 
 
+class TestTooltipMaxLength(unittest.TestCase):
+
+    def test_limit_fits_pystray_tooltip_buffer(self):
+        """A tooltip of exactly the limit fits the NOTIFYICONDATAW buffer pystray writes it into."""
+        from pystray._util import win32 as pystray_win32
+
+        data = pystray_win32.NOTIFYICONDATAW(szTip='x' * win32.TOOLTIP_MAX_LENGTH)
+
+        self.assertEqual(data.szTip, 'x' * win32.TOOLTIP_MAX_LENGTH)
+
+    def test_fitted_text_with_emoji_fits_pystray_tooltip_buffer(self):
+        """A tooltip of two-unit characters, fitted to the limit, still fits the buffer."""
+        from pystray._util import win32 as pystray_win32
+
+        from usage_monitor_for_claude.formatting import fit_tooltip
+
+        tooltip = fit_tooltip('[' + '\U0001F600' * 100 + '] Claude Usage', win32.TOOLTIP_MAX_LENGTH)
+        data = pystray_win32.NOTIFYICONDATAW(szTip=tooltip)
+
+        self.assertEqual(data.szTip, tooltip)
+
+    def test_limit_leaves_room_for_the_terminating_null(self):
+        """szTip holds 128 WCHARs including the terminating null."""
+        from pystray._util import win32 as pystray_win32
+
+        self.assertEqual(win32.TOOLTIP_MAX_LENGTH, pystray_win32.NOTIFYICONDATAW.szTip.size // 2 - 1)
+
+
 class TestNoWindowKwargs(unittest.TestCase):
 
     def test_sets_create_no_window(self):

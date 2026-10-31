@@ -13,10 +13,12 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from .i18n import T
-from .settings import ACTIVE_SCHEDULE, ACTIVE_SCHEDULE_FIELDS, CURRENCY_SYMBOL, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL, _WEEKDAYS
+from .settings import (
+    ACTIVE_SCHEDULE, ACTIVE_SCHEDULE_FIELDS, CURRENCY_SYMBOL, POPUP_FIELDS, TIME_FORMAT, TOOLTIP_FIELDS, _SYSTEM_CURRENCY_SYMBOL, _WEEKDAYS,
+)
 
 __all__ = [
-    'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'format_credits',
+    'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'fit_tooltip', 'format_credits',
     'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'resolve_icon_fields', 'time_until', 'tooltip_label',
 ]
 
@@ -80,7 +82,7 @@ def tooltip_label(field: str) -> str:
     Returns
     -------
     str
-        Short label like ``'5h'``, ``'7d'``, or ``'7d Sonnet'``.
+        Short label like ``'5h'``, ``'7d'``, or ``'Sonnet 7d'``.
         Falls back to title case of the full field name if unparseable.
     """
     parsed = parse_field_name(field)
@@ -90,7 +92,7 @@ def tooltip_label(field: str) -> str:
     number, unit, variant = parsed
     label = f'{number}{_UNIT_SUFFIXES[unit]}'
     if variant:
-        label += f' {_title_case_variant(variant)}'
+        label = f'{_title_case_variant(variant)} {label}'
     return label
 
 
@@ -250,16 +252,23 @@ def resolve_icon_fields(icon_fields: list[str], popup_fields: list[str], usage_d
     unavailable = [slot for slot in configured if slot not in resolved]
 
     shown = {field for field, _mode in resolved}
-    for field in expand_popup_fields(popup_fields, usage_data):
-        if len(resolved) == len(configured):
-            break
-        if field not in shown:
-            shown.add(field)
-            resolved.append((field, 'utilization'))
-
+    fallbacks = _popup_fallbacks(shown, len(configured) - len(resolved), popup_fields, usage_data)
+    resolved.extend((field, 'utilization') for field in fallbacks)
     resolved.extend(unavailable[:len(configured) - len(resolved)])
 
     return resolved
+
+
+def _popup_fallbacks(shown_fields: set[str], count: int, popup_fields: list[str], usage_data: dict[str, Any]) -> list[str]:
+    """Return up to *count* popup bars, in popup order, that are not among *shown_fields*."""
+    fallbacks: list[str] = []
+    for field in expand_popup_fields(popup_fields, usage_data):
+        if len(fallbacks) >= count:
+            break
+        if field not in shown_fields:
+            fallbacks.append(field)
+
+    return fallbacks
 
 
 def _uses_active_schedule(period_seconds: int, field: str | None) -> bool:
@@ -589,7 +598,18 @@ def format_credits(minor_units: float, currency: str | None = None, decimal_plac
 
 
 def format_tooltip(data: dict[str, Any]) -> str:
-    """Format usage data as short tooltip text."""
+    """Format usage data as short tooltip text.
+
+    A field from ``tooltip_fields`` that is not an active quota gives up its
+    line to the next bar of the popup, following the same rule as the tray
+    icon bars (``resolve_icon_fields()``).  Lines carry no reset time, so
+    their length does not depend on the locale.
+
+    Parameters
+    ----------
+    data : dict
+        Raw API response dict, or an error dict with an ``'error'`` key.
+    """
     if 'error' in data:
         if data.get('auth_error'):
             return f"{T['auth_expired_label']}\n{T['auth_expired_short']}"
@@ -599,16 +619,46 @@ def format_tooltip(data: dict[str, Any]) -> str:
             error += f' {server_msg}'
         return f"{T['error_label']}\n{error[:80]}"
 
+    fields = [field for field in TOOLTIP_FIELDS if is_active_quota(field, data.get(field))]
+    fields += _popup_fallbacks(set(fields), len(TOOLTIP_FIELDS) - len(fields), POPUP_FIELDS, data)
+
     lines = [T['tooltip_title']]
-    for key in TOOLTIP_FIELDS:
-        entry = data.get(key)
-        if isinstance(entry, dict) and entry.get('utilization') is not None:
-            short = tooltip_label(key)
-            pct = f"{entry['utilization']:.0f}%"
-            reset = time_until(entry.get('resets_at', ''))
-            line = f'{short}: {pct}'
-            if reset:
-                line += f' ({reset})'
-            lines.append(line)
+    for field in fields:
+        lines.append(f"{tooltip_label(field)}: {data[field]['utilization']:.0f}%")
 
     return '\n'.join(lines)
+
+
+def fit_tooltip(text: str, max_length: int | None) -> str:
+    """Shorten tooltip text to fit the tray's length limit.
+
+    Whole lines are dropped from the end, so no line is ever shown cut off.
+    Only a first line that is too long on its own (e.g. a long account
+    prefix) is cut to the limit.
+
+    Parameters
+    ----------
+    text : str
+        Tooltip text, lines separated by ``'\\n'``.
+    max_length : int or None
+        Maximum length in UTF-16 code units - the unit of the Windows tooltip
+        buffer, where a character outside the Basic Multilingual Plane (e.g.
+        an emoji in a directory name) takes two - or ``None`` for no limit.
+    """
+    if max_length is None:
+        return text
+
+    lines = text.split('\n')
+    while len(lines) > 1 and _utf16_length('\n'.join(lines)) > max_length:
+        lines.pop()
+
+    fitted = '\n'.join(lines)
+    while _utf16_length(fitted) > max_length:
+        fitted = fitted[:-1]
+
+    return fitted
+
+
+def _utf16_length(text: str) -> int:
+    """Return the length of *text* in UTF-16 code units."""
+    return len(text.encode('utf-16-le', errors='surrogatepass')) // 2

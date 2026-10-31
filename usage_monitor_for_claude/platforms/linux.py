@@ -29,7 +29,7 @@ from PIL import ImageFont
 from ..instance_id import config_dir_suffix, effective_config_dir, is_default_config_dir
 
 __all__ = [
-    'AUTOSTART_DIRECTORY', 'DIAGNOSTIC_PACKAGES', 'ask_yes_no', 'diagnostic_display_rows',
+    'AUTOSTART_DIRECTORY', 'DIAGNOSTIC_PACKAGES', 'TOOLTIP_MAX_LENGTH', 'ask_yes_no', 'diagnostic_display_rows',
     'autostart_supported', 'install_tray_activate_handler', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows',
     'double_click_seconds', 'get_idle_seconds', 'is_autostart_enabled',
@@ -41,6 +41,10 @@ __all__ = [
 # Third-party packages worth reporting in the diagnostics output.  pythonnet
 # and clr-loader are part of the Windows WebView2 host and never installed here.
 DIAGNOSTIC_PACKAGES = ('pywebview', 'PyGObject', 'pystray', 'Pillow', 'requests')
+
+# pystray hands the tray title to the indicator as a plain string - there is no
+# fixed buffer to overflow, so the tooltip is never shortened.
+TOOLTIP_MAX_LENGTH: int | None = None
 
 # XDG autostart: a .desktop file here is launched when the session starts.
 AUTOSTART_DIRECTORY = Path.home() / '.config' / 'autostart'

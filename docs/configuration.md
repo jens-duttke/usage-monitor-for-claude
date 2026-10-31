@@ -111,7 +111,9 @@ The tray tooltip shows a quick usage summary when you hover over the icon. By de
 |-----|---------|-------------|
 | `tooltip_fields` | `["five_hour", "seven_day"]` | Which usage fields to show in the tray tooltip, in order |
 
-Must be an array of non-empty strings. Duplicates are silently removed. An empty array `[]` is valid (tooltip shows only the title, no usage fields). Unknown field names are accepted - if a field is `null` or missing from the API response, it is simply skipped.
+Must be an array of non-empty strings. Duplicates are silently removed. An empty array `[]` is valid (tooltip shows only the title, no usage fields). Unknown field names are accepted. A field gives up its line when it is `null` or missing from the API response, for example the session quota on a plan without one, and also when it names a quota type that does not apply to your account. The next bar of the detail popup then takes the line, as for the [tray icon bars](#tray-icon-bars). If no other quota is left, the line is left out.
+
+Each line shows the quota and its percentage, e.g. `5h: 42%` or `Sonnet 7d: 12%`. Reset times are in the detail popup. On Windows the tooltip holds at most 127 characters - lines that do not fit are left out.
 
 **Known field names:** `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`
 

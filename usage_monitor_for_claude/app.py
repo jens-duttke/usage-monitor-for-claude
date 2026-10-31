@@ -22,7 +22,7 @@ from .claude_cli import PROJECT_URL
 from .command import run_event_command
 from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import (
-    autostart_supported, get_idle_seconds, install_tray_activate_handler, install_tray_click_handler,
+    TOOLTIP_MAX_LENGTH, autostart_supported, get_idle_seconds, install_tray_activate_handler, install_tray_click_handler,
     is_autostart_enabled, is_screensaver_running, is_workstation_locked, set_autostart, show_error_box,
     show_notification, sync_autostart_path, taskbar_uses_light_theme, watch_theme_change,
 )
@@ -32,7 +32,7 @@ from .settings import (
     POLL_FAST_EXTRA, POLL_INTERVAL, POPUP_FIELDS, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
 from .formatting import (
-    elapsed_pct, field_period, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label, resolve_icon_fields,
+    elapsed_pct, field_period, fit_tooltip, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label, resolve_icon_fields,
 )
 from .i18n import T
 from .popup import UsagePopup, new_window_cache
@@ -396,7 +396,7 @@ class UsageMonitorForClaude:
                 time_pct_top=time_pct_top, time_pct_bottom=time_pct_bottom,
                 extra_usage_available=extra_usage_available,
             )
-        self.icon.title = self._tooltip_prefix + format_tooltip(data)
+        self.icon.title = fit_tooltip(self._tooltip_prefix + format_tooltip(data), TOOLTIP_MAX_LENGTH)
 
     def _on_theme_changed(self) -> None:
         """Re-render the tray icon when the Windows theme changes."""

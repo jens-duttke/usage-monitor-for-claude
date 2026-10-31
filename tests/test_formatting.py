@@ -3,7 +3,8 @@ Formatting Tests
 =================
 
 Unit tests for parse_field_name(), tooltip_label(), elapsed_pct(),
-time_until(), format_tooltip(), format_credits(), and resolve_icon_fields().
+time_until(), format_tooltip(), fit_tooltip(), format_credits(), and
+resolve_icon_fields().
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from usage_monitor_for_claude.formatting import (
     PERIOD_5H, PERIOD_7D,
-    divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits,
+    divider_positions, elapsed_pct, expand_popup_fields, field_period, fit_tooltip, format_credits,
     format_tooltip, parse_field_name, popup_label, resolve_icon_fields, time_until, tooltip_label,
     _local_boundary, _local_date, _schedule_period,
 )
@@ -139,19 +140,19 @@ class TestTooltipLabel(unittest.TestCase):
         self.assertEqual(tooltip_label('seven_day'), '7d')
 
     def test_seven_day_sonnet(self):
-        self.assertEqual(tooltip_label('seven_day_sonnet'), '7d Sonnet')
+        self.assertEqual(tooltip_label('seven_day_sonnet'), 'Sonnet 7d')
 
     def test_seven_day_opus(self):
-        self.assertEqual(tooltip_label('seven_day_opus'), '7d Opus')
+        self.assertEqual(tooltip_label('seven_day_opus'), 'Opus 7d')
 
     def test_three_day_cowork(self):
-        self.assertEqual(tooltip_label('three_day_cowork'), '3d Cowork')
+        self.assertEqual(tooltip_label('three_day_cowork'), 'Cowork 3d')
 
     def test_five_hour_something(self):
-        self.assertEqual(tooltip_label('five_hour_something'), '5h Something')
+        self.assertEqual(tooltip_label('five_hour_something'), 'Something 5h')
 
     def test_multi_word_variant(self):
-        self.assertEqual(tooltip_label('seven_day_oauth_apps'), '7d OAuth Apps')
+        self.assertEqual(tooltip_label('seven_day_oauth_apps'), 'OAuth Apps 7d')
 
     def test_unknown_number_fallback(self):
         """Unrecognized number word falls back to title case."""
@@ -170,11 +171,11 @@ class TestTooltipLabel(unittest.TestCase):
 
     def test_abbreviation_oauth(self):
         """oauth is title-cased as OAuth."""
-        self.assertEqual(tooltip_label('seven_day_oauth'), '7d OAuth')
+        self.assertEqual(tooltip_label('seven_day_oauth'), 'OAuth 7d')
 
     def test_abbreviation_api(self):
         """api is title-cased as API."""
-        self.assertEqual(tooltip_label('seven_day_api'), '7d API')
+        self.assertEqual(tooltip_label('seven_day_api'), 'API 7d')
 
 
 # ---------------------------------------------------------------------------
@@ -1206,6 +1207,12 @@ class TestTimeUntil(unittest.TestCase):
 class TestFormatTooltip(unittest.TestCase):
     """Tests for format_tooltip()."""
 
+    def setUp(self):
+        # A default the per-test patches override - the real value comes from the user's settings file.
+        popup_fields = patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['*'])
+        popup_fields.start()
+        self.addCleanup(popup_fields.stop)
+
     def test_error(self):
         result = format_tooltip({'error': 'Connection failed'})
         self.assertEqual(result, 'Usage Monitor: Error\nConnection failed')
@@ -1230,55 +1237,47 @@ class TestFormatTooltip(unittest.TestCase):
         error_line = result.split('\n')[1]
         self.assertEqual(len(error_line), 80)
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_both_periods(self, _mock_tu):
+    def test_both_periods(self):
         data = {
             'five_hour': {'utilization': 42.0, 'resets_at': ''},
             'seven_day': {'utilization': 15.0, 'resets_at': ''},
         }
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 42%\n7d: 15%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='Resets in 2h 30m (14:30)')
-    def test_with_reset_info(self, _mock_tu):
+    def test_reset_time_not_shown(self):
+        """Lines carry no reset time, so their length does not depend on the locale."""
         data = {'five_hour': {'utilization': 42.0, 'resets_at': '2025-01-15T14:30:00+00:00'}}
-        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 42% (Resets in 2h 30m (14:30))')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 42%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_utilization_none_skipped(self, _mock_tu):
+    def test_utilization_none_skipped(self):
         data = {
             'five_hour': {'utilization': None, 'resets_at': ''},
             'seven_day': {'utilization': 80.0, 'resets_at': ''},
         }
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 80%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_empty_data_shows_title_only(self, _mock_tu):
+    def test_empty_data_shows_title_only(self):
         self.assertEqual(format_tooltip({}), 'Claude Usage')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_zero_percent(self, _mock_tu):
+    def test_zero_percent(self):
         data = {'five_hour': {'utilization': 0.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 0%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_hundred_percent(self, _mock_tu):
+    def test_hundred_percent(self):
         data = {'five_hour': {'utilization': 100.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 100%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_entry_none_skipped(self, _mock_tu):
+    def test_entry_none_skipped(self):
         """Entry that is None is skipped by the guard clause."""
         data = {'five_hour': None, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_entry_empty_dict_skipped(self, _mock_tu):
+    def test_entry_empty_dict_skipped(self):
         """Entry with no utilization key is skipped."""
         data = {'five_hour': {}, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_only_seven_day(self, _mock_tu):
+    def test_only_seven_day(self):
         """Only seven_day present, five_hour absent."""
         data = {'seven_day': {'utilization': 25.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 25%')
@@ -1289,8 +1288,7 @@ class TestFormatTooltip(unittest.TestCase):
         result = format_tooltip(data)
         self.assertEqual(result, 'Usage Monitor: Error\nSomething broke')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_extra_usage_ignored(self, _mock_tu):
+    def test_extra_usage_ignored(self):
         """Extra usage data is not shown in tooltip."""
         data = {
             'five_hour': {'utilization': 26.0, 'resets_at': ''},
@@ -1298,41 +1296,94 @@ class TestFormatTooltip(unittest.TestCase):
         }
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 26%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['seven_day_sonnet', 'five_hour'])
-    def test_custom_fields_and_order(self, _mock_tu):
+    def test_custom_fields_and_order(self):
         """Custom tooltip_fields controls which fields appear and in what order."""
         data = {
             'five_hour': {'utilization': 10.0, 'resets_at': ''},
             'seven_day': {'utilization': 20.0, 'resets_at': ''},
             'seven_day_sonnet': {'utilization': 30.0, 'resets_at': ''},
         }
-        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d Sonnet: 30%\n5h: 10%')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\nSonnet 7d: 30%\n5h: 10%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['seven_day_sonnet'])
-    def test_custom_field_null_skipped(self, _mock_tu):
-        """Configured field that is null in API response is skipped."""
+    def test_custom_field_null_gives_up_its_line(self):
+        """Configured field that is null in API response gives its line to the next popup bar."""
         data = {'seven_day_sonnet': None, 'five_hour': {'utilization': 50.0, 'resets_at': ''}}
-        self.assertEqual(format_tooltip(data), 'Claude Usage')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['nonexistent_field'])
-    def test_custom_field_missing_from_response_skipped(self, _mock_tu):
-        """Configured field not present in API response is skipped."""
+    def test_custom_field_missing_from_response_gives_up_its_line(self):
+        """Configured field not present in API response gives its line to the next popup bar."""
         data = {'five_hour': {'utilization': 50.0, 'resets_at': ''}}
-        self.assertEqual(format_tooltip(data), 'Claude Usage')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
+    @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['nonexistent_field', 'five_hour'])
+    def test_unavailable_field_skipped_when_no_other_quota_left(self):
+        """Without a popup bar to take its place the unavailable field is skipped."""
+        data = {'five_hour': {'utilization': 50.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 50%')
+
+    def test_plan_without_session_quota_lists_the_icon_quotas(self):
+        """With five_hour null the default tooltip names the quotas the tray icon shows."""
+        data = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': '2026-11-05T19:00:00+00:00'},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': '2026-11-05T19:00:00+00:00', 'from_account_limits': True},
+            'extra_usage': {'is_enabled': False, 'utilization': None},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%\nFable 7d: 5%')
+
+    @patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['*', '-seven_day_fable'])
+    def test_fallback_respects_popup_exclusions(self):
+        """A bar hidden from the popup does not take a free tooltip line either."""
+        data = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': ''},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': ''},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
+
+    @patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['seven_day_opus', '*'])
+    def test_fallback_follows_popup_order(self):
+        """Free lines are filled in the order the popup lists its bars."""
+        data = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': ''},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': ''},
+            'seven_day_opus': {'utilization': 7.0, 'resets_at': ''},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%\nOpus 7d: 7%')
+
+    @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['seven_day', 'five_hour'])
+    def test_fallback_never_repeats_a_listed_field(self):
+        """A field already in the tooltip is not used to fill a free line."""
+        data = {'five_hour': None, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
+
+    @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['nimbus_quill', 'seven_day'])
+    def test_quota_not_yet_applying_gives_up_its_line(self):
+        """A code-named quota listed before it applies is treated like a missing one."""
+        data = {
+            'nimbus_quill': {'utilization': 0.0, 'resets_at': None},
+            'seven_day': {'utilization': 50.0, 'resets_at': ''},
+            'seven_day_sonnet': {'utilization': 9.0, 'resets_at': ''},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%\nSonnet 7d: 9%')
+
+    def test_zero_percent_between_windows_keeps_its_line(self):
+        """The session right after a reset (0%, no window) is still listed."""
+        data = {'five_hour': {'utilization': 0.0, 'resets_at': None}, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 0%\n7d: 50%')
+
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', [])
-    def test_empty_fields_shows_title_only(self, _mock_tu):
+    def test_empty_fields_shows_title_only(self):
         """Empty tooltip_fields shows only the title."""
         data = {'five_hour': {'utilization': 50.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['five_hour', 'limits'])
-    def test_custom_field_pointing_to_non_dict_skipped(self, _mock_tu):
+    def test_custom_field_pointing_to_non_dict_skipped(self):
         """A configured field holding a non-dict response value (e.g. the limits
         array) is skipped instead of crashing the poll loop."""
         data = {
@@ -1347,44 +1398,74 @@ class TestFormatTooltip(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestTooltipMaxLength(unittest.TestCase):
-    """Verify tooltip text stays within Windows' 127-char limit for all locales."""
+    """Verify the tooltip stays within Windows' 127-char limit for all locales."""
 
     TOOLTIP_MAX = 127
+    KNOWN_FIELDS = [
+        'five_hour', 'seven_day', 'seven_day_sonnet', 'seven_day_opus',
+        'seven_day_cowork', 'seven_day_oauth_apps', 'seven_day_fable',
+    ]
 
-    def _longest_reset(self, t: dict, max_hours: int) -> str:
-        """Return the longest possible reset text for a given max-hour value."""
-        dur = t['duration_hm'].format(h=max_hours, m=59)
-        candidates = [
-            t['resets_in'].format(duration=dur, clock='23:59'),
-            t['resets_tomorrow'].format(clock='23:59'),
-        ]
-        for wd in t['weekdays']:
-            candidates.append(t['resets_weekday'].format(day=wd, clock='23:59'))
-
-        return max(candidates, key=len)
-
-    def _worst_case_tooltip(self, t: dict) -> str:
-        """Build the longest possible tooltip from a locale dict.
-
-        Worst case: both 5h and 7d visible at 100%, each with the longest
-        possible reset text (same-day, tomorrow, or weekday).
-        """
-        reset_5h = self._longest_reset(t, max_hours=4)
-        reset_7d = self._longest_reset(t, max_hours=23)
-
-        return f"{t['tooltip_title']}\n5h: 100% ({reset_5h})\n7d: 100% ({reset_7d})"
-
-    def test_all_locales_fit_tooltip(self):
-        """Every locale's worst-case tooltip must fit in 127 characters."""
+    def test_all_known_quotas_fit_in_every_locale(self):
+        """Every known quota at 100% in one tooltip still fits, whatever the locale."""
+        data = {field: {'utilization': 100.0, 'resets_at': '2026-11-05T19:00:00+00:00'} for field in self.KNOWN_FIELDS}
         for locale_file in sorted(LOCALE_DIR.glob('*.json')):
             with self.subTest(locale=locale_file.stem):
-                t = json.loads(locale_file.read_text(encoding='utf-8'))
-                tooltip = self._worst_case_tooltip(t)
-                self.assertLessEqual(
-                    len(tooltip), self.TOOLTIP_MAX,
-                    f"Locale '{locale_file.stem}' tooltip is {len(tooltip)} chars "
-                    f"(max {self.TOOLTIP_MAX}):\n{tooltip}",
-                )
+                locale_strings = json.loads(locale_file.read_text(encoding='utf-8'))
+                with (
+                    patch('usage_monitor_for_claude.formatting.T', locale_strings),
+                    patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', self.KNOWN_FIELDS),
+                    patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['*']),
+                ):
+                    tooltip = format_tooltip(data)
+
+                self.assertEqual(tooltip.count('\n'), len(self.KNOWN_FIELDS))
+                self.assertLessEqual(len(tooltip), self.TOOLTIP_MAX, f"Locale '{locale_file.stem}' tooltip is {len(tooltip)} chars:\n{tooltip}")
+
+
+# ---------------------------------------------------------------------------
+# fit_tooltip
+# ---------------------------------------------------------------------------
+
+class TestFitTooltip(unittest.TestCase):
+    """Tests for fit_tooltip()."""
+
+    def test_no_limit_returns_text_unchanged(self):
+        text = 'Claude Usage\n' + '\n'.join(f'{number}d: 100%' for number in range(100))
+        self.assertEqual(fit_tooltip(text, None), text)
+
+    def test_text_within_limit_unchanged(self):
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%', 127), 'Claude Usage\n5h: 42%')
+
+    def test_text_exactly_at_limit_unchanged(self):
+        text = 'Claude Usage\n5h: 42%'
+        self.assertEqual(fit_tooltip(text, len(text)), text)
+
+    def test_drops_whole_lines_from_the_end(self):
+        """No line is shown cut off - a line that does not fit is left out entirely."""
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%\n7d: 15%', 22), 'Claude Usage\n5h: 42%')
+
+    def test_drops_several_lines(self):
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%\n7d: 15%\nOpus 7d: 3%', 13), 'Claude Usage')
+
+    def test_cuts_a_first_line_that_is_too_long_alone(self):
+        """A long account prefix in the first line is the one case that is cut."""
+        self.assertEqual(fit_tooltip('[' + 'x' * 200 + '] Claude Usage\n5h: 42%', 10), '[xxxxxxxxx')
+
+    def test_counts_utf16_code_units(self):
+        """An emoji takes two units of the Windows buffer - 25 characters here, but 27 units."""
+        text = '[\U0001F600\U0001F600] Claude Usage\n5h: 42%'
+        self.assertEqual(fit_tooltip(text, 26), '[\U0001F600\U0001F600] Claude Usage')
+
+    def test_cut_never_splits_a_character(self):
+        """Cutting a too-long first line removes whole characters, even two-unit ones."""
+        self.assertEqual(fit_tooltip('\U0001F600' * 10, 5), '\U0001F600\U0001F600')
+
+    def test_zero_limit(self):
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%', 0), '')
+
+    def test_empty_text(self):
+        self.assertEqual(fit_tooltip('', 127), '')
 
 
 # ---------------------------------------------------------------------------

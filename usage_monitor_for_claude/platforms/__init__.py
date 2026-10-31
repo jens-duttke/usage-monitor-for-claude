@@ -18,7 +18,7 @@ IS_WINDOWS = sys.platform == 'win32'
 
 if IS_WINDOWS:
     from .win32 import (
-        DIAGNOSTIC_PACKAGES, ask_yes_no, autostart_supported, diagnostic_display_rows, diagnostic_post_init_rows,
+        DIAGNOSTIC_PACKAGES, TOOLTIP_MAX_LENGTH, ask_yes_no, autostart_supported, diagnostic_display_rows, diagnostic_post_init_rows,
         diagnostic_runtime_rows, diagnostic_system_rows, double_click_seconds, get_idle_seconds,
         install_tray_activate_handler, install_tray_click_handler, is_autostart_enabled, is_screensaver_running,
         is_workstation_locked, load_font, no_window_kwargs,
@@ -29,7 +29,7 @@ if IS_WINDOWS:
     )
 else:
     from .linux import (
-        DIAGNOSTIC_PACKAGES, ask_yes_no, autostart_supported, diagnostic_display_rows, diagnostic_post_init_rows,
+        DIAGNOSTIC_PACKAGES, TOOLTIP_MAX_LENGTH, ask_yes_no, autostart_supported, diagnostic_display_rows, diagnostic_post_init_rows,
         diagnostic_runtime_rows, diagnostic_system_rows, double_click_seconds, get_idle_seconds,
         install_tray_activate_handler, install_tray_click_handler, is_autostart_enabled, is_screensaver_running,
         is_workstation_locked, load_font, no_window_kwargs,
@@ -40,7 +40,7 @@ else:
     )
 
 __all__ = [
-    'DIAGNOSTIC_PACKAGES', 'IS_WINDOWS', 'ask_yes_no', 'autostart_supported', 'diagnostic_display_rows',
+    'DIAGNOSTIC_PACKAGES', 'IS_WINDOWS', 'TOOLTIP_MAX_LENGTH', 'ask_yes_no', 'autostart_supported', 'diagnostic_display_rows',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows',
     'double_click_seconds', 'get_idle_seconds', 'install_tray_activate_handler', 'install_tray_click_handler',
     'is_autostart_enabled', 'is_screensaver_running', 'is_workstation_locked',

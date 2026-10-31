@@ -27,7 +27,7 @@ from PIL import ImageFont
 from ..instance_id import config_dir_suffix, effective_config_dir, is_default_config_dir
 
 __all__ = [
-    'AUTOSTART_REG_BASE_NAME', 'AUTOSTART_REG_KEY', 'DIAGNOSTIC_PACKAGES', 'ask_yes_no',
+    'AUTOSTART_REG_BASE_NAME', 'AUTOSTART_REG_KEY', 'DIAGNOSTIC_PACKAGES', 'TOOLTIP_MAX_LENGTH', 'ask_yes_no',
     'autostart_supported', 'install_tray_activate_handler', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
     'diagnostic_display_rows', 'diagnostic_post_init_rows', 'diagnostic_runtime_rows',
     'diagnostic_system_rows', 'double_click_seconds', 'get_idle_seconds',
@@ -39,6 +39,11 @@ __all__ = [
 
 # Third-party packages worth reporting in the diagnostics output.
 DIAGNOSTIC_PACKAGES = ('pywebview', 'pythonnet', 'clr-loader', 'pystray', 'Pillow', 'requests')
+
+# NOTIFYICONDATAW.szTip holds 128 WCHARs (UTF-16 code units) including the terminating
+# null.  pystray assigns the tray title to that fixed buffer, and a longer string raises
+# ValueError.
+TOOLTIP_MAX_LENGTH: int | None = 127
 
 # WebView2 registry GUIDs (runtime, beta, dev, canary)
 _WEBVIEW2_GUIDS = [
