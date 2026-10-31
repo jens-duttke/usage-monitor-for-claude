@@ -223,11 +223,12 @@ def expand_popup_fields(popup_fields: list[str], usage_data: dict[str, Any]) -> 
 def resolve_icon_fields(icon_fields: list[str], popup_fields: list[str], usage_data: dict[str, Any]) -> list[tuple[str, str]]:
     """Resolve the icon_fields setting into the fields the tray icon shows.
 
-    A configured field the API reports as ``null`` or omits (e.g. the
-    five-hour session on plans without one) gives up its slot: the
-    remaining configured fields move up, and the free slots are filled
-    with the next bars of the popup, in popup order.  Only when no other
-    quota is left does a configured field stay in place, showing 0%.
+    A configured field that is not an active quota (``is_active_quota()``:
+    reported as ``null``, omitted - e.g. the five-hour session on plans
+    without one - or listed under a code name before it applies) gives up
+    its slot: the remaining configured fields move up, and the free slots
+    are filled with the next bars of the popup, in popup order.  Only when
+    no other quota is left does a configured field stay in place, showing 0%.
 
     Parameters
     ----------

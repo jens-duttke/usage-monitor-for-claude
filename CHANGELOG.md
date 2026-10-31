@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- On plans without a five-hour session limit, the tray icon now shows the weekly usage percentage - previously it always showed the idle "C" with an empty top bar, however much of the weekly quota was used. Whenever a quota from [`icon_fields`](docs/configuration.md#tray-icon-bars) is not reported for the account, the next quota of the detail popup takes its place
+- On plans without a five-hour session limit, the tray icon now shows the weekly usage percentage instead of an idle "C" with an empty top bar - a quota from [`icon_fields`](docs/configuration.md#tray-icon-bars) that does not apply to the account gives up its place to the next quota of the detail popup (thanks to [@VictorZakharov](https://github.com/VictorZakharov) for the contribution)
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.24.0...HEAD)
 
