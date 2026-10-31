@@ -10,7 +10,7 @@ from __future__ import annotations
 import locale as _locale
 import re
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .i18n import T
 from .settings import (
@@ -18,7 +18,7 @@ from .settings import (
 )
 
 __all__ = [
-    'divider_positions', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'fit_tooltip', 'format_credits',
+    'divider_positions', 'elapsed_fraction', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'fit_tooltip', 'format_credits',
     'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'resolve_icon_fields', 'time_until', 'tooltip_label',
 ]
 
@@ -379,24 +379,61 @@ def elapsed_pct(resets_at: str, period_seconds: int, field: str | None = None) -
         schedule applies to the field - that has already elapsed (0-100),
         or None if the value cannot be determined.
     """
+    fraction_at = elapsed_fraction(resets_at, period_seconds, field=field)
+    if fraction_at is None:
+        return None
+
+    try:
+        return fraction_at(datetime.now(timezone.utc)) * 100
+    except Exception:
+        return None
+
+
+def elapsed_fraction(resets_at: str, period_seconds: int, field: str | None = None) -> Callable[[datetime], float] | None:
+    """Return a function giving the elapsed share (0.0-1.0) of a usage period at any instant.
+
+    The same pacing as :func:`elapsed_pct` - working time when an active
+    schedule applies to the field, wall-clock time otherwise - evaluated at
+    a caller-chosen instant instead of now.  The schedule is resolved once,
+    so the returned function is cheap to call repeatedly.
+
+    Parameters
+    ----------
+    resets_at : str
+        ISO 8601 timestamp when the limit resets.
+    period_seconds : int
+        Total duration of the period in seconds.
+    field : str or None
+        Quota field used to match optional ``active_schedule_fields`` patterns.
+
+    Returns
+    -------
+    callable or None
+        Maps a timezone-aware datetime to the elapsed share, clamped to
+        0.0-1.0, or None if the period cannot be determined.
+    """
     if not resets_at or period_seconds <= 0:
         return None
 
     try:
         reset = datetime.fromisoformat(resets_at)
-        now = datetime.now(timezone.utc)
-        remaining = (reset - now).total_seconds()
-        elapsed = period_seconds - remaining
+        # A timestamp without a UTC offset parses fine and only fails when
+        # subtracted - fail here instead of in every later call.
+        reset - datetime.now(timezone.utc)
 
         if _uses_active_schedule(period_seconds, field):
             intervals, _ = _schedule_period(reset, period_seconds)
             total = _active_seconds(intervals, reset)
             if total > 0:
-                return _active_seconds(intervals, now) / total * 100
-
-        return max(0.0, min(100.0, elapsed / period_seconds * 100))
+                return lambda at: max(0.0, min(1.0, _active_seconds(intervals, at) / total))
     except Exception:
         return None
+
+    def wall_clock_fraction(at: datetime) -> float:
+        elapsed = period_seconds - (reset - at).total_seconds()
+        return max(0.0, min(1.0, elapsed / period_seconds))
+
+    return wall_clock_fraction
 
 
 def divider_positions(resets_at: str, period_seconds: int, field: str | None = None) -> list[float]:

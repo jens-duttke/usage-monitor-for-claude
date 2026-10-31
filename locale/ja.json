@@ -27,6 +27,7 @@
     "duration_hm": "{h}時間{m}分",
     "duration_m": "{m}分",
     "duration_s": "{s}秒",
+    "duration_dh": "{d}日 {h}時間",
     "weekdays": [
         "月",
         "火",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} 使用済み",
     "extra_usage_spent_no_limit": "{used} 使用済み",
     "extra_usage_balance": "{balance} 利用可能",
+    "forecast": "予測",
+    "forecast_runs_out": "{day} {clock} に上限到達 - リセットの {lead} 前",
+    "forecast_at_reset": "リセット時に約 {pct}%",
+    "forecast_now": "現在",
     "claude_code": "CLAUDE CODE",
     "changelog": "変更履歴",
     "pin_popup": "ポップアップを固定",

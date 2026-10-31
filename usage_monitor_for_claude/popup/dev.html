@@ -96,6 +96,10 @@ const PRESETS = {
             { unit: 'week', suffix: 'Opus', pct: 12, warn: false,
               reset: { kind: 'weekday', day: 'Sat', clock: '12:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
         ],
+        // Weekly pace that runs out before the reset.
+        forecast: { suffix: '7 day', now_x: 0.55, measured_from: 0.18,
+                    actual: [[0, 0], [0.18, 21], [0.3, 33], [0.42, 51], [0.55, 65]],
+                    run_out: { x: 0.85, day: 'Thu', clock: '09:12', lead: '1d 1h' } },
         extra: { pct: 23, used: '$4.60', limit: '$20.00', balance: '$55.97' },
         installations: [
             { name: 'CLI', version: '2.1.69' },
@@ -123,6 +127,8 @@ const PRESETS = {
             { unit: 'week', suffix: '7 day', pct: 88, warn: true,
               reset: { kind: 'tomorrow', clock: '08:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.80 },
         ],
+        // Pace that stays below the limit until the reset.
+        forecast: { suffix: '7 day', now_x: 0.8, measured_from: 0.8, actual: [[0, 0], [0.8, 70]], at_reset: 88 },
         extra: null,
         installations: [{ name: 'CLI', version: '2.1.69' }],
         status: () => ({ last_success_time: now() - 300, next_poll_time: now() + 30, refreshing: false, error: 'Could not connect to Anthropic API.' }),
@@ -157,7 +163,8 @@ let currentPreset = 'full';
 function buildTranslations(loc) {
     return {
         title: loc.popup_title, account: loc.account, email: loc.email, plan: loc.plan,
-        usage: loc.usage, extra_usage: loc.extra_usage, claude_code: loc.claude_code, changelog: loc.changelog,
+        usage: loc.usage, extra_usage: loc.extra_usage, forecast: loc.forecast, forecast_now: loc.forecast_now,
+        claude_code: loc.claude_code, changelog: loc.changelog,
         status_updated_s: loc.status_updated_s, status_updated: loc.status_updated,
         status_next_update: loc.status_next_update, status_refreshing: loc.status_refreshing,
         duration_hm: loc.duration_hm, duration_m: loc.duration_m, duration_s: loc.duration_s,
@@ -182,6 +189,32 @@ function localizeReset(loc, reset) {
     if (reset.kind === 'tomorrow') return loc.resets_tomorrow.replace('{clock}', reset.clock);
     if (reset.kind === 'weekday') return loc.resets_weekday.replace('{day}', reset.day).replace('{clock}', reset.clock);
     return '';
+}
+
+// Build a forecast payload (see forecast.usage_forecast) from a semantic preset.
+function resolveForecast(loc, preset) {
+    if (!preset) return null;
+    const [nowX, pct] = preset.actual[preset.actual.length - 1];
+    const end = preset.run_out ? [preset.run_out.x, 100] : [1, preset.at_reset];
+    const projection = [];
+    for (let step = 0; step <= 20; step++) {
+        const share = step / 20;
+        projection.push([nowX + (end[0] - nowX) * share, pct + (end[1] - pct) * share]);
+    }
+    const summary = preset.run_out
+        ? loc.forecast_runs_out.replace('{day}', preset.run_out.day).replace('{clock}', preset.run_out.clock).replace('{lead}', preset.run_out.lead)
+        : loc.forecast_at_reset.replace('{pct}', preset.at_reset);
+    return {
+        key: 'seven_day',
+        label: loc.weekly_label.replace('{suffix}', preset.suffix),
+        actual: preset.actual,
+        measured_from: preset.measured_from,
+        now_x: preset.now_x,
+        ticks: [1, 2, 3, 4, 5, 6].map((day) => ({ x: day / 7 - 0.05, label: loc.weekdays[(day + 3) % 7] })),
+        projection,
+        runs_out: !!preset.run_out,
+        summary,
+    };
 }
 
 // Build the data snapshot popup.js consumes from a preset + the active locale.
@@ -211,7 +244,9 @@ function resolveData(name, loc) {
         status = { text: loc[status.staticKey], is_error: status.is_error, refreshing: status.refreshing };
     }
 
-    return { profile: preset.profile, usage, extra, installations: preset.installations || [], status };
+    const forecast = resolveForecast(loc, preset.forecast);
+
+    return { profile: preset.profile, usage, forecast, extra, installations: preset.installations || [], status };
 }
 
 // Try both layouts: server rooted at the repo (dev.html under

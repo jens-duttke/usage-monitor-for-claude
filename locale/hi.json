@@ -27,6 +27,7 @@
     "duration_hm": "{h} घं {m} मि",
     "duration_m": "{m} मि",
     "duration_s": "{s}s",
+    "duration_dh": "{d}दि {h}घं",
     "weekdays": [
         "सोम",
         "मंगल",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} खर्च",
     "extra_usage_spent_no_limit": "{used} खर्च",
     "extra_usage_balance": "{balance} उपलब्ध",
+    "forecast": "पूर्वानुमान",
+    "forecast_runs_out": "{day} {clock} को समाप्त - रीसेट से {lead} पहले",
+    "forecast_at_reset": "रीसेट पर लगभग {pct}%",
+    "forecast_now": "अभी",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "पॉपअप पिन करें",

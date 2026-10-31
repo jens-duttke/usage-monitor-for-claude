@@ -27,6 +27,7 @@
     "duration_hm": "{h} Std. {m} Min.",
     "duration_m": "{m} Min.",
     "duration_s": "{s}s",
+    "duration_dh": "{d}T {h}h",
     "weekdays": [
         "Mo",
         "Di",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} verbraucht",
     "extra_usage_spent_no_limit": "{used} verbraucht",
     "extra_usage_balance": "{balance} verfügbar",
+    "forecast": "PROGNOSE",
+    "forecast_runs_out": "Aufgebraucht {day} {clock} - {lead} vor dem Reset",
+    "forecast_at_reset": "Etwa {pct}% beim Reset",
+    "forecast_now": "Jetzt",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Popup anheften",

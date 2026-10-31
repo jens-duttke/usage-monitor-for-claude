@@ -16,6 +16,7 @@ import json
 import threading
 import time
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,10 +24,15 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
-from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
+from .forecast import usage_forecast
+from .formatting import (
+    divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, resolve_icon_fields, time_until,
+)
 from .i18n import T
 from .platforms.popup import REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
-from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
+from .settings import (
+    BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, ICON_FIELDS, POPUP_FIELDS,
+)
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 
@@ -113,6 +119,12 @@ def _snapshot_to_dict(
                 'marker_rel': marker_rel,
             })
 
+    # Forecast - for the quota the tray icon shows as its number
+    forecast = None
+    if snap.usage:
+        forecast_field = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, snap.usage)[0][0]
+        forecast = usage_forecast(forecast_field, snap.usage, snap.history, datetime.now(timezone.utc))
+
     # Extra usage
     extra = None
     if snap.usage:
@@ -170,6 +182,7 @@ def _snapshot_to_dict(
     return {
         'profile': profile,
         'usage': usage,
+        'forecast': forecast,
         'extra': extra,
         'installations': installations,
         'status': status,
@@ -185,7 +198,7 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
         },
         't': {
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
-            'usage': T['usage'], 'extra_usage': T['extra_usage'],
+            'usage': T['usage'], 'extra_usage': T['extra_usage'], 'forecast': T['forecast'], 'forecast_now': T['forecast_now'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],

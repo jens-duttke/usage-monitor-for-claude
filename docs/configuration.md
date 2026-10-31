@@ -41,7 +41,7 @@ Threshold lookup uses a fallback chain: exact match (e.g. `alert_thresholds_seve
 
 ## Work-hour pacing
 
-By default the time marker advances around the clock, including nights and weekends. Set an active schedule to count only your working hours on quotas of a day or longer.
+By default the time marker advances around the clock, including nights and weekends. Set an active schedule to count only your working hours on quotas of a day or longer. The forecast chart in the popup follows the same schedule: its projection stays flat outside your working hours.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -170,7 +170,7 @@ Must be an array of non-empty strings. Duplicates are silently removed. Unknown 
 
 Entries can be either a **section key** or a **usage field name**:
 
-**Section keys:** `account` (email and plan), `extra_usage` (paid overage bar and prepaid credit balance), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When nothing but the usage bars is left, the "Usage" heading is dropped automatically.
+**Section keys:** `account` (email and plan), `extra_usage` (paid overage bar and prepaid credit balance), `forecast` (the forecast chart), `claude_code` (installed versions), `status` (the footer with the update time). The usage bar section itself cannot be hidden as a whole - hide individual bars by their field name instead. When nothing but the usage bars is left, the "Usage" heading is dropped automatically.
 
 **Usage field names:** any quota field, e.g. `five_hour`, `seven_day`, `seven_day_sonnet`, `seven_day_opus`, `seven_day_cowork`, `seven_day_oauth_apps`. This hides that single bar from the [`popup_fields`](#popup-fields) selection while the popup is pinned.
 
@@ -188,7 +188,7 @@ The tray icon displays two small progress bars. By default, these show the sessi
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `icon_fields` | `["five_hour", "seven_day"]` | Which two usage fields to show as icon bars. The first entry is the top bar (also determines the icon text), the second is the bottom bar |
+| `icon_fields` | `["five_hour", "seven_day"]` | Which two usage fields to show as icon bars. The first entry is the top bar (also determines the icon text and which quota the popup's forecast chart shows), the second is the bottom bar |
 | `icon_style` | `"number+bars"` | Icon layout: `"number+bars"` shows the first field's percentage above two progress bars; `"numbers"` shows both fields as two stacked percentages without bars |
 
 Must be an array of exactly 2 non-empty strings. Unknown field names are accepted. A field gives up its place when it is `null` or missing from the API response, for example the session quota on a plan without one, and also when it names a quota type that does not apply to your account. The remaining field then moves to the top if needed, and the next bar of the detail popup fills the free place. A bar shows 0% only when no other quota is left.

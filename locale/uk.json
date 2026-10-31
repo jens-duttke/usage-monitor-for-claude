@@ -27,6 +27,7 @@
     "duration_hm": "{h} год {m} хв",
     "duration_m": "{m} хв",
     "duration_s": "{s}с",
+    "duration_dh": "{d}д {h}год",
     "weekdays": [
         "Пн",
         "Вт",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "Витрачено {used} / {limit}",
     "extra_usage_spent_no_limit": "Витрачено {used}",
     "extra_usage_balance": "Доступно {balance}",
+    "forecast": "ПРОГНОЗ",
+    "forecast_runs_out": "Вичерпається {day} о {clock} - за {lead} до скидання",
+    "forecast_at_reset": "Близько {pct}% на момент скидання",
+    "forecast_now": "Зараз",
     "claude_code": "CLAUDE CODE",
     "changelog": "Список змін",
     "pin_popup": "Закріпити спливне вікно",

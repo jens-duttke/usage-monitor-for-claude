@@ -27,6 +27,7 @@
     "duration_hm": "{h} h {m} min",
     "duration_m": "{m} min",
     "duration_s": "{s}s",
+    "duration_dh": "{d}d {h}h",
     "weekdays": [
         "lun",
         "mar",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} gastado",
     "extra_usage_spent_no_limit": "{used} gastado",
     "extra_usage_balance": "{balance} disponible",
+    "forecast": "PREVISIÓN",
+    "forecast_runs_out": "Se agota el {day} a las {clock} - {lead} antes del reinicio",
+    "forecast_at_reset": "Aprox. {pct}% al reiniciarse",
+    "forecast_now": "Ahora",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Fijar ventana emergente",
