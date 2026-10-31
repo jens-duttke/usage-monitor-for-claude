@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from usage_monitor_for_claude.formatting import (
     PERIOD_5H, PERIOD_7D,
-    divider_positions, elapsed_pct, expand_popup_fields, field_period, fit_tooltip, format_credits,
+    divider_positions, elapsed_fraction, elapsed_pct, expand_popup_fields, field_period, fit_tooltip, format_credits,
     format_tooltip, parse_field_name, popup_label, resolve_icon_fields, time_until, tooltip_label,
     _local_boundary, _local_date, _schedule_period,
 )
@@ -450,6 +450,62 @@ class TestExpandPopupFields(unittest.TestCase):
         usage = {'five_hour': {'utilization': 0, 'resets_at': ''}}
         result = expand_popup_fields(['*'], usage)
         self.assertEqual(result, ['five_hour'])
+
+
+# ---------------------------------------------------------------------------
+# elapsed_fraction
+# ---------------------------------------------------------------------------
+
+class TestElapsedFraction(unittest.TestCase):
+    """Tests for elapsed_fraction(), the instant-based form of elapsed_pct()."""
+
+    RESET = datetime(2026, 11, 5, 19, 0, tzinfo=timezone.utc)
+
+    def test_wall_clock_share_at_any_instant(self):
+        fraction_at = elapsed_fraction(self.RESET.isoformat(), PERIOD_7D)
+        self.assertAlmostEqual(fraction_at(self.RESET - timedelta(days=7)), 0.0)
+        self.assertAlmostEqual(fraction_at(self.RESET - timedelta(days=3.5)), 0.5)
+        self.assertAlmostEqual(fraction_at(self.RESET), 1.0)
+
+    def test_clamped_outside_period(self):
+        fraction_at = elapsed_fraction(self.RESET.isoformat(), PERIOD_7D)
+        self.assertEqual(fraction_at(self.RESET - timedelta(days=8)), 0.0)
+        self.assertEqual(fraction_at(self.RESET + timedelta(days=1)), 1.0)
+
+    def test_matches_elapsed_pct_now(self):
+        """elapsed_pct() is elapsed_fraction() evaluated at the current time."""
+        resets_at = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        fraction = elapsed_fraction(resets_at, PERIOD_7D)(datetime.now(timezone.utc))
+        self.assertAlmostEqual(elapsed_pct(resets_at, PERIOD_7D), fraction * 100, places=3)
+
+    def test_invalid_input_returns_none(self):
+        self.assertIsNone(elapsed_fraction('', PERIOD_7D))
+        self.assertIsNone(elapsed_fraction('not a date', PERIOD_7D))
+        self.assertIsNone(elapsed_fraction(self.RESET.isoformat(), 0))
+
+    def test_timestamp_without_offset_returns_none(self):
+        """A naive timestamp is rejected up front instead of failing on every call."""
+        self.assertIsNone(elapsed_fraction('2026-11-05T19:00:00', PERIOD_7D))
+
+    def test_active_schedule_flat_outside_working_hours(self):
+        """With a schedule the share only grows during working time."""
+        reset = datetime(2026, 1, 19, 0, tzinfo=timezone.utc)
+        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+        with (
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', None),
+            patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.astimezone(timezone.utc).date()),
+            patch('usage_monitor_for_claude.formatting._local_boundary',
+                  side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)),
+        ):
+            fraction_at = elapsed_fraction(reset.isoformat(), PERIOD_7D, field='seven_day')
+            monday_evening = fraction_at(datetime(2026, 1, 12, 18, tzinfo=timezone.utc))
+            tuesday_morning = fraction_at(datetime(2026, 1, 13, 8, tzinfo=timezone.utc))
+            tuesday_noon = fraction_at(datetime(2026, 1, 13, 13, tzinfo=timezone.utc))
+
+        self.assertAlmostEqual(monday_evening, 0.2)
+        self.assertAlmostEqual(tuesday_morning, 0.2)
+        self.assertAlmostEqual(tuesday_noon, 0.3)
 
 
 # ---------------------------------------------------------------------------

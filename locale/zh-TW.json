@@ -27,6 +27,7 @@
     "duration_hm": "{h}小時{m}分鐘",
     "duration_m": "{m}分鐘",
     "duration_s": "{s}秒",
+    "duration_dh": "{d}天 {h}小時",
     "weekdays": [
         "週一",
         "週二",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "已用 {used} / {limit}",
     "extra_usage_spent_no_limit": "已用 {used}",
     "extra_usage_balance": "可用 {balance}",
+    "forecast": "預測",
+    "forecast_runs_out": "將於{day} {clock}用完 - 比重置早 {lead}",
+    "forecast_at_reset": "重置時約 {pct}%",
+    "forecast_now": "現在",
     "claude_code": "CLAUDE CODE",
     "changelog": "更新紀錄",
     "pin_popup": "固定彈出視窗",

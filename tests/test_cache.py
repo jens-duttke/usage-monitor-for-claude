@@ -184,6 +184,27 @@ class TestCooldownBehavior(unittest.TestCase):
 class TestSuccessState(unittest.TestCase):
     """Tests for state updates after successful API calls."""
 
+    def test_success_logs_readings_in_snapshot(self):
+        """Every successful fetch adds its readings to the snapshot's in-memory history."""
+        cache = _make_cache()
+        weekly = {'seven_day': {'utilization': 10.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        rising = {'seven_day': {'utilization': 12.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=weekly):
+            cache.update()
+        first = cache.snapshot
+        cache._last_success_time = 0  # lift the cooldown for the second fetch
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=rising):
+            cache.update()
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [10.0, 12.0])
+        self.assertEqual([pct for _, pct in first.history['seven_day']['samples']], [10.0])
+
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
+    def test_error_leaves_history_unchanged(self, _mock):
+        cache = _make_cache()
+        cache.update()
+        self.assertEqual(cache.snapshot.history, {})
+
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
     def test_success_stores_usage_data(self, _mock):
         cache = _make_cache()
