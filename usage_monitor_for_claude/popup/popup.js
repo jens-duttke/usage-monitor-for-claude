@@ -5,6 +5,7 @@ let textTimerId = null;
 let popupPinned = false;
 let compactHide = [];
 let lastData = null;
+let lastForecast = null;
 
 /**
  * Set CSS custom properties for theme colors and inject translation strings.
@@ -28,6 +29,7 @@ function init(config) {
     document.getElementById('labelPlan').textContent = translations.plan;
     document.getElementById('headingUsage').textContent = translations.usage;
     document.getElementById('headingExtraUsage').textContent = translations.extra_usage;
+    document.getElementById('headingForecast').textContent = translations.forecast;
     document.getElementById('headingClaudeCode').textContent = translations.claude_code;
 
     const changelogLink = document.getElementById('changelogLink');
@@ -48,6 +50,10 @@ function init(config) {
         usageSection: document.getElementById('usageSection'),
         headingUsage: document.getElementById('headingUsage'),
         usageBars: document.getElementById('usageBars'),
+        forecastSection: document.getElementById('forecastSection'),
+        forecastLabel: document.getElementById('forecastLabel'),
+        forecastChart: document.getElementById('forecastChart'),
+        forecastSummary: document.getElementById('forecastSummary'),
         extraSection: document.getElementById('extraSection'),
         extraSpent: document.getElementById('extraSpent'),
         extraPct: document.getElementById('extraPct'),
@@ -59,6 +65,13 @@ function init(config) {
         statusSection: document.getElementById('statusSection'),
         statusText: document.getElementById('statusText'),
     };
+
+    // The chart is drawn in CSS pixels, so redraw it whenever its width settles or changes.
+    new ResizeObserver(() => {
+        if (lastForecast && els.forecastSection.classList.contains('visible')) {
+            updateForecast(lastForecast);
+        }
+    }).observe(els.forecastChart);
 
     updateData(config.data);
     requestAnimationFrame(() => document.body.classList.add('open'));
@@ -181,6 +194,12 @@ function updateData(data) {
         updateUsageBars(usage);
     }
 
+    const forecastVisible = !!data.forecast && !compactHidden('forecast');
+    els.forecastSection.classList.toggle('visible', forecastVisible);
+    if (forecastVisible) {
+        updateForecast(data.forecast);
+    }
+
     const hasExtra = !!data.extra;
     const extraVisible = hasExtra && !compactHidden('extra_usage');
     els.extraSection.classList.toggle('visible', extraVisible);
@@ -200,7 +219,7 @@ function updateData(data) {
 
     // The "Usage" heading only labels the bars against the other sections;
     // when the usage bars stand alone, drop the now-redundant heading.
-    els.headingUsage.style.display = (hasUsage && !accountVisible && !extraVisible && !installsVisible) ? 'none' : '';
+    els.headingUsage.style.display = (hasUsage && !accountVisible && !forecastVisible && !extraVisible && !installsVisible) ? 'none' : '';
 
     if (hasInstalls) {
         els.installRows.replaceChildren(...data.installations.map((inst) => {
@@ -271,6 +290,7 @@ function tickStatusText() {
     const isStale = !!statusState.nextPollTime && (now > statusState.nextPollTime + 30);
     els.usageSection.classList.toggle('stale', isStale);
     els.extraSection.classList.toggle('stale', isStale);
+    els.forecastSection.classList.toggle('stale', isStale);
 
     const parts = [formatDuration(secondsAgo)];
 
@@ -439,6 +459,94 @@ function updateBarElement(div, entry) {
     } else if (resetEl) {
         resetEl.remove();
     }
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgElement(tag, attributes) {
+    const element = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) {
+        element.setAttribute(name, value);
+    }
+    return element;
+}
+
+/**
+ * Draw the forecast chart: x is the wall-clock share of the quota window,
+ * y the utilization.  The line is measured from the first reading this
+ * session saw (dotted before it, where only the 0% window start is known);
+ * the dashed line projects the current pace to the reset or to 100%.
+ *
+ * @param {object} forecast - Payload from forecast.usage_forecast().
+ */
+function updateForecast(forecast) {
+    lastForecast = forecast;
+    els.forecastLabel.textContent = forecast.label;
+    els.forecastSummary.textContent = forecast.summary;
+    els.forecastSummary.style.display = forecast.summary ? '' : 'none';
+    els.forecastSummary.classList.toggle('warn', forecast.runs_out);
+
+    const svg = els.forecastChart;
+    const width = svg.clientWidth || 308;
+    const height = svg.clientHeight || 112;
+    const left = 30;
+    const top = 4;
+    const bottom = height - 16;
+    const plotWidth = width - left;
+    const plotHeight = bottom - top;
+    const px = (x) => left + x * plotWidth;
+    const py = (y) => bottom - (y / 100) * plotHeight;
+    const path = (points) => points.map(([x, y], i) => `${i ? 'L' : 'M'}${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(' ');
+
+    const children = [];
+    children.push(svgElement('rect', {
+        class: forecast.runs_out ? 'ahead warn' : 'ahead',
+        x: px(forecast.now_x), y: top, width: Math.max(0, plotWidth * (1 - forecast.now_x)), height: plotHeight,
+    }));
+
+    for (const pct of [0, 50]) {
+        children.push(svgElement('line', { class: 'grid', x1: left, x2: width, y1: py(pct), y2: py(pct) }));
+    }
+    children.push(svgElement('line', { class: 'limit', x1: left, x2: width, y1: py(100), y2: py(100) }));
+    for (const pct of [0, 50, 100]) {
+        const label = svgElement('text', { class: 'axis-text', x: left - 5, y: py(pct) + 3.5, 'text-anchor': 'end' });
+        label.textContent = `${pct}%`;
+        children.push(label);
+    }
+
+    const nowX = px(forecast.now_x);
+    const dayWidth = forecast.ticks.length > 1 ? (forecast.ticks[1].x - forecast.ticks[0].x) * plotWidth : 0;
+    for (const tick of forecast.ticks) {
+        const x = px(tick.x);
+        children.push(svgElement('line', { class: 'grid', x1: x, x2: x, y1: top, y2: bottom }));
+        // Centre each day label in its day, and keep clear of the "Now" label.
+        const labelX = x + dayWidth / 2;
+        if (tick.label && Math.abs(labelX - nowX) > 26 && labelX < width - 8) {
+            const label = svgElement('text', { class: 'axis-text', x: labelX, y: height - 3, 'text-anchor': 'middle' });
+            label.textContent = tick.label;
+            children.push(label);
+        }
+    }
+
+    children.push(svgElement('line', { class: 'now', x1: nowX, x2: nowX, y1: top, y2: bottom }));
+    const nowLabel = svgElement('text', { class: 'axis-text', x: nowX, y: height - 3, 'text-anchor': 'middle' });
+    nowLabel.textContent = translations.forecast_now;
+    children.push(nowLabel);
+
+    const firstMeasured = forecast.actual.findIndex(([x]) => x >= forecast.measured_from);
+    children.push(svgElement('path', { class: 'assumed', d: path(forecast.actual.slice(0, firstMeasured + 1)) }));
+    if (forecast.actual.length - firstMeasured > 1) {
+        children.push(svgElement('path', { class: 'actual', d: path(forecast.actual.slice(firstMeasured)) }));
+    }
+
+    if (forecast.projection.length) {
+        const warnClass = forecast.runs_out ? ' warn' : '';
+        children.push(svgElement('path', { class: `projection${warnClass}`, d: path(forecast.projection) }));
+        const [endX, endY] = forecast.projection[forecast.projection.length - 1];
+        children.push(svgElement('circle', { class: `end-dot${warnClass}`, cx: px(endX), cy: py(endY), r: 3 }));
+    }
+
+    svg.replaceChildren(...children);
 }
 
 // Report content height changes to the host (pywebview or dev.html iframe parent).

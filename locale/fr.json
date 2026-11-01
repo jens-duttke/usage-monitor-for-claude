@@ -27,6 +27,7 @@
     "duration_hm": "{h} h {m} min",
     "duration_m": "{m} min",
     "duration_s": "{s}s",
+    "duration_dh": "{d}j {h}h",
     "weekdays": [
         "lun",
         "mar",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} dépensé",
     "extra_usage_spent_no_limit": "{used} dépensé",
     "extra_usage_balance": "{balance} disponible",
+    "forecast": "PRÉVISION",
+    "forecast_runs_out": "Épuisé {day} à {clock} - {lead} avant la réinitialisation",
+    "forecast_at_reset": "Environ {pct}% à la réinitialisation",
+    "forecast_now": "Maint.",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Épingler la fenêtre contextuelle",

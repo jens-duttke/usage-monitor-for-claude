@@ -27,6 +27,7 @@
     "duration_hm": "{h}시간 {m}분",
     "duration_m": "{m}분",
     "duration_s": "{s}초",
+    "duration_dh": "{d}일 {h}시간",
     "weekdays": [
         "월",
         "화",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} 사용",
     "extra_usage_spent_no_limit": "{used} 사용",
     "extra_usage_balance": "{balance} 사용 가능",
+    "forecast": "예측",
+    "forecast_runs_out": "{day} {clock}에 소진 - 재설정 {lead} 전",
+    "forecast_at_reset": "재설정 시 약 {pct}%",
+    "forecast_now": "현재",
     "claude_code": "CLAUDE CODE",
     "changelog": "변경 내역",
     "pin_popup": "팝업 고정",

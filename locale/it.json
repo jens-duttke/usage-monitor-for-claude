@@ -27,6 +27,7 @@
     "duration_hm": "{h} h {m} min",
     "duration_m": "{m} min",
     "duration_s": "{s}s",
+    "duration_dh": "{d}g {h}h",
     "weekdays": [
         "lun",
         "mar",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} speso",
     "extra_usage_spent_no_limit": "{used} speso",
     "extra_usage_balance": "{balance} disponibile",
+    "forecast": "PREVISIONE",
+    "forecast_runs_out": "Esaurito {day} alle {clock} - {lead} prima del reset",
+    "forecast_at_reset": "Circa {pct}% al reset",
+    "forecast_now": "Ora",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Fissa popup",

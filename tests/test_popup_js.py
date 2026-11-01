@@ -47,6 +47,11 @@ class StubElement {
         };
     }
     _classSet() { return new Set(this.className.split(/\s+/).filter(Boolean)); }
+    setAttribute(name, value) {
+        if (name === 'class') this.className = String(value);
+        else (this.attributes ||= {})[name] = String(value);
+    }
+    getAttribute(name) { return name === 'class' ? this.className : (this.attributes || {})[name]; }
     appendChild(node) { node.parentNode = this; this.children.push(node); return node; }
     append(...nodes) { for (const node of nodes) this.appendChild(node); }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
@@ -78,6 +83,7 @@ class StubElement {
 
 globalThis.document = {
     createElement: (tag) => new StubElement(tag),
+    createElementNS: (_namespace, tag) => new StubElement(tag),
     body: new StubElement('body'),
 };
 globalThis.ResizeObserver = class { constructor() {} observe() {} };
@@ -99,10 +105,24 @@ function makeEls() {
     const names = [
         'accountSection', 'emailRow', 'emailValue', 'planRow', 'planValue',
         'usageSection', 'headingUsage', 'usageBars',
+        'forecastSection', 'forecastLabel', 'forecastChart', 'forecastSummary',
         'extraSection', 'extraSpent', 'extraPct', 'extraBarContainer', 'extraFill', 'extraBalance',
         'installSection', 'installRows', 'statusSection', 'statusText',
     ];
     return Object.fromEntries(names.map((name) => [name, document.createElement('div')]));
+}
+
+function makeForecast(overrides) {
+    return Object.assign({
+        key: 'seven_day', label: 'Weekly (7 day)', actual: [[0, 0], [0.2, 20], [0.5, 50]], measured_from: 0.2, now_x: 0.5,
+        ticks: [{ x: 0.1, label: 'Fri' }, { x: 0.25, label: 'Sat' }],
+        projection: [[0.5, 50], [0.75, 75], [1, 100]], runs_out: false, summary: 'About 100% at reset',
+    }, overrides);
+}
+
+function chartPaths() {
+    return els.forecastChart.children.filter((child) => child.tagName === 'path')
+        .map((child) => ({ class: child.className, d: child.getAttribute('d') }));
 }
 
 function makeExtra(overrides) {
@@ -225,6 +245,80 @@ updateData({ profile: null, usage: [], extra: makeExtra(), installations: [], st
 console.log(JSON.stringify({ text: els.extraBalance.textContent, display: els.extraBalance.style.display }));
 ''')
         self.assertEqual(result, {'text': '', 'display': 'none'})
+
+
+
+@unittest.skipUnless(_NODE, 'Node.js not available')
+class TestForecastSection(unittest.TestCase):
+    """Tests for updateForecast() and the forecast section in updateData()."""
+
+    def test_section_shown_with_summary(self):
+        result = _run_scenario('''
+els = makeEls();
+translations = { forecast_now: 'Now' };
+updateData({ profile: null, usage: [], forecast: makeForecast({ runs_out: true, summary: 'Runs out Mon 11:13' }), extra: null, installations: [], status: null });
+console.log(JSON.stringify({
+    visible: els.forecastSection.classList.contains('visible'),
+    label: els.forecastLabel.textContent,
+    summary: els.forecastSummary.textContent,
+    warn: els.forecastSummary.classList.contains('warn'),
+    paths: chartPaths().map((path) => path.class),
+}));
+''')
+        self.assertEqual(result, {
+            'visible': True, 'label': 'Weekly (7 day)', 'summary': 'Runs out Mon 11:13', 'warn': True,
+            'paths': ['assumed', 'actual', 'projection warn'],
+        })
+
+    def test_section_hidden_without_forecast(self):
+        result = _run_scenario('''
+els = makeEls();
+updateData({ profile: null, usage: [], forecast: makeForecast(), extra: null, installations: [], status: null });
+updateData({ profile: null, usage: [], forecast: null, extra: null, installations: [], status: null });
+console.log(JSON.stringify({ visible: els.forecastSection.classList.contains('visible') }));
+''')
+        self.assertEqual(result, {'visible': False})
+
+    def test_hidden_by_compact_view(self):
+        """'forecast' in compact_hide hides the section while pinned."""
+        result = _run_scenario('''
+els = makeEls();
+popupPinned = true;
+compactHide = ['forecast'];
+updateData({ profile: null, usage: [], forecast: makeForecast(), extra: null, installations: [], status: null });
+console.log(JSON.stringify({ visible: els.forecastSection.classList.contains('visible') }));
+''')
+        self.assertEqual(result, {'visible': False})
+
+    def test_no_projection_without_pace(self):
+        """Too early in the window: only the measured line, no dashed projection or summary."""
+        result = _run_scenario('''
+els = makeEls();
+translations = { forecast_now: 'Now' };
+updateData({ profile: null, usage: [], forecast: makeForecast({ projection: [], summary: '' }), extra: null, installations: [], status: null });
+console.log(JSON.stringify({ paths: chartPaths().map((path) => path.class), summaryDisplay: els.forecastSummary.style.display }));
+''')
+        self.assertEqual(result, {'paths': ['assumed', 'actual'], 'summaryDisplay': 'none'})
+
+    def test_measured_line_starts_at_first_reading(self):
+        """The dotted segment covers only the stretch before the first logged reading."""
+        result = _run_scenario('''
+els = makeEls();
+translations = { forecast_now: 'Now' };
+updateForecast(makeForecast());
+console.log(JSON.stringify(chartPaths().map((path) => path.d.split(' ').length)));
+''')
+        self.assertEqual(result, [2, 2, 3])
+
+    def test_without_log_only_dotted_line(self):
+        """With no readings yet the whole line to now is the dotted, assumed one."""
+        result = _run_scenario('''
+els = makeEls();
+translations = { forecast_now: 'Now' };
+updateForecast(makeForecast({ actual: [[0, 0], [0.5, 50]], measured_from: 0.5 }));
+console.log(JSON.stringify(chartPaths().map((path) => path.class)));
+''')
+        self.assertEqual(result, ['assumed', 'projection'])
 
 
 if __name__ == '__main__':

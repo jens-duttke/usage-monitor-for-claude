@@ -27,6 +27,7 @@
     "duration_hm": "{h} jam {m} mnt",
     "duration_m": "{m} mnt",
     "duration_s": "{s}d",
+    "duration_dh": "{d}h {h}j",
     "weekdays": [
         "Sen",
         "Sel",
@@ -59,6 +60,10 @@
     "extra_usage_spent": "{used} / {limit} terpakai",
     "extra_usage_spent_no_limit": "{used} terpakai",
     "extra_usage_balance": "{balance} tersedia",
+    "forecast": "PERKIRAAN",
+    "forecast_runs_out": "Habis {day} {clock} - {lead} sebelum reset",
+    "forecast_at_reset": "Sekitar {pct}% saat reset",
+    "forecast_now": "Kini",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Sematkan popup",
