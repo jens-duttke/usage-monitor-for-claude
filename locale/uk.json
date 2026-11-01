@@ -71,5 +71,6 @@
     "status_next_update": "Наст. оновл.: {duration}",
     "status_refreshing": "Оновлення...",
     "already_running": "Usage Monitor for Claude v{running_version} вже запущено.\n\nБажаєте замінити запущений екземпляр?",
-    "replace_failed": "Не вдалося замінити запущений екземпляр.\n\nЗакрийте його вручну та спробуйте ще раз."
+    "replace_failed": "Не вдалося замінити запущений екземпляр.\n\nЗакрийте його вручну та спробуйте ще раз.",
+    "refresh": "Оновити зараз"
 }

@@ -5,6 +5,7 @@ let textTimerId = null;
 let popupPinned = false;
 let compactHide = [];
 let lastData = null;
+let refreshPending = false;
 
 /**
  * Set CSS custom properties for theme colors and inject translation strings.
@@ -34,6 +35,7 @@ function init(config) {
     changelogLink.textContent = translations.changelog;
     changelogLink.addEventListener('click', () => pywebview.api.open_url());
     document.getElementById('closeBtn').addEventListener('click', () => pywebview.api.close());
+    setupRefreshButton();
     setupPinButton();
     setupPinnedDrag();
 
@@ -62,6 +64,32 @@ function init(config) {
 
     updateData(config.data);
     requestAnimationFrame(() => document.body.classList.add('open'));
+}
+
+function setupRefreshButton() {
+    const refreshBtn = document.getElementById('refreshBtn');
+    refreshBtn.setAttribute('aria-label', translations.refresh);
+    refreshBtn.title = translations.refresh;
+
+    refreshBtn.addEventListener('click', async () => {
+        if (refreshPending) {
+            return;
+        }
+
+        refreshPending = true;
+        refreshBtn.disabled = true;
+        refreshBtn.classList.add('refreshing');
+        try {
+            const data = await pywebview.api.refresh();
+            updateData(data);
+        } catch (_error) {
+            // The existing snapshot stays visible when a manual refresh fails.
+        } finally {
+            refreshPending = false;
+            refreshBtn.disabled = false;
+            refreshBtn.classList.remove('refreshing');
+        }
+    });
 }
 
 function setupPinButton() {

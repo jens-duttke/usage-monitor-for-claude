@@ -1380,5 +1380,37 @@ class TestEnsureProfileTokenChange(unittest.TestCase):
         mock_profile.assert_not_called()
 
 
+class TestManualRefreshBackoff(unittest.TestCase):
+    """Manual refresh bypasses the successful-fetch floor, never backoff."""
+
+    def test_cooldown_bypass_and_automatic_floor(self) -> None:
+        cache = _make_cache()
+        cache._last_success_time = 10000
+        with patch('usage_monitor_for_claude.cache.time.time', return_value=10001), \
+             patch.object(cache, '_fetch_and_process', return_value=UpdateResult(data={})) as fetch:
+            self.assertIsNone(cache.update().data)
+            fetch.assert_not_called()
+            self.assertEqual(cache.update(manual=True).data, {})
+            fetch.assert_called_once()
+
+    def test_manual_respects_backoff_force_keeps_account_switch_semantics(self) -> None:
+        cache = _make_cache()
+        cache._rate_limit_until = 10100
+        with patch('usage_monitor_for_claude.cache.time.time', return_value=10001), \
+             patch.object(cache, '_fetch_and_process', return_value=UpdateResult(data={})) as fetch:
+            self.assertIsNone(cache.update(manual=True).data)
+            fetch.assert_not_called()
+            self.assertEqual(cache.update(force=True).data, {})
+            fetch.assert_called_once()
+
+    def test_manual_keeps_operation_lock(self) -> None:
+        cache = _make_cache()
+        cache._lock.acquire()
+        try:
+            self.assertIsNone(cache.update(manual=True).data)
+        finally:
+            cache._lock.release()
+
+
 if __name__ == '__main__':
     unittest.main()
