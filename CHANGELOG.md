@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.25.0...HEAD)
+
+## [1.25.0] - 2026-11-01
+
 ### Added
 
 - [Work-hour pacing](https://github.com/jens-duttke/usage-monitor-for-claude/discussions/39) - set your working hours per weekday in [`active_schedule`](docs/configuration.md#work-hour-pacing), and the time marker, red warning color, time-aware alerts and tray icon marker of the weekly bars count only those hours, with dividers at the start of each working day - so nights and weekends no longer make a bar look as if you were ahead of pace (thanks to [@regisbsb](https://github.com/regisbsb) for the contribution)
@@ -21,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - On plans without a five-hour session limit, the tray icon now shows the weekly usage percentage instead of an idle "C" with an empty top bar - a quota from [`icon_fields`](docs/configuration.md#tray-icon-bars) that does not apply to the account gives up its place to the next quota of the detail popup (thanks to [@VictorZakharov](https://github.com/VictorZakharov) for the contribution)
 - On Windows, a tooltip longer than 127 characters - possible with the `--config-dir` account prefix or a long [`tooltip_fields`](docs/configuration.md#tooltip-fields) list - no longer stops all updates with an error message; lines that do not fit are left out
 
-[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.24.0...HEAD)
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.24.0...v1.25.0)
 
 ## [1.24.0] - 2026-10-19
 
