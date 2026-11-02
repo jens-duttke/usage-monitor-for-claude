@@ -24,7 +24,7 @@ if IS_WINDOWS:
         is_workstation_locked, load_font, no_window_kwargs,
         prepare_gui_environment, register_notification_identity, set_autostart, set_dpi_awareness,
         setup_console, show_error_box, show_notification,
-        show_topmost_error, show_warning_box, sync_autostart_path, system_time_format,
+        show_topmost_error, show_warning_box, start_detached, sync_autostart_path, system_time_format,
         taskbar_uses_light_theme, watch_theme_change,
     )
 else:
@@ -35,7 +35,7 @@ else:
         is_workstation_locked, load_font, no_window_kwargs,
         prepare_gui_environment, register_notification_identity, set_autostart, set_dpi_awareness,
         setup_console, show_error_box, show_notification,
-        show_topmost_error, show_warning_box, sync_autostart_path, system_time_format,
+        show_topmost_error, show_warning_box, start_detached, sync_autostart_path, system_time_format,
         taskbar_uses_light_theme, watch_theme_change,
     )
 
@@ -46,5 +46,5 @@ __all__ = [
     'is_autostart_enabled', 'is_screensaver_running', 'is_workstation_locked',
     'load_font', 'no_window_kwargs', 'prepare_gui_environment', 'register_notification_identity', 'set_autostart',
     'set_dpi_awareness', 'setup_console', 'show_error_box', 'show_notification', 'show_topmost_error', 'show_warning_box',
-    'sync_autostart_path', 'system_time_format', 'taskbar_uses_light_theme', 'watch_theme_change',
+    'start_detached', 'sync_autostart_path', 'system_time_format', 'taskbar_uses_light_theme', 'watch_theme_change',
 ]

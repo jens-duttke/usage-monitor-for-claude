@@ -165,12 +165,18 @@ def _terminate_pid(pid: int) -> None:
         time.sleep(_TERMINATE_POLL)
 
 
-def ensure_single_instance() -> bool:
+def ensure_single_instance(ask_to_replace: bool = True) -> bool:
     """Ensure only one instance of the application is running.
 
     If another instance holds the lock, shows a dialog asking the user
     whether to replace it.  The dialog title includes the running
     instance's version when available.
+
+    Parameters
+    ----------
+    ask_to_replace : bool
+        False exits without the dialog when another instance is running, for
+        a start nobody watches (the MCP bridge starting the application).
 
     Returns
     -------
@@ -185,6 +191,8 @@ def ensure_single_instance() -> bool:
         _lock_fd = fd
         _store_holder_info(fd)
         return True
+    if not ask_to_replace:
+        return False
 
     holder_pid, running_version = _read_holder_info()
 

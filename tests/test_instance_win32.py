@@ -302,6 +302,45 @@ class TestEnsureSingleInstance(unittest.TestCase):
 
         self.assertFalse(result)
 
+    @patch(f'{MODULE}._terminate_pid')
+    @patch(f'{MODULE}._read_holder_info', return_value=(99999, '1.9.0'))
+    @patch(f'{MODULE}.ctypes')
+    def test_duplicate_without_dialog_exits_quietly(self, mock_ctypes, mock_read, mock_terminate):
+        """A start nobody watches leaves the running instance alone and shows nothing."""
+        mock_ctypes.get_last_error.return_value = 0xB7
+        mock_kernel32 = MagicMock()
+        mock_kernel32.CreateMutexW.return_value = 42
+
+        mock_ask = MagicMock(return_value=True)
+        mock_error = MagicMock()
+
+        with patch(f'{MODULE}._kernel32', mock_kernel32), \
+             patch(f'{MODULE}.ask_yes_no', mock_ask), \
+             patch(f'{MODULE}.show_topmost_error', mock_error):
+            from usage_monitor_for_claude.platforms import instance_win32
+            result = instance_win32.ensure_single_instance(ask_to_replace=False)
+
+        self.assertFalse(result)
+        mock_ask.assert_not_called()
+        mock_error.assert_not_called()
+        mock_terminate.assert_not_called()
+        mock_kernel32.CloseHandle.assert_called_once_with(42)
+        self.assertIsNone(instance_win32._mutex_handle)
+
+    @patch(f'{MODULE}._store_holder_info')
+    @patch(f'{MODULE}.ctypes')
+    def test_first_instance_without_dialog_still_starts(self, mock_ctypes, mock_store):
+        """``ask_to_replace=False`` changes only what happens next to a running instance."""
+        mock_ctypes.get_last_error.return_value = 0
+        mock_kernel32 = MagicMock()
+        mock_kernel32.CreateMutexW.return_value = 42
+
+        with patch(f'{MODULE}._kernel32', mock_kernel32):
+            from usage_monitor_for_claude.platforms.instance_win32 import ensure_single_instance
+            self.assertTrue(ensure_single_instance(ask_to_replace=False))
+
+        mock_store.assert_called_once()
+
     @patch(f'{MODULE}._read_holder_info', return_value=(99999, '1.9.0'))
     @patch(f'{MODULE}.ctypes')
     def test_duplicate_dialog_title_includes_version(self, mock_ctypes, mock_read):

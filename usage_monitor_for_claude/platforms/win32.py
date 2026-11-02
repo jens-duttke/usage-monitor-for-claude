@@ -33,7 +33,7 @@ __all__ = [
     'diagnostic_system_rows', 'double_click_seconds', 'get_idle_seconds',
     'is_autostart_enabled', 'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs',
     'register_notification_identity', 'set_autostart', 'show_error_box', 'show_notification', 'show_warning_box',
-    'setup_console', 'show_topmost_error', 'sync_autostart_path', 'system_time_format',
+    'setup_console', 'show_topmost_error', 'start_detached', 'sync_autostart_path', 'system_time_format',
     'taskbar_uses_light_theme', 'watch_theme_change',
 ]
 
@@ -117,6 +117,31 @@ class _LASTINPUTINFO(ctypes.Structure):
 def no_window_kwargs() -> dict[str, Any]:
     """Return ``subprocess`` keyword arguments that suppress a console window."""
     return {'creationflags': subprocess.CREATE_NO_WINDOW}
+
+
+def start_detached(command: list[str], env: dict[str, str]) -> None:
+    """Start a process that outlives the caller and shares none of its standard streams.
+
+    An MCP client can run its servers in a job object that ends every process
+    in it once the server exits.  The process breaks away from that job where
+    the job allows it, and starts inside it otherwise.  Inherited stdio would
+    keep the client's pipes open after the caller exits, and the client waits
+    for those to close.
+
+    Parameters
+    ----------
+    command : list[str]
+        Program and arguments.
+    env : dict[str, str]
+        The environment of the new process.
+    """
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    streams = {'stdin': subprocess.DEVNULL, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}
+    try:
+        subprocess.Popen(command, env=env, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB, **streams)
+    except PermissionError:
+        # The job does not allow breaking away
+        subprocess.Popen(command, env=env, creationflags=flags, **streams)
 
 
 def show_error_box(message: str, title: str) -> None:

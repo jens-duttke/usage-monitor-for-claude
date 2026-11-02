@@ -13,6 +13,13 @@ The application communicates exclusively with `api.anthropic.com` to retrieve yo
 data and, when extra usage is enabled for your account, your prepaid credit balance while the detail
 popup is open. No other network connections are made.
 
+The [MCP server](docs/mcp-server.md) lets Claude Code and Claude Desktop read your usage percentages and
+reset times. Claude starts the application a second time with `--mcp`, and that process asks the running
+application over a channel of the operating system that only your own user account can open: a named
+pipe on Windows, a socket file on Linux (listed below). If the application is not running, that process
+starts it first. The tool does not return your token, email address or account name. Whatever Claude
+reads becomes part of your conversation with Claude.
+
 The server certificate is verified against the Windows certificate store, the same store your browser
 uses. A proxy that your organization has installed with its own root certificate can therefore inspect
 this connection, as it does in the browser. Windows performs this check itself, as it does for any other
@@ -40,13 +47,16 @@ application changes on your system follows - there is nothing else.
 - `Software\Microsoft\Windows\CurrentVersion\Run` - the autostart entry. Written only when you
   enable autostart from the tray menu, removed when you disable it again.
 
-**On Linux** the registry has no equivalent, so the same two concerns need files:
+**On Linux** the registry has no equivalent, so the same concerns need files:
 
 - `~/.config/autostart/usage-monitor-for-claude.desktop` - the autostart entry. Written only when
   you enable autostart from the tray menu, removed when you disable it again.
 - `$XDG_RUNTIME_DIR/usage-monitor-for-claude.lock` - a lock file that prevents a second instance
   from running. It holds the process id and version, is created with owner-only permissions
   (`0600`), and lives in the session's runtime directory, which the system clears at logout.
+- `$XDG_RUNTIME_DIR/usage-monitor-for-claude-mcp.sock` - the socket of the MCP server, with
+  owner-only permissions (`0600`). Created when the application starts. It stays in the runtime
+  directory after the application quits and is replaced on the next start.
 
 Monitoring a second Claude account (`--config-dir`) adds a suffix to those names, so each account
 gets its own entry.

@@ -87,6 +87,24 @@ class TestEnsureSingleInstance(_LockTestCase):
         mock_ask.assert_called_once()
         self.assertIs(si._lock_fd, held_fd)
 
+    def test_second_instance_without_dialog_exits_quietly(self):
+        """A start nobody watches leaves the running instance alone and shows nothing."""
+        self.assertTrue(si.ensure_single_instance())
+        held_fd = si._lock_fd
+
+        with patch.object(si, '_acquire', return_value=None), \
+             patch.object(si, 'ask_yes_no', return_value=True) as mock_ask, \
+             patch.object(si, '_terminate_pid') as mock_terminate:
+            self.assertFalse(si.ensure_single_instance(ask_to_replace=False))
+
+        mock_ask.assert_not_called()
+        mock_terminate.assert_not_called()
+        self.assertIs(si._lock_fd, held_fd)
+
+    def test_first_instance_without_dialog_still_acquires(self):
+        """``ask_to_replace=False`` changes only what happens next to a running instance."""
+        self.assertTrue(si.ensure_single_instance(ask_to_replace=False))
+
     def test_replace_terminates_holder_and_retakes(self):
         """Accepting the dialog terminates the holder and retakes the lock."""
         self.directory.joinpath('usage-monitor-for-claude.lock').write_text('4242\n9.9.9\n', encoding='utf-8')

@@ -35,6 +35,7 @@ from .formatting import (
     elapsed_pct, field_period, fit_tooltip, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label, resolve_icon_fields,
 )
 from .i18n import T
+from .mcp_server import start_mcp_server
 from .popup import UsagePopup, new_window_cache
 from .tray_icon import create_icon_image, create_status_image
 
@@ -1062,6 +1063,7 @@ class UsageMonitorForClaude:
             if not api_headers():
                 self._notify(f"{T['warn_no_token']}\n{T['warn_login']}", T['popup_title'])
             threading.Thread(target=watch_theme_change, args=(self._on_theme_changed,), daemon=True).start()
+            start_mcp_server(lambda: self.cache.snapshot)
             self.poll_loop()
         except Exception:
             crash_log(traceback.format_exc())
