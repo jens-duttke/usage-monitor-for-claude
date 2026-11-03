@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - [Forecast chart](https://github.com/jens-duttke/usage-monitor-for-claude/discussions/17) - set [`forecast_chart`](docs/configuration.md#forecast-chart) to `true` to see the quota on your tray icon as a chart in the detail popup instead of a bar: your usage so far and where your average pace leads by the reset, with a short note such as "At this pace: empty ~Mon". With [working hours](docs/configuration.md#work-hour-pacing) set, the projection pauses outside them (thanks to [@VictorZakharov](https://github.com/VictorZakharov) for the contribution)
+- [MCP server](docs/mcp-server.md) - turn on [`mcp_server`](docs/configuration.md#mcp-server) and register the app with Claude Code or Claude Desktop, and Claude can check your remaining quota, the reset times and whether you are ahead of the time marker before it starts expensive work - answered from the app's own data, without extra requests to Anthropic (thanks to [@TheConfax](https://github.com/TheConfax) for the contribution)
 
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.25.0...HEAD)
 
