@@ -809,6 +809,18 @@ class TestSettingsValidation(unittest.TestCase):
         self.assertNotIn('alert_time_aware', result)
         mock.assert_called_once()
 
+    def test_forecast_chart_true_valid(self):
+        """Boolean true for forecast_chart passes through."""
+        result, mock = self._run_validate({'forecast_chart': True})
+        self.assertIs(result['forecast_chart'], True)
+        mock.assert_not_called()
+
+    def test_forecast_chart_string_dropped(self):
+        """String 'chart' for forecast_chart is dropped."""
+        result, mock = self._run_validate({'forecast_chart': 'chart'})
+        self.assertNotIn('forecast_chart', result)
+        mock.assert_called_once()
+
     def test_notify_claude_update_true_valid(self):
         """Boolean true for notify_claude_update passes through."""
         result, mock = self._run_validate({'notify_claude_update': True})

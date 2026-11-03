@@ -16,6 +16,7 @@ import json
 import threading
 import time
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,10 +24,15 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
-from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
+from .forecast import usage_forecast
+from .formatting import (
+    divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, resolve_icon_fields, time_until,
+)
 from .i18n import T
 from .platforms.popup import REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
-from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
+from .settings import (
+    BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, FORECAST_CHART, ICON_FIELDS, POPUP_FIELDS,
+)
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 
@@ -93,6 +99,10 @@ def _snapshot_to_dict(
     # Usage bars
     usage = []
     if snap.usage:
+        # The quota the tray icon shows as its number can be drawn as a chart;
+        # an entry without a forecast (no period, no reset window) keeps its bar.
+        chart_field = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, snap.usage)[0][0] if FORECAST_CHART else None
+        now = datetime.now(timezone.utc)
         for label, entry, period, field in _usage_entries(snap.usage):
             if not entry or entry.get('utilization') is None:
                 continue
@@ -111,6 +121,7 @@ def _snapshot_to_dict(
                 'reset_text': time_until(resets_at) if resets_at else '',
                 'dividers': divider_positions(resets_at, period, field=field) if period else [],
                 'marker_rel': marker_rel,
+                'chart': usage_forecast(field, snap.usage, snap.history, now) if field == chart_field else None,
             })
 
     # Extra usage
@@ -185,7 +196,7 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
         },
         't': {
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
-            'usage': T['usage'], 'extra_usage': T['extra_usage'],
+            'usage': T['usage'], 'extra_usage': T['extra_usage'], 'forecast_now': T['forecast_now'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],

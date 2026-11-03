@@ -12,12 +12,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, read_access_token
 from .claude_cli import RefreshResult, refresh_token
-from .settings import MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
+from .forecast import record_samples
+from .settings import FORECAST_CHART, MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
 
 __all__ = ['CacheSnapshot', 'UpdateResult', 'UsageCache']
 
@@ -35,6 +36,7 @@ class CacheSnapshot:
     refreshing: bool
     last_error: str | None
     version: int
+    history: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,9 @@ class UsageCache:
         self._prepaid: dict[str, Any] | None = None
         self._prepaid_token: str | None = None
         self._prepaid_read_at: float | None = None
+        # Readings of the current quota windows, kept in memory only and
+        # recorded only while the forecast chart is enabled.
+        self._history: dict[str, dict[str, Any]] = {}
         self._last_success_time: float | None = None
         self._refreshing = False
         self._last_error: str | None = None
@@ -140,6 +145,7 @@ class UsageCache:
                 refreshing=self._refreshing,
                 last_error=self._last_error,
                 version=self._version,
+                history=self._history,
             )
 
     # Public methods
@@ -404,6 +410,20 @@ class UsageCache:
                 error += f'\n{server_msg}'
             self._last_error = error
 
+    def restart_history(self) -> None:
+        """Start the reading log over from the latest reading, after an account switch.
+
+        Readings of the previous account must not continue into the new
+        account's curve.  A similar reset time and an equal or higher
+        utilization look like the same window to ``record_samples()``.
+        """
+        if not FORECAST_CHART:
+            return
+
+        with self._state_lock:
+            self._history = record_samples({}, self._usage, self._last_success_time or time.time())
+            self._version += 1
+
     def _record_success(self, data: dict[str, Any], token: str | None) -> None:
         """Apply common state updates after a successful API response.
 
@@ -424,6 +444,10 @@ class UsageCache:
             self._consecutive_errors = 0
             self._last_error = None
             self._last_success_time = time.time()
+            # Reassigned, never mutated in place, like _usage below.  Only the
+            # forecast chart reads the log, so without it nothing is recorded.
+            if FORECAST_CHART:
+                self._history = record_samples(self._history, data, self._last_success_time)
             self._rate_limit_until = 0
             self._last_failed_token = None
             self._usage = data

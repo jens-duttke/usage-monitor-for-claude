@@ -160,6 +160,58 @@ class TestUsageEntries(unittest.TestCase):
 class TestSnapshotToDict(unittest.TestCase):
     """Tests for _snapshot_to_dict - converts CacheSnapshot to popup JSON."""
 
+    # -- forecast chart --
+
+    def _chart_usage(self):
+        resets_at = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+        return resets_at, {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': resets_at},
+            'seven_day_sonnet': {'utilization': 10.0, 'resets_at': resets_at},
+        }
+
+    def _charts(self, snap):
+        return {entry['key']: entry['chart'] for entry in _snapshot_to_dict(snap, installations=[])['usage']}
+
+    def test_bar_is_the_default(self):
+        """Without the setting no entry carries a chart."""
+        _, usage = self._chart_usage()
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', False):
+            charts = self._charts(_snap(usage=usage))
+        self.assertEqual(charts, {'seven_day': None, 'seven_day_sonnet': None})
+
+    def test_chart_replaces_bar_of_icon_top_field(self):
+        """The setting gives a chart only to the quota the tray icon shows as its number."""
+        _, usage = self._chart_usage()
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True), patch('usage_monitor_for_claude.popup.ICON_FIELDS', ['five_hour', 'seven_day_sonnet']):
+            charts = self._charts(_snap(usage=usage))
+        self.assertIsNone(charts['seven_day'])
+        self.assertIsNotNone(charts['seven_day_sonnet'])
+
+    def test_no_separate_forecast_payload(self):
+        """The chart lives in its usage entry; there is no section of its own."""
+        _, usage = self._chart_usage()
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True):
+            result = _snapshot_to_dict(_snap(usage=usage), installations=[])
+        self.assertNotIn('forecast', result)
+
+    def test_chart_uses_snapshot_history(self):
+        """Readings logged in the snapshot become the measured line."""
+        now = datetime.now(timezone.utc)
+        resets_at, usage = self._chart_usage()
+        history = {'seven_day': {'resets_at': resets_at, 'samples': (((now - timedelta(days=1)).timestamp(), 20.0),)}}
+        snap = CacheSnapshot(usage=usage, profile=None, prepaid=None, last_success_time=None, refreshing=False, last_error=None, version=1, history=history)
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True), patch('usage_monitor_for_claude.popup.ICON_FIELDS', ['seven_day', 'five_hour']):
+            charts = self._charts(snap)
+        self.assertEqual([y for _, y in charts['seven_day']['actual']], [0.0, 20.0, 50.0])
+
+    def test_quota_without_period_keeps_its_bar(self):
+        """A code-named quota in the icon's top slot has no period, so it stays a bar."""
+        usage = {'iguana_necktie': {'utilization': 5.0, 'resets_at': '2026-11-05T07:59:00+00:00'}}
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True), patch('usage_monitor_for_claude.popup.ICON_FIELDS', ['iguana_necktie', 'five_hour']):
+            charts = self._charts(_snap(usage=usage))
+        self.assertEqual(charts, {'iguana_necktie': None})
+
     # -- profile --
 
     def test_no_profile(self):

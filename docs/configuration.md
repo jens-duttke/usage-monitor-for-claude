@@ -41,7 +41,7 @@ Threshold lookup uses a fallback chain: exact match (e.g. `alert_thresholds_seve
 
 ## Work-hour pacing
 
-By default the time marker advances around the clock, including nights and weekends. Set an active schedule to count only your working hours on quotas of a day or longer.
+By default the time marker advances around the clock, including nights and weekends. Set an active schedule to count only your working hours on quotas of a day or longer. The [forecast chart](#forecast-chart) follows the same schedule: its projection stays flat outside your working hours.
 
 | Key | Default | Description |
 |-----|---------|-------------|
@@ -158,6 +158,24 @@ Prefix a field name with `"-"` to hide its bar, for example `"-iguana_necktie"`.
 }
 ```
 
+## Forecast chart
+
+Set `forecast_chart` to draw the quota on your tray icon as a chart in the detail popup, in place of its bar.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `forecast_chart` | `false` | Draw the popup entry of the first [`icon_fields`](#tray-icon-bars) quota as a chart instead of a bar |
+
+```json
+{
+    "forecast_chart": true
+}
+```
+
+The chart shows your usage so far and, as a dashed line, your average pace carried on to the reset. The text below it says where that line ends: "At this pace: empty ~Mon", or "At this pace: ~72% at reset" if the quota lasts. A session quota names a time instead of the day, rounded to the hour, or to the quarter hour if it is less than an hour away. This is where the current pace leads, not a prediction. A burst of usage can change it quickly.
+
+The line is solid from the first reading after the app started, and dotted before that. A quota without a known period or without a running reset window keeps its bar.
+
 ## Compact pinned view
 
 The detail popup can be pinned open (pin button in the header) so it stays visible and can be dragged anywhere. Use `compact_hide` to strip the pinned popup down to just the usage bars you care about - the entries listed here are hidden **only while the popup is pinned**, and reappear when you unpin it.
@@ -188,7 +206,7 @@ The tray icon displays two small progress bars. By default, these show the sessi
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `icon_fields` | `["five_hour", "seven_day"]` | Which two usage fields to show as icon bars. The first entry is the top bar (also determines the icon text), the second is the bottom bar |
+| `icon_fields` | `["five_hour", "seven_day"]` | Which two usage fields to show as icon bars. The first entry is the top bar (also determines the icon text and the quota of the [forecast chart](#forecast-chart)), the second is the bottom bar |
 | `icon_style` | `"number+bars"` | Icon layout: `"number+bars"` shows the first field's percentage above two progress bars; `"numbers"` shows both fields as two stacked percentages without bars |
 
 Must be an array of exactly 2 non-empty strings. Unknown field names are accepted. A field gives up its place when it is `null` or missing from the API response, for example the session quota on a plan without one, and also when it names a quota type that does not apply to your account. The remaining field then moves to the top if needed, and the next bar of the detail popup fills the free place. A bar shows 0% only when no other quota is left.

@@ -30,7 +30,7 @@ __all__ = [
     'ALERT_EXTRA_USAGE_SPENT', 'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
     'BAR_BG', 'BAR_DIVIDER', 'BAR_FG', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
     'CLI_COMMAND', 'COMPACT_HIDE', 'CURRENCY_SYMBOL',
-    'FG', 'FG_DIM', 'FG_HEADING', 'FG_LINK',
+    'FG', 'FG_DIM', 'FG_HEADING', 'FG_LINK', 'FORECAST_CHART',
     'ICON_DARK', 'ICON_FIELDS', 'ICON_LIGHT', 'ICON_STYLE', 'IDLE_INTERVAL', 'IDLE_PAUSE',
     'LANGUAGE', 'MAX_BACKOFF', 'MCP_SERVER', 'NOTIFY_CLAUDE_UPDATE',
     'ON_RESET_COMMAND', 'ON_STARTUP_COMMAND', 'ON_THRESHOLD_COMMAND', 'QUICK_ACTION_COMMAND',
@@ -60,7 +60,7 @@ _VALID_ICON_STYLES = frozenset({'number+bars', 'numbers'})
 _COMMAND_KEYS = frozenset({
     'quick_action_command', 'on_double_click_command', 'on_reset_command', 'on_startup_command', 'on_threshold_command',
 })
-_BOOL_KEYS = frozenset({'alert_time_aware', 'mcp_server', 'notify_claude_update'})
+_BOOL_KEYS = frozenset({'alert_time_aware', 'forecast_chart', 'mcp_server', 'notify_claude_update'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields', 'compact_hide'})
 _WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
@@ -452,6 +452,9 @@ TOOLTIP_FIELDS: list[str] = _S.get('tooltip_fields', ['five_hour', 'seven_day'])
 
 # Popup fields
 POPUP_FIELDS: list[str] = _S.get('popup_fields', ['*'])
+
+# Draw the popup entry of the tray icon's top quota as a forecast chart instead of a bar
+FORECAST_CHART: bool = _S.get('forecast_chart', False)
 
 # Work-hour pacing: a missing schedule keeps wall-clock pacing, a missing field
 # list applies it to every quota of a day or longer, an empty one to none
