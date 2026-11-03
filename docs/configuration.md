@@ -172,7 +172,7 @@ Set `forecast_chart` to draw the quota on your tray icon as a chart in the detai
 }
 ```
 
-The chart shows your usage so far and, as a dashed line, your average pace carried on to the reset. The text below it says where that line ends: "At this pace: empty ~Mon", or "At this pace: ~72% at reset" if the quota lasts. A session quota names the nearest hour instead of the day. This is where the current pace leads, not a prediction. A burst of usage can change it quickly.
+The chart shows your usage so far and, as a dashed line, your average pace carried on to the reset. The text below it says where that line ends: "At this pace: empty ~Mon", or "At this pace: ~72% at reset" if the quota lasts. A session quota names a time instead of the day, rounded to the hour, or to the quarter hour if it is less than an hour away. This is where the current pace leads, not a prediction. A burst of usage can change it quickly.
 
 The line is solid from the first reading after the app started, and dotted before that. A quota without a known period or without a running reset window keeps its bar.
 

@@ -3003,6 +3003,7 @@ class TestAccountSwitchDetection(unittest.TestCase):
         with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=data), patch.object(cache, 'ensure_profile'):
             self.app.update()
 
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     def test_account_switch_restarts_reading_log(self, _icon, _tooltip):
@@ -3014,6 +3015,7 @@ class TestAccountSwitchDetection(unittest.TestCase):
 
         self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [60.0])
 
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     def test_same_account_keeps_reading_log(self, _icon, _tooltip):

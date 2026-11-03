@@ -40,6 +40,11 @@ _PROJECTION_STEPS = 120
 # Bisection steps for the run-out instant - below a second over a week.
 _BISECTION_STEPS = 40
 
+# Rounding of a session's run-out time: to the hour, or to the quarter hour
+# when it is less than an hour away and a full hour would be too coarse.
+_ROUNDING_STEP = timedelta(hours=1)
+_NEAR_ROUNDING_STEP = timedelta(minutes=15)
+
 
 def record_samples(history: dict[str, dict[str, Any]], usage: dict[str, Any], now: float) -> dict[str, dict[str, Any]]:
     """Return *history* extended by the readings in a successful usage response.
@@ -184,7 +189,7 @@ def usage_forecast(field: str, usage: dict[str, Any], history: dict[str, dict[st
     forecast['projection'] = projection
     forecast['runs_out'] = end < reset
     if end < reset:
-        forecast['summary'] = T['forecast_runs_out'].format(when=_approximate_time(end, period))
+        forecast['summary'] = T['forecast_runs_out'].format(when=_approximate_time(end, period, now))
     else:
         forecast['summary'] = T['forecast_at_reset'].format(pct=f'{min(100.0, rate):.0f}')
 
@@ -232,12 +237,35 @@ def _ticks(start: datetime, reset: datetime, period: int) -> list[dict[str, Any]
     return ticks
 
 
-def _approximate_time(when: datetime, period: int) -> str:
-    """Format a projected instant no finer than the projection deserves: the weekday, or the nearest hour within a session."""
+def _approximate_time(when: datetime, period: int, now: datetime) -> str:
+    """Format a projected instant no finer than the projection deserves.
+
+    A period of a day or longer names the weekday.  A session names the
+    clock time, rounded to the hour - or to the quarter hour when *when* is
+    less than an hour away - and never to a time at or before *now*.
+
+    Parameters
+    ----------
+    when : datetime
+        Timezone-aware projected instant, after *now*.
+    period : int
+        Length of the quota period in seconds.
+    now : datetime
+        Timezone-aware current time.
+
+    Returns
+    -------
+    str
+        Localized weekday or clock time.
+    """
     local = when.astimezone()
     if period >= 24 * 3600:
         return T['weekdays'][local.weekday()]
 
-    nearest_hour = (local + timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
+    step = _NEAR_ROUNDING_STEP if when - now < _ROUNDING_STEP else _ROUNDING_STEP
+    hour = local.replace(minute=0, second=0, microsecond=0)
+    rounded = hour + step * ((local - hour + step / 2) // step)
+    if rounded <= now:
+        rounded += step
 
-    return format_clock(nearest_hour, TIME_FORMAT == '24h')
+    return format_clock(rounded, TIME_FORMAT == '24h')

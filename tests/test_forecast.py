@@ -10,8 +10,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from usage_monitor_for_claude.forecast import MAX_SAMPLES, record_samples, usage_forecast
-from usage_monitor_for_claude.formatting import format_clock
+from usage_monitor_for_claude.forecast import MAX_SAMPLES, _approximate_time, record_samples, usage_forecast
+from usage_monitor_for_claude.formatting import PERIOD_5H, PERIOD_7D, format_clock
 from usage_monitor_for_claude.i18n import T
 from usage_monitor_for_claude.settings import TIME_FORMAT
 
@@ -142,11 +142,12 @@ class TestUsageForecast(unittest.TestCase):
         self.assertEqual(forecast['summary'], T['forecast_runs_out'].format(when=day))
 
     def test_session_run_out_rounded_to_the_hour(self):
-        """A session runs out at about an hour, never to the minute."""
+        """A session that runs out more than an hour from now names the nearest hour, never the minute."""
         reset = datetime(2026, 11, 1, 15, 0, tzinfo=timezone.utc)
-        usage = {'five_hour': {'utilization': 90.0, 'resets_at': reset.isoformat()}}
-        forecast = usage_forecast('five_hour', usage, {}, reset - timedelta(hours=2))
+        usage = {'five_hour': {'utilization': 30.0, 'resets_at': reset.isoformat()}}
+        forecast = usage_forecast('five_hour', usage, {}, reset - timedelta(hours=4))
 
+        # 30% after a fifth of the window runs out at two thirds of it, 2h 20m from now.
         self.assertTrue(forecast['runs_out'])
         run_out = (reset - timedelta(hours=5) + timedelta(hours=10 / 3)).astimezone()
         nearest_hour = (run_out + timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
@@ -278,6 +279,50 @@ class TestUsageForecast(unittest.TestCase):
 
     def test_none_for_unparseable_reset(self):
         self.assertIsNone(usage_forecast('seven_day', {'seven_day': _weekly(20.0, 'not a date')}, {}, _at(3.5)))
+
+
+# ---------------------------------------------------------------------------
+# _approximate_time
+# ---------------------------------------------------------------------------
+
+class TestApproximateTime(unittest.TestCase):
+    """Tests for _approximate_time(), the summary's run-out time.
+
+    Instants are built as local wall-clock times, so the expected clock
+    strings hold in every system timezone.
+    """
+
+    @staticmethod
+    def _local(hour: int, minute: int) -> datetime:
+        return datetime(2026, 11, 10, hour, minute).astimezone()
+
+    @staticmethod
+    def _clock(hour: int, minute: int) -> str:
+        return format_clock(datetime(2026, 11, 10, hour, minute), TIME_FORMAT == '24h')
+
+    def test_weekly_names_the_weekday(self):
+        when = self._local(13, 20)
+        self.assertEqual(_approximate_time(when, PERIOD_7D, self._local(9, 0)), T['weekdays'][when.weekday()])
+
+    def test_session_far_away_rounds_to_the_hour(self):
+        now = self._local(10, 0)
+        self.assertEqual(_approximate_time(self._local(13, 20), PERIOD_5H, now), self._clock(13, 0))
+        self.assertEqual(_approximate_time(self._local(13, 40), PERIOD_5H, now), self._clock(14, 0))
+
+    def test_session_within_the_hour_rounds_to_the_quarter_hour(self):
+        """Less than an hour away, a full hour would be too coarse."""
+        self.assertEqual(_approximate_time(self._local(13, 20), PERIOD_5H, self._local(13, 0)), self._clock(13, 15))
+
+    def test_session_never_rounded_to_the_past(self):
+        """A run-out shortly after now never rounds down to a time that has already passed."""
+        self.assertEqual(_approximate_time(self._local(13, 21), PERIOD_5H, self._local(13, 20)), self._clock(13, 30))
+
+    def test_session_never_rounded_to_now(self):
+        self.assertEqual(_approximate_time(self._local(13, 2), PERIOD_5H, self._local(13, 0)), self._clock(13, 15))
+
+    def test_session_one_hour_away_rounds_to_the_hour(self):
+        """Exactly an hour away is no longer near."""
+        self.assertEqual(_approximate_time(self._local(14, 10), PERIOD_5H, self._local(13, 10)), self._clock(14, 0))
 
 
 if __name__ == '__main__':
