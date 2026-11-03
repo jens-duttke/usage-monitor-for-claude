@@ -261,6 +261,14 @@ Run a shell command when a usage event occurs. See [Event Commands](event-comman
 | `on_threshold_command` | *(none)* | Shell command (or array of commands) to run when usage crosses a configured alert threshold |
 | `quick_action_command` | *(none)* | Shell command (or array of commands) to run when you trigger the quick action (e.g. launch [Agent Monitor for Claude](https://github.com/jens-duttke/agent-monitor-for-claude)). Triggered by a double-click on the tray icon, or by the **Run Quick Action** menu entry where the desktop keeps the click. Formerly `on_double_click_command`, which still works |
 
+## MCP server
+
+Lets Claude Code and Claude Desktop ask the app how much of your quota is left. See [MCP Server](mcp-server.md) for the setup.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mcp_server` | `false` | Answer the `--mcp` process that Claude starts. While this is `false`, the app opens no channel for it |
+
 ## Polling intervals
 
 | Key | Default | Description |

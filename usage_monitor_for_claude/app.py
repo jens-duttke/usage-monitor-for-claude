@@ -27,7 +27,7 @@ from .platforms import (
     show_notification, sync_autostart_path, taskbar_uses_light_theme, watch_theme_change,
 )
 from .settings import (
-    ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_INTERVAL, IDLE_PAUSE,
+    ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_INTERVAL, IDLE_PAUSE, MCP_SERVER,
     NOTIFY_CLAUDE_UPDATE, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND, POLL_ERROR, POLL_FAST,
     POLL_FAST_EXTRA, POLL_INTERVAL, POPUP_FIELDS, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
@@ -35,6 +35,7 @@ from .formatting import (
     elapsed_pct, field_period, fit_tooltip, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label, resolve_icon_fields,
 )
 from .i18n import T
+from .mcp_server import start_mcp_server
 from .popup import UsagePopup, new_window_cache
 from .tray_icon import create_icon_image, create_status_image
 
@@ -1063,6 +1064,8 @@ class UsageMonitorForClaude:
             if not api_headers():
                 self._notify(f"{T['warn_no_token']}\n{T['warn_login']}", T['popup_title'])
             threading.Thread(target=watch_theme_change, args=(self._on_theme_changed,), daemon=True).start()
+            if MCP_SERVER:
+                start_mcp_server(lambda: self.cache.snapshot)
             self.poll_loop()
         except Exception:
             crash_log(traceback.format_exc())

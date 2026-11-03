@@ -35,6 +35,17 @@ if _config_dir is not None:
         sys.exit(1)
     os.environ['CLAUDE_CONFIG_DIR'] = str(_config_path.resolve())
 
+# --mcp turns this process into the MCP server an MCP client such as Claude
+# Desktop starts: no tray, no window, no single-instance guard, and nothing but
+# MCP messages on stdout. It passes them on to the running tray application of
+# the same --config-dir, so it must follow the block above and precede every
+# console and GUI setup below.
+if '--mcp' in sys.argv:
+    from usage_monitor_for_claude.mcp_bridge import run_stdio_bridge
+    if sys.stdin is None or sys.stdout is None:
+        sys.exit(1)
+    sys.exit(run_stdio_bridge(sys.stdin.buffer, sys.stdout.buffer))
+
 # In frozen builds (console=False), stdout/stderr go nowhere.
 # --verbose attaches a console so diagnostics are visible.
 if _verbose and getattr(sys, 'frozen', False):

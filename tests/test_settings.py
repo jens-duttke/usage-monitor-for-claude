@@ -277,6 +277,11 @@ class TestSettingsOverrides(unittest.TestCase):
         """notify_claude_update is overridden by settings; absent keeps the default on."""
         self._assert_overrides({'notify_claude_update': False}, [('notify_claude_update', False)], absent=['alert_time_aware'])
 
+    def test_mcp_server_override(self):
+        """mcp_server is turned on only by the settings file; absent leaves it unset, which means off."""
+        self._assert_overrides({'mcp_server': True}, [('mcp_server', True)])
+        self._assert_overrides({'poll_interval': 180}, [], absent=['mcp_server'])
+
     def test_icon_color_override(self):
         """Icon color dicts are merged, JSON arrays become tuples."""
         settings = {'icon_light': {'fg': [0, 255, 0, 255]}}
@@ -839,6 +844,22 @@ class TestSettingsValidation(unittest.TestCase):
         result, mock = self._run_validate({'notify_claude_update': 'false'})
         self.assertNotIn('notify_claude_update', result)
         mock.assert_called_once()
+
+    def test_mcp_server_booleans_valid(self):
+        """Both booleans for mcp_server pass through."""
+        for value in (True, False):
+            with self.subTest(value=value):
+                result, mock = self._run_validate({'mcp_server': value})
+                self.assertIs(result['mcp_server'], value)
+                mock.assert_not_called()
+
+    def test_mcp_server_non_boolean_dropped(self):
+        """A value that only looks like true is dropped, so the server stays off."""
+        for value in (1, 'true', 'yes', None, [True]):
+            with self.subTest(value=value):
+                result, mock = self._run_validate({'mcp_server': value})
+                self.assertNotIn('mcp_server', result)
+                mock.assert_called_once()
 
     # Command validation (string or array of strings)
 

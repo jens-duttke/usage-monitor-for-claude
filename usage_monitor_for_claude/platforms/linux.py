@@ -33,7 +33,7 @@ __all__ = [
     'autostart_supported', 'install_tray_activate_handler', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows',
     'double_click_seconds', 'get_idle_seconds', 'is_autostart_enabled',
-    'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs', 'register_notification_identity',
+    'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs', 'register_notification_identity', 'runtime_directory',
     'set_autostart', 'setup_console', 'show_error_box', 'show_notification', 'show_topmost_error', 'show_warning_box',
     'sync_autostart_path', 'system_time_format', 'taskbar_uses_light_theme', 'watch_theme_change',
 ]
@@ -88,6 +88,24 @@ def no_window_kwargs() -> dict[str, Any]:
     POSIX has no console-window concept, so no flags are needed.
     """
     return {}
+
+
+def runtime_directory() -> Path:
+    """Return the directory the single-instance lock and the MCP socket live in.
+
+    ``XDG_RUNTIME_DIR`` is the correct home for runtime state - it is
+    per-user, on tmpfs, and cleared at logout.  Sessions without it (some
+    minimal or containerised setups) fall back to the user's cache
+    directory, which is still per-user and writable.
+
+    Only the path is returned; the directory is created by whoever writes
+    into it, so a process that only connects never creates it.
+    """
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if runtime_dir:
+        return Path(runtime_dir)
+
+    return Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
 
 
 def show_error_box(message: str, title: str) -> None:

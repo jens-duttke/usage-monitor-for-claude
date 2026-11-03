@@ -23,7 +23,7 @@ from pathlib import Path
 from .. import __version__
 from ..i18n import T
 from ..instance_id import config_dir_suffix
-from .linux import ask_yes_no, show_topmost_error
+from .linux import ask_yes_no, runtime_directory, show_topmost_error
 
 __all__ = ['ensure_single_instance', 'release_instance_lock']
 
@@ -38,21 +38,6 @@ _TERMINATE_POLL = 0.1
 _lock_fd: int | None = None
 
 
-def _lock_directory() -> Path:
-    """Return the directory the lock file lives in.
-
-    ``XDG_RUNTIME_DIR`` is the correct home for runtime state - it is
-    per-user, on tmpfs, and cleared at logout.  Sessions without it (some
-    minimal or containerised setups) fall back to the user's cache
-    directory, which is still per-user and writable.
-    """
-    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
-    if runtime_dir:
-        return Path(runtime_dir)
-
-    return Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
-
-
 def _lock_path() -> Path:
     """Return the per-instance lock file path.
 
@@ -60,7 +45,7 @@ def _lock_path() -> Path:
     account can run concurrently, each a singleton for its own config
     directory.
     """
-    return _lock_directory() / f'{_LOCK_BASE_NAME}{config_dir_suffix()}.lock'
+    return runtime_directory() / f'{_LOCK_BASE_NAME}{config_dir_suffix()}.lock'
 
 
 def _read_holder_info() -> tuple[int | None, str | None]:
