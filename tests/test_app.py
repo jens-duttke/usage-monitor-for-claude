@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 from usage_monitor_for_claude.app import (
     POLL_FAST, RESET_BUFFER, UsageMonitorForClaude, _align_to_reset,
 )
-from usage_monitor_for_claude.cache import UpdateResult
+from usage_monitor_for_claude.cache import UpdateResult, UsageCache
 from usage_monitor_for_claude.claude_cli import RefreshResult
 
 
@@ -2994,6 +2994,37 @@ class TestAccountSwitchDetection(unittest.TestCase):
 
         # prev_utilization must be cleared so reset detection cannot fire on next cycle
         self.assertEqual(self.app._prev_utilization, {})
+
+    def _update_with_account(self, cache, uuid, utilization):
+        """Run one update of the real cache for the given account."""
+        cache._last_success_time = 0  # lift the cooldown
+        cache._profile = {'account': {'uuid': uuid, 'email': f'{uuid}@example.com'}}
+        data = {'seven_day': {'utilization': utilization, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=data), patch.object(cache, 'ensure_profile'):
+            self.app.update()
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_account_switch_restarts_reading_log(self, _icon, _tooltip):
+        """Same reset time and higher usage on the new account: the old account's curve does not continue."""
+        cache = self.app.cache = UsageCache()
+        self._update_with_account(cache, 'uuid-old', 10.0)
+        self._update_with_account(cache, 'uuid-old', 20.0)
+        self._update_with_account(cache, 'uuid-new', 60.0)
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [60.0])
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_same_account_keeps_reading_log(self, _icon, _tooltip):
+        """Without a switch every reading stays in the log."""
+        cache = self.app.cache = UsageCache()
+        self._update_with_account(cache, 'uuid-same', 10.0)
+        self._update_with_account(cache, 'uuid-same', 20.0)
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [10.0, 20.0])
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')

@@ -47,6 +47,11 @@ class StubElement {
         };
     }
     _classSet() { return new Set(this.className.split(/\s+/).filter(Boolean)); }
+    setAttribute(name, value) {
+        if (name === 'class') this.className = String(value);
+        else (this.attributes ||= {})[name] = String(value);
+    }
+    getAttribute(name) { return name === 'class' ? this.className : (this.attributes || {})[name]; }
     appendChild(node) { node.parentNode = this; this.children.push(node); return node; }
     append(...nodes) { for (const node of nodes) this.appendChild(node); }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
@@ -78,6 +83,7 @@ class StubElement {
 
 globalThis.document = {
     createElement: (tag) => new StubElement(tag),
+    createElementNS: (_namespace, tag) => new StubElement(tag),
     body: new StubElement('body'),
 };
 globalThis.ResizeObserver = class { constructor() {} observe() {} };
@@ -103,6 +109,19 @@ function makeEls() {
         'installSection', 'installRows', 'statusSection', 'statusText',
     ];
     return Object.fromEntries(names.map((name) => [name, document.createElement('div')]));
+}
+
+function makeChart(overrides) {
+    return Object.assign({
+        actual: [[0, 0], [0.2, 20], [0.5, 50]], measured_from: 0.2, now_x: 0.5,
+        ticks: [{ x: 0.1, label: 'Fri' }, { x: 0.25, label: 'Sat' }],
+        projection: [[0.5, 50], [0.75, 75], [1, 100]], runs_out: false, summary: 'At this pace: ~100% at reset',
+    }, overrides);
+}
+
+function chartPaths(entryElement) {
+    return entryElement.querySelector('.forecast-chart').children.filter((child) => child.tagName === 'path')
+        .map((child) => ({ class: child.className, d: child.getAttribute('d') }));
 }
 
 function makeExtra(overrides) {
@@ -225,6 +244,102 @@ updateData({ profile: null, usage: [], extra: makeExtra(), installations: [], st
 console.log(JSON.stringify({ text: els.extraBalance.textContent, display: els.extraBalance.style.display }));
 ''')
         self.assertEqual(result, {'text': '', 'display': 'none'})
+
+
+
+@unittest.skipUnless(_NODE, 'Node.js not available')
+class TestForecastChart(unittest.TestCase):
+    """Tests for a usage entry drawn as a forecast chart in place of its bar."""
+
+    def test_chart_replaces_bar(self):
+        """An entry with a chart has no bar; label, percentage, reset time and summary stay."""
+        result = _run_scenario('''
+translations = { forecast_now: 'Now' };
+updateUsageBars([makeEntry({
+    key: 'seven_day', label: 'Weekly', pct_text: '50%', reset_text: 'Resets Thu',
+    chart: makeChart({ runs_out: true, summary: 'At this pace: empty ~Mon' }),
+})]);
+const entry = els.usageBars.children[0];
+console.log(JSON.stringify({
+    bar: !!entry.querySelector('.bar-container'),
+    pct: entry.querySelector('.bar-pct').textContent,
+    reset: entry.querySelector('.reset-text').textContent,
+    summary: entry.querySelector('.forecast-summary').textContent,
+    paths: chartPaths(entry).map((path) => path.class),
+}));
+''')
+        self.assertEqual(result, {
+            'bar': False, 'pct': '50%', 'reset': 'Resets Thu', 'summary': 'At this pace: empty ~Mon',
+            'paths': ['assumed', 'actual', 'projection warn'],
+        })
+
+    def test_entry_without_chart_keeps_bar(self):
+        result = _run_scenario('''
+translations = { forecast_now: 'Now' };
+updateUsageBars([makeEntry({ chart: null })]);
+const entry = els.usageBars.children[0];
+console.log(JSON.stringify({ bar: !!entry.querySelector('.bar-container'), chart: !!entry.querySelector('.forecast-chart') }));
+''')
+        self.assertEqual(result, {'bar': True, 'chart': False})
+
+    def test_chart_updated_in_place(self):
+        """A new snapshot redraws the same element."""
+        result = _run_scenario('''
+translations = { forecast_now: 'Now' };
+updateUsageBars([makeEntry({ key: 'seven_day', pct_text: '50%', chart: makeChart() })]);
+const entry = els.usageBars.children[0];
+updateUsageBars([makeEntry({ key: 'seven_day', pct_text: '60%', chart: makeChart({ summary: 'At this pace: empty ~Tue', projection: [] }) })]);
+console.log(JSON.stringify({
+    same: els.usageBars.children[0] === entry,
+    pct: entry.querySelector('.bar-pct').textContent,
+    summary: entry.querySelector('.forecast-summary').textContent,
+    paths: chartPaths(entry).map((path) => path.class),
+}));
+''')
+        self.assertEqual(result, {'same': True, 'pct': '60%', 'summary': 'At this pace: empty ~Tue', 'paths': ['assumed', 'actual']})
+
+    def test_switching_between_chart_and_bar_rebuilds_entry(self):
+        """A quota that loses its reset window goes back to a bar, and a chart returns with it."""
+        result = _run_scenario('''
+translations = { forecast_now: 'Now' };
+updateUsageBars([makeEntry({ key: 'seven_day', chart: makeChart() })]);
+updateUsageBars([makeEntry({ key: 'seven_day', chart: null })]);
+const afterBar = !!els.usageBars.children[0].querySelector('.bar-container');
+updateUsageBars([makeEntry({ key: 'seven_day', chart: makeChart() })]);
+const afterChart = !!els.usageBars.children[0].querySelector('.forecast-chart');
+console.log(JSON.stringify({ afterBar, afterChart }));
+''')
+        self.assertEqual(result, {'afterBar': True, 'afterChart': True})
+
+    def test_hidden_by_field_name_in_compact_view(self):
+        """The chart entry is hidden in the pinned view like any bar, by its field name."""
+        result = _run_scenario('''
+els = makeEls();
+translations = { forecast_now: 'Now' };
+popupPinned = true;
+compactHide = ['seven_day'];
+updateData({ profile: null, usage: [makeEntry({ key: 'five_hour' }), makeEntry({ key: 'seven_day', chart: makeChart() })], extra: null, installations: [], status: null });
+console.log(JSON.stringify(els.usageBars.children.map((entry) => entry.dataset.key)));
+''')
+        self.assertEqual(result, ['five_hour'])
+
+    def test_measured_line_starts_at_first_reading(self):
+        """The dotted segment covers only the stretch before the first logged reading."""
+        result = _run_scenario('''
+translations = { forecast_now: 'Now' };
+updateUsageBars([makeEntry({ chart: makeChart() })]);
+console.log(JSON.stringify(chartPaths(els.usageBars.children[0]).map((path) => path.d.split(' ').length)));
+''')
+        self.assertEqual(result, [2, 2, 3])
+
+    def test_without_log_only_dotted_line(self):
+        """With no readings yet the whole line to now is the dotted, assumed one."""
+        result = _run_scenario('''
+translations = { forecast_now: 'Now' };
+updateUsageBars([makeEntry({ chart: makeChart({ actual: [[0, 0], [0.5, 50]], measured_from: 0.5 }) })]);
+console.log(JSON.stringify(chartPaths(els.usageBars.children[0]).map((path) => path.class)));
+''')
+        self.assertEqual(result, ['assumed', 'projection'])
 
 
 if __name__ == '__main__':

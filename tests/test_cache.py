@@ -184,6 +184,74 @@ class TestCooldownBehavior(unittest.TestCase):
 class TestSuccessState(unittest.TestCase):
     """Tests for state updates after successful API calls."""
 
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    def test_success_logs_readings_in_snapshot(self):
+        """Every successful fetch adds its readings to the snapshot's in-memory history."""
+        cache = _make_cache()
+        weekly = {'seven_day': {'utilization': 10.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        rising = {'seven_day': {'utilization': 12.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=weekly):
+            cache.update()
+        first = cache.snapshot
+        cache._last_success_time = 0  # lift the cooldown for the second fetch
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=rising):
+            cache.update()
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [10.0, 12.0])
+        self.assertEqual([pct for _, pct in first.history['seven_day']['samples']], [10.0])
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', False)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 10.0, 'resets_at': '2026-11-05T19:00:00+00:00'}})
+    def test_no_readings_logged_without_forecast_chart(self, _mock):
+        """With the chart disabled nothing reads the log, so a fetch records nothing."""
+        cache = _make_cache()
+        cache.update()
+        self.assertEqual(cache.snapshot.history, {})
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', False)
+    def test_restart_history_without_forecast_chart(self):
+        """With the chart disabled a restart neither records a reading nor bumps the version."""
+        cache = _make_cache()
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 10.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}):
+            cache.update()
+        version_before = cache.snapshot.version
+
+        cache.restart_history()
+
+        self.assertEqual(cache.snapshot.history, {})
+        self.assertEqual(cache.snapshot.version, version_before)
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    def test_restart_history_keeps_only_the_latest_reading(self):
+        """After an account switch the log holds only the new account's first reading."""
+        cache = _make_cache()
+        resets_at = '2026-11-05T19:00:00+00:00'
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 10.0, 'resets_at': resets_at}}):
+            cache.update()
+        cache._last_success_time = 0  # lift the cooldown for the second fetch
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 60.0, 'resets_at': resets_at}}):
+            cache.update()
+        version_before = cache.snapshot.version
+
+        cache.restart_history()
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [60.0])
+        self.assertGreater(cache.snapshot.version, version_before)
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    def test_restart_history_without_data(self):
+        """Restarting before the first successful fetch leaves an empty log."""
+        cache = _make_cache()
+        cache.restart_history()
+        self.assertEqual(cache.snapshot.history, {})
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
+    def test_error_leaves_history_unchanged(self, _mock):
+        cache = _make_cache()
+        cache.update()
+        self.assertEqual(cache.snapshot.history, {})
+
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
     def test_success_stores_usage_data(self, _mock):
         cache = _make_cache()

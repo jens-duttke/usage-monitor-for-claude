@@ -184,6 +184,47 @@ dl > div {
     }
 }
 
+/* Forecast chart in place of a usage bar: measured usage, the projected pace
+   to the reset, and the shaded stretch still ahead.  Geometry is set in
+   popup.js in CSS pixels. */
+.forecast-chart {
+    display: block;
+    width: 100%;
+    height: 80px;
+    overflow: visible;
+
+    & .grid { stroke: var(--bar-bg); stroke-width: 1; }
+    & .axis-text { fill: var(--fg-dim); font-size: 10px; }
+    & .ahead { fill: var(--bar-bg); opacity: 0.35; }
+    & .ahead.warn { fill: var(--bar-fg-warn); opacity: 0.12; }
+    & .limit { stroke: var(--bar-fg-warn); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.6; }
+    & .now { stroke: var(--fg-dim); stroke-width: 1; }
+    & .actual { fill: none; stroke: var(--bar-fg); stroke-width: 2; stroke-linejoin: round; }
+    & .assumed { fill: none; stroke: var(--bar-fg); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: 0.6; }
+    & .projection { fill: none; stroke: var(--fg-dim); stroke-width: 2; stroke-dasharray: 5 3; stroke-linejoin: round; }
+    & .projection.warn { stroke: var(--bar-fg-warn); }
+    & .end-dot { fill: var(--fg-dim); }
+    & .end-dot.warn { fill: var(--bar-fg-warn); }
+}
+
+/* Reset time and forecast summary share one row; a summary too long for it
+   wraps onto a second, right-aligned line. */
+.chart-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+
+    & > .reset-text { flex-shrink: 0; }
+}
+
+.forecast-summary {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--fg-dim);
+    text-align: right;
+}
+
 .reset-text {
     font-size: 12px;
     color: var(--fg-dim);

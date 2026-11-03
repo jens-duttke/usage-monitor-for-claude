@@ -89,8 +89,10 @@ const PRESETS = {
         usage: [
             { unit: 'hour', suffix: '5hr', pct: 42, warn: false,
               reset: { kind: 'in', duration: '2h 30m', clock: '14:30' }, dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.35 },
+            // The forecast_chart setting: a pace that runs out before the reset.
             { unit: 'week', suffix: '7 day', pct: 65, warn: true,
-              reset: { kind: 'weekday', day: 'Sat', clock: '12:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
+              reset: { kind: 'weekday', day: 'Sat', clock: '12:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55,
+              chart: { now_x: 0.55, measured_from: 0.18, actual: [[0, 0], [0.18, 21], [0.3, 33], [0.42, 51], [0.55, 65]], run_out: { x: 0.85, when: 'Thu' } } },
             { unit: 'week', suffix: 'Sonnet', pct: 30, warn: false,
               reset: { kind: 'weekday', day: 'Sat', clock: '12:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.55 },
             { unit: 'week', suffix: 'Opus', pct: 12, warn: false,
@@ -121,7 +123,9 @@ const PRESETS = {
             { unit: 'hour', suffix: '5hr', pct: 95, warn: true,
               reset: { kind: 'in', duration: '12m', clock: '12:12' }, dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.96 },
             { unit: 'week', suffix: '7 day', pct: 88, warn: true,
-              reset: { kind: 'tomorrow', clock: '08:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.80 },
+              reset: { kind: 'tomorrow', clock: '08:00' }, dividers: [0.143, 0.286, 0.429, 0.571, 0.714, 0.857], marker_rel: 0.80,
+              // A pace that stays below the limit until the reset.
+              chart: { now_x: 0.8, measured_from: 0.8, actual: [[0, 0], [0.8, 70]], at_reset: 88 } },
         ],
         extra: null,
         installations: [{ name: 'CLI', version: '2.1.69' }],
@@ -157,7 +161,8 @@ let currentPreset = 'full';
 function buildTranslations(loc) {
     return {
         title: loc.popup_title, account: loc.account, email: loc.email, plan: loc.plan,
-        usage: loc.usage, extra_usage: loc.extra_usage, claude_code: loc.claude_code, changelog: loc.changelog,
+        usage: loc.usage, extra_usage: loc.extra_usage, forecast_now: loc.forecast_now,
+        claude_code: loc.claude_code, changelog: loc.changelog,
         status_updated_s: loc.status_updated_s, status_updated: loc.status_updated,
         status_next_update: loc.status_next_update, status_refreshing: loc.status_refreshing,
         duration_hm: loc.duration_hm, duration_m: loc.duration_m, duration_s: loc.duration_s,
@@ -184,6 +189,30 @@ function localizeReset(loc, reset) {
     return '';
 }
 
+// Build a forecast payload (see forecast.usage_forecast) from a semantic preset.
+function resolveForecast(loc, preset) {
+    if (!preset) return null;
+    const [nowX, pct] = preset.actual[preset.actual.length - 1];
+    const end = preset.run_out ? [preset.run_out.x, 100] : [1, preset.at_reset];
+    const projection = [];
+    for (let step = 0; step <= 20; step++) {
+        const share = step / 20;
+        projection.push([nowX + (end[0] - nowX) * share, pct + (end[1] - pct) * share]);
+    }
+    const summary = preset.run_out
+        ? loc.forecast_runs_out.replace('{when}', preset.run_out.when)
+        : loc.forecast_at_reset.replace('{pct}', preset.at_reset);
+    return {
+        actual: preset.actual,
+        measured_from: preset.measured_from,
+        now_x: preset.now_x,
+        ticks: [1, 2, 3, 4, 5, 6].map((day) => ({ x: day / 7 - 0.05, label: loc.weekdays[(day + 3) % 7] })),
+        projection,
+        runs_out: !!preset.run_out,
+        summary,
+    };
+}
+
 // Build the data snapshot popup.js consumes from a preset + the active locale.
 function resolveData(name, loc) {
     const preset = PRESETS[name];
@@ -197,6 +226,7 @@ function resolveData(name, loc) {
         reset_text: localizeReset(loc, entry.reset),
         dividers: entry.dividers,
         marker_rel: entry.marker_rel,
+        chart: resolveForecast(loc, entry.chart),
     }));
 
     const extra = preset.extra ? {
