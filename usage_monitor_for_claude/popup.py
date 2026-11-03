@@ -31,7 +31,7 @@ from .formatting import (
 from .i18n import T
 from .platforms.popup import REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
 from .settings import (
-    BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, ICON_FIELDS, POPUP_FIELDS,
+    BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, FORECAST_CHART, ICON_FIELDS, POPUP_FIELDS,
 )
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
@@ -99,6 +99,10 @@ def _snapshot_to_dict(
     # Usage bars
     usage = []
     if snap.usage:
+        # The quota the tray icon shows as its number can be drawn as a chart;
+        # an entry without a forecast (no period, no reset window) keeps its bar.
+        chart_field = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, snap.usage)[0][0] if FORECAST_CHART else None
+        now = datetime.now(timezone.utc)
         for label, entry, period, field in _usage_entries(snap.usage):
             if not entry or entry.get('utilization') is None:
                 continue
@@ -117,13 +121,8 @@ def _snapshot_to_dict(
                 'reset_text': time_until(resets_at) if resets_at else '',
                 'dividers': divider_positions(resets_at, period, field=field) if period else [],
                 'marker_rel': marker_rel,
+                'chart': usage_forecast(field, snap.usage, snap.history, now) if field == chart_field else None,
             })
-
-    # Forecast - for the quota the tray icon shows as its number
-    forecast = None
-    if snap.usage:
-        forecast_field = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, snap.usage)[0][0]
-        forecast = usage_forecast(forecast_field, snap.usage, snap.history, datetime.now(timezone.utc))
 
     # Extra usage
     extra = None
@@ -182,7 +181,6 @@ def _snapshot_to_dict(
     return {
         'profile': profile,
         'usage': usage,
-        'forecast': forecast,
         'extra': extra,
         'installations': installations,
         'status': status,
@@ -198,7 +196,7 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
         },
         't': {
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
-            'usage': T['usage'], 'extra_usage': T['extra_usage'], 'forecast': T['forecast'], 'forecast_now': T['forecast_now'],
+            'usage': T['usage'], 'extra_usage': T['extra_usage'], 'forecast_now': T['forecast_now'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],

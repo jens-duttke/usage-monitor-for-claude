@@ -409,6 +409,17 @@ class UsageCache:
                 error += f'\n{server_msg}'
             self._last_error = error
 
+    def restart_history(self) -> None:
+        """Start the reading log over from the latest reading, after an account switch.
+
+        Readings of the previous account must not continue into the new
+        account's curve.  A similar reset time and an equal or higher
+        utilization look like the same window to ``record_samples()``.
+        """
+        with self._state_lock:
+            self._history = record_samples({}, self._usage, self._last_success_time or time.time())
+            self._version += 1
+
     def _record_success(self, data: dict[str, Any], token: str | None) -> None:
         """Apply common state updates after a successful API response.
 

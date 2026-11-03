@@ -5,7 +5,6 @@ let textTimerId = null;
 let popupPinned = false;
 let compactHide = [];
 let lastData = null;
-let lastForecast = null;
 
 /**
  * Set CSS custom properties for theme colors and inject translation strings.
@@ -29,7 +28,6 @@ function init(config) {
     document.getElementById('labelPlan').textContent = translations.plan;
     document.getElementById('headingUsage').textContent = translations.usage;
     document.getElementById('headingExtraUsage').textContent = translations.extra_usage;
-    document.getElementById('headingForecast').textContent = translations.forecast;
     document.getElementById('headingClaudeCode').textContent = translations.claude_code;
 
     const changelogLink = document.getElementById('changelogLink');
@@ -50,10 +48,6 @@ function init(config) {
         usageSection: document.getElementById('usageSection'),
         headingUsage: document.getElementById('headingUsage'),
         usageBars: document.getElementById('usageBars'),
-        forecastSection: document.getElementById('forecastSection'),
-        forecastLabel: document.getElementById('forecastLabel'),
-        forecastChart: document.getElementById('forecastChart'),
-        forecastSummary: document.getElementById('forecastSummary'),
         extraSection: document.getElementById('extraSection'),
         extraSpent: document.getElementById('extraSpent'),
         extraPct: document.getElementById('extraPct'),
@@ -65,13 +59,6 @@ function init(config) {
         statusSection: document.getElementById('statusSection'),
         statusText: document.getElementById('statusText'),
     };
-
-    // The chart is drawn in CSS pixels, so redraw it whenever its width settles or changes.
-    new ResizeObserver(() => {
-        if (lastForecast && els.forecastSection.classList.contains('visible')) {
-            updateForecast(lastForecast);
-        }
-    }).observe(els.forecastChart);
 
     updateData(config.data);
     requestAnimationFrame(() => document.body.classList.add('open'));
@@ -194,12 +181,6 @@ function updateData(data) {
         updateUsageBars(usage);
     }
 
-    const forecastVisible = !!data.forecast && !compactHidden('forecast');
-    els.forecastSection.classList.toggle('visible', forecastVisible);
-    if (forecastVisible) {
-        updateForecast(data.forecast);
-    }
-
     const hasExtra = !!data.extra;
     const extraVisible = hasExtra && !compactHidden('extra_usage');
     els.extraSection.classList.toggle('visible', extraVisible);
@@ -219,7 +200,7 @@ function updateData(data) {
 
     // The "Usage" heading only labels the bars against the other sections;
     // when the usage bars stand alone, drop the now-redundant heading.
-    els.headingUsage.style.display = (hasUsage && !accountVisible && !forecastVisible && !extraVisible && !installsVisible) ? 'none' : '';
+    els.headingUsage.style.display = (hasUsage && !accountVisible && !extraVisible && !installsVisible) ? 'none' : '';
 
     if (hasInstalls) {
         els.installRows.replaceChildren(...data.installations.map((inst) => {
@@ -290,7 +271,6 @@ function tickStatusText() {
     const isStale = !!statusState.nextPollTime && (now > statusState.nextPollTime + 30);
     els.usageSection.classList.toggle('stale', isStale);
     els.extraSection.classList.toggle('stale', isStale);
-    els.forecastSection.classList.toggle('stale', isStale);
 
     const parts = [formatDuration(secondsAgo)];
 
@@ -355,28 +335,30 @@ function updateUsageBars(entries) {
     // an in-place update would show the new values under the old labels.
     const bars = els.usageBars.children;
     const sameFields = entries.length === bars.length
-        && entries.every((entry, i) => bars[i].dataset.key === entry.key);
+        && entries.every((entry, i) => bars[i].dataset.key === entry.key && bars[i].classList.contains('chart-entry') === !!entry.chart);
 
     if (!sameFields) {
-        els.usageBars.replaceChildren(...entries.map(createBarElement));
+        els.usageBars.replaceChildren(...entries.map((entry) => (entry.chart ? createChartElement(entry) : createBarElement(entry))));
         requestAnimationFrame(() => {
             for (let i = 0; i < entries.length; i++) {
-                els.usageBars.children[i].querySelector('.bar-fill').style.width =
-                    `${entries[i].fill_pct * 100}%`;
+                const fill = els.usageBars.children[i].querySelector('.bar-fill');
+                if (fill) {
+                    fill.style.width = `${entries[i].fill_pct * 100}%`;
+                }
             }
         });
     } else {
         for (let i = 0; i < entries.length; i++) {
-            updateBarElement(els.usageBars.children[i], entries[i]);
+            if (entries[i].chart) {
+                updateChartElement(els.usageBars.children[i], entries[i]);
+            } else {
+                updateBarElement(els.usageBars.children[i], entries[i]);
+            }
         }
     }
 }
 
-function createBarElement(entry) {
-    const div = document.createElement('div');
-    div.className = 'usage-entry';
-    div.dataset.key = entry.key;
-
+function createEntryHeader(entry) {
     const header = document.createElement('div');
     header.className = 'bar-header';
     const label = document.createElement('span');
@@ -385,6 +367,16 @@ function createBarElement(entry) {
     pct.className = 'bar-pct';
     pct.textContent = entry.pct_text;
     header.append(label, pct);
+
+    return header;
+}
+
+function createBarElement(entry) {
+    const div = document.createElement('div');
+    div.className = 'usage-entry';
+    div.dataset.key = entry.key;
+
+    const header = createEntryHeader(entry);
 
     const container = document.createElement('div');
     container.className = 'bar-container';
@@ -472,23 +464,53 @@ function svgElement(tag, attributes) {
 }
 
 /**
+ * Create a usage entry that shows a forecast chart in place of the bar.
+ *
+ * @param {object} entry - Usage entry whose `chart` is the payload from forecast.usage_forecast().
+ */
+function createChartElement(entry) {
+    const div = document.createElement('div');
+    div.className = 'usage-entry chart-entry';
+    div.dataset.key = entry.key;
+
+    const chart = svgElement('svg', { class: 'forecast-chart', 'aria-hidden': 'true' });
+    const footer = document.createElement('div');
+    footer.className = 'chart-footer';
+    const reset = document.createElement('span');
+    reset.className = 'reset-text';
+    const summary = document.createElement('span');
+    summary.className = 'forecast-summary';
+    footer.append(reset, summary);
+    div.append(createEntryHeader(entry), chart, footer);
+
+    // The chart is drawn in CSS pixels, so redraw it whenever its width settles or changes.
+    new ResizeObserver(() => drawChart(chart, div.chartData)).observe(chart);
+
+    updateChartElement(div, entry);
+
+    return div;
+}
+
+function updateChartElement(div, entry) {
+    div.chartData = entry.chart;
+    div.querySelector('.bar-pct').textContent = entry.pct_text;
+    div.querySelector('.reset-text').textContent = entry.reset_text;
+    div.querySelector('.forecast-summary').textContent = entry.chart.summary;
+    drawChart(div.querySelector('.forecast-chart'), entry.chart);
+}
+
+/**
  * Draw the forecast chart: x is the wall-clock share of the quota window,
  * y the utilization.  The line is measured from the first reading this
  * session saw (dotted before it, where only the 0% window start is known);
  * the dashed line projects the current pace to the reset or to 100%.
  *
+ * @param {SVGElement} svg - Chart element to draw into.
  * @param {object} forecast - Payload from forecast.usage_forecast().
  */
-function updateForecast(forecast) {
-    lastForecast = forecast;
-    els.forecastLabel.textContent = forecast.label;
-    els.forecastSummary.textContent = forecast.summary;
-    els.forecastSummary.style.display = forecast.summary ? '' : 'none';
-    els.forecastSummary.classList.toggle('warn', forecast.runs_out);
-
-    const svg = els.forecastChart;
+function drawChart(svg, forecast) {
     const width = svg.clientWidth || 308;
-    const height = svg.clientHeight || 112;
+    const height = svg.clientHeight || 80;
     const left = 30;
     const top = 4;
     const bottom = height - 16;

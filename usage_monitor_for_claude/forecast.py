@@ -15,9 +15,9 @@ hours.  Nothing here is persisted: the log starts empty on every launch.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
-from .formatting import _format_clock, divider_positions, elapsed_fraction, field_period, is_active_quota, popup_label
+from .formatting import divider_positions, elapsed_fraction, field_period, format_clock, is_active_quota
 from .i18n import T
 from .settings import TIME_FORMAT
 
@@ -70,8 +70,14 @@ def record_samples(history: dict[str, dict[str, Any]], usage: dict[str, Any], no
         if field == 'extra_usage' or not is_active_quota(field, entry) or not entry.get('resets_at'):
             continue
 
+        # The response reaches this function unguarded from the poll loop, so a
+        # changed value type must skip the reading instead of raising.
+        utilization = entry.get('utilization')
+        if not isinstance(utilization, (int, float)):
+            continue
+
         resets_at = entry['resets_at']
-        pct = float(entry.get('utilization') or 0)
+        pct = float(utilization)
         previous = history.get(field)
         samples: tuple[tuple[float, float], ...] = ()
         if previous and _same_window(previous['resets_at'], resets_at) and pct >= previous['samples'][-1][1]:
@@ -93,7 +99,9 @@ def usage_forecast(field: str, usage: dict[str, Any], history: dict[str, dict[st
     The pace is the average over the window so far: the current utilization
     divided by the elapsed share of the window.  Projected forward on the
     same scale, it gives the utilization at reset, or - when it would pass
-    100% first - the instant the quota runs out.
+    100% first - the time the quota runs out.  Usage comes in bursts, so the
+    summary states this as an approximation at the current pace; an exhausted
+    quota has nothing left to project and gets no summary.
 
     Parameters
     ----------
@@ -146,8 +154,6 @@ def usage_forecast(field: str, usage: dict[str, Any], history: dict[str, dict[st
     measured.append([now_x, min(100.0, pct)])
 
     forecast: dict[str, Any] = {
-        'key': field,
-        'label': popup_label(field),
         'actual': [[0.0, 0.0]] + measured,
         # Before the first logged reading only the window start (0%) is known.
         'measured_from': measured[0][0],
@@ -162,12 +168,12 @@ def usage_forecast(field: str, usage: dict[str, Any], history: dict[str, dict[st
     if elapsed_now < _MIN_ELAPSED_FRACTION:
         return forecast
 
-    rate = pct / elapsed_now
-    end = reset
     if pct >= 100:
-        end = now
-    elif rate > 100:
-        end = _run_out_time(fraction_at, 100 / rate, now, reset)
+        forecast['runs_out'] = True
+        return forecast
+
+    rate = pct / elapsed_now
+    end = _run_out_time(fraction_at, 100 / rate, now, reset) if rate > 100 else reset
 
     projection = []
     span = (end - now).total_seconds()
@@ -178,11 +184,7 @@ def usage_forecast(field: str, usage: dict[str, Any], history: dict[str, dict[st
     forecast['projection'] = projection
     forecast['runs_out'] = end < reset
     if end < reset:
-        forecast['summary'] = T['forecast_runs_out'].format(
-            day=T['weekdays'][end.astimezone().weekday()],
-            clock=_format_clock(end.astimezone(), TIME_FORMAT == '24h'),
-            lead=_format_lead(reset - end),
-        )
+        forecast['summary'] = T['forecast_runs_out'].format(when=_approximate_time(end, period))
     else:
         forecast['summary'] = T['forecast_at_reset'].format(pct=f'{min(100.0, rate):.0f}')
 
@@ -198,7 +200,7 @@ def _same_window(previous_reset: str, reset: str) -> bool:
         return False
 
 
-def _run_out_time(fraction_at: Any, target: float, now: datetime, reset: datetime) -> datetime:
+def _run_out_time(fraction_at: Callable[[datetime], float], target: float, now: datetime, reset: datetime) -> datetime:
     """Find the first instant between *now* and *reset* whose elapsed share reaches *target*.
 
     The elapsed share never decreases over time, so bisection converges;
@@ -230,13 +232,12 @@ def _ticks(start: datetime, reset: datetime, period: int) -> list[dict[str, Any]
     return ticks
 
 
-def _format_lead(lead: timedelta) -> str:
-    """Format the time between running out and the reset, e.g. '1d 4h', '3h 20m' or '45m'."""
-    total_min = max(0, int(lead.total_seconds() // 60))
-    days, hours, minutes = total_min // 1440, total_min // 60 % 24, total_min % 60
-    if days:
-        return T['duration_dh'].format(d=days, h=hours)
-    if hours:
-        return T['duration_hm'].format(h=hours, m=minutes)
+def _approximate_time(when: datetime, period: int) -> str:
+    """Format a projected instant no finer than the projection deserves: the weekday, or the nearest hour within a session."""
+    local = when.astimezone()
+    if period >= 24 * 3600:
+        return T['weekdays'][local.weekday()]
 
-    return T['duration_m'].format(m=minutes)
+    nearest_hour = (local + timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
+
+    return format_clock(nearest_hour, TIME_FORMAT == '24h')

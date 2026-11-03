@@ -199,6 +199,28 @@ class TestSuccessState(unittest.TestCase):
         self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [10.0, 12.0])
         self.assertEqual([pct for _, pct in first.history['seven_day']['samples']], [10.0])
 
+    def test_restart_history_keeps_only_the_latest_reading(self):
+        """After an account switch the log holds only the new account's first reading."""
+        cache = _make_cache()
+        resets_at = '2026-11-05T19:00:00+00:00'
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 10.0, 'resets_at': resets_at}}):
+            cache.update()
+        cache._last_success_time = 0  # lift the cooldown for the second fetch
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 60.0, 'resets_at': resets_at}}):
+            cache.update()
+        version_before = cache.snapshot.version
+
+        cache.restart_history()
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [60.0])
+        self.assertGreater(cache.snapshot.version, version_before)
+
+    def test_restart_history_without_data(self):
+        """Restarting before the first successful fetch leaves an empty log."""
+        cache = _make_cache()
+        cache.restart_history()
+        self.assertEqual(cache.snapshot.history, {})
+
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
     def test_error_leaves_history_unchanged(self, _mock):
         cache = _make_cache()

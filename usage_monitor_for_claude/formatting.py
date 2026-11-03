@@ -18,7 +18,7 @@ from .settings import (
 )
 
 __all__ = [
-    'divider_positions', 'elapsed_fraction', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'fit_tooltip', 'format_credits',
+    'divider_positions', 'elapsed_fraction', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'fit_tooltip', 'format_clock', 'format_credits',
     'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'resolve_icon_fields', 'time_until', 'tooltip_label',
 ]
 
@@ -508,7 +508,7 @@ def divider_positions(resets_at: str, period_seconds: int, field: str | None = N
         return []
 
 
-def _format_clock(when: datetime, clock_24h: bool) -> str:
+def format_clock(when: datetime, clock_24h: bool) -> str:
     """Format a local time as a 24-hour ('14:30') or 12-hour ('2:30 PM') clock string."""
     if clock_24h:
         return when.strftime('%H:%M')
@@ -556,7 +556,7 @@ def time_until(iso_str: str, clock_24h: bool | None = None) -> str:
         else:
             reset_local = reset_local.replace(second=0)
         reset_date = reset_local.date()
-        time_str = _format_clock(reset_local, clock_24h)
+        time_str = format_clock(reset_local, clock_24h)
 
         if reset_date == today:
             if total_min >= 60:

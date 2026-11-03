@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from usage_monitor_for_claude.forecast import MAX_SAMPLES, record_samples, usage_forecast
-from usage_monitor_for_claude.formatting import _format_clock
+from usage_monitor_for_claude.formatting import format_clock
 from usage_monitor_for_claude.i18n import T
 from usage_monitor_for_claude.settings import TIME_FORMAT
 
@@ -95,6 +95,17 @@ class TestRecordSamples(unittest.TestCase):
         history = record_samples({}, {'seven_day': _weekly(10.0)}, 100.0)
         self.assertEqual(record_samples(history, {'five_hour': None}, 200.0), {})
 
+    def test_changed_value_type_is_skipped(self):
+        """A utilization of an unexpected type must not raise into the poll loop."""
+        usage = {'seven_day': {'utilization': 'high', 'resets_at': RESET_ISO}, 'seven_day_sonnet': _weekly(10.0)}
+        self.assertEqual(list(record_samples({}, usage, 100.0)), ['seven_day_sonnet'])
+
+    def test_unparseable_reset_starts_over(self):
+        """A reset time that cannot be compared counts as a new window."""
+        history = record_samples({}, {'seven_day': _weekly(10.0)}, 100.0)
+        history = record_samples(history, {'seven_day': _weekly(20.0, 'not a date')}, 200.0)
+        self.assertEqual(history['seven_day']['samples'], ((200.0, 20.0),))
+
     def test_input_history_not_modified(self):
         """The previous history is left untouched, so existing snapshots stay valid."""
         history = record_samples({}, {'seven_day': _weekly(10.0)}, 100.0)
@@ -120,20 +131,27 @@ class TestUsageForecast(unittest.TestCase):
     """Tests for usage_forecast()."""
 
     def test_runs_out_before_reset(self):
-        """50% after a quarter of the window runs out halfway, 3.5 days before the reset."""
-        now = _at(1.75)
-        forecast = usage_forecast('seven_day', {'seven_day': _weekly(50.0)}, {}, now)
+        """50% after a quarter of the window runs out halfway; the weekly summary names only the day."""
+        forecast = usage_forecast('seven_day', {'seven_day': _weekly(50.0)}, {}, _at(1.75))
 
         self.assertTrue(forecast['runs_out'])
         end_x, end_y = forecast['projection'][-1]
         self.assertAlmostEqual(end_x, 0.5, places=4)
         self.assertAlmostEqual(end_y, 100.0, places=2)
-        run_out = _at(3.5).astimezone()
-        expected = T['forecast_runs_out'].format(
-            day=T['weekdays'][run_out.weekday()], clock=_format_clock(run_out, TIME_FORMAT == '24h'),
-            lead=T['duration_dh'].format(d=3, h=12),
-        )
-        self.assertEqual(forecast['summary'], expected)
+        day = T['weekdays'][_at(3.5).astimezone().weekday()]
+        self.assertEqual(forecast['summary'], T['forecast_runs_out'].format(when=day))
+
+    def test_session_run_out_rounded_to_the_hour(self):
+        """A session runs out at about an hour, never to the minute."""
+        reset = datetime(2026, 11, 1, 15, 0, tzinfo=timezone.utc)
+        usage = {'five_hour': {'utilization': 90.0, 'resets_at': reset.isoformat()}}
+        forecast = usage_forecast('five_hour', usage, {}, reset - timedelta(hours=2))
+
+        self.assertTrue(forecast['runs_out'])
+        run_out = (reset - timedelta(hours=5) + timedelta(hours=10 / 3)).astimezone()
+        nearest_hour = (run_out + timedelta(minutes=30)).replace(minute=0, second=0, microsecond=0)
+        self.assertEqual(forecast['summary'], T['forecast_runs_out'].format(when=format_clock(nearest_hour, TIME_FORMAT == '24h')))
+        self.assertIn(':00', forecast['summary'])
 
     def test_stays_below_limit(self):
         """20% at half the window projects 40% at the reset."""
@@ -151,11 +169,12 @@ class TestUsageForecast(unittest.TestCase):
         self.assertEqual(forecast['projection'][0], [0.5, 20.0])
         self.assertEqual(forecast['now_x'], 0.5)
 
-    def test_exhausted_quota_runs_out_now(self):
-        """A quota already at 100% is reported as run out, with the time left to the reset."""
+    def test_exhausted_quota_has_no_projection(self):
+        """A quota already at 100% is marked as run out, with nothing left to project or predict."""
         forecast = usage_forecast('seven_day', {'seven_day': _weekly(100.0)}, {}, _at(6.0))
         self.assertTrue(forecast['runs_out'])
-        self.assertIn(T['duration_dh'].format(d=1, h=0), forecast['summary'])
+        self.assertEqual(forecast['projection'], [])
+        self.assertEqual(forecast['summary'], '')
 
     def test_too_early_has_no_projection(self):
         """Right after a reset the pace is not projected."""
@@ -240,11 +259,6 @@ class TestUsageForecast(unittest.TestCase):
         usage = {'five_hour': {'utilization': 30.0, 'resets_at': reset.isoformat()}}
         forecast = usage_forecast('five_hour', usage, {}, reset - timedelta(hours=2))
         self.assertEqual([tick['label'] for tick in forecast['ticks']], ['', '', '', ''])
-
-    def test_label_from_field_name(self):
-        forecast = usage_forecast('seven_day', {'seven_day': _weekly(20.0)}, {}, _at(3.5))
-        self.assertEqual(forecast['key'], 'seven_day')
-        self.assertTrue(forecast['label'])
 
     def test_none_without_period(self):
         """A code-named quota has no known period to forecast over."""

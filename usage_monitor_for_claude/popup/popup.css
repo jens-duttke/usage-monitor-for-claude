@@ -184,12 +184,13 @@ dl > div {
     }
 }
 
-/* Forecast chart: measured usage, the projected pace to the reset, and the
-   shaded stretch still ahead.  Geometry is set in popup.js in CSS pixels. */
-#forecastChart {
+/* Forecast chart in place of a usage bar: measured usage, the projected pace
+   to the reset, and the shaded stretch still ahead.  Geometry is set in
+   popup.js in CSS pixels. */
+.forecast-chart {
     display: block;
     width: 100%;
-    height: 112px;
+    height: 80px;
     overflow: visible;
 
     & .grid { stroke: var(--bar-bg); stroke-width: 1; }
@@ -206,19 +207,22 @@ dl > div {
     & .end-dot.warn { fill: var(--bar-fg-warn); }
 }
 
-/* The summary shares the heading row; a translation too long for it wraps
-   onto a second, right-aligned line instead of being cut off. */
-#forecastSection > .heading-row > h2 { flex-shrink: 0; }
+/* Reset time and forecast summary share one row; a summary too long for it
+   wraps onto a second, right-aligned line. */
+.chart-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
 
-.heading-row > .forecast-summary {
-    min-width: 0;
-    margin-left: 12px;
-    text-align: right;
+    & > .reset-text { flex-shrink: 0; }
+}
+
+.forecast-summary {
+    margin-left: auto;
+    font-size: 12px;
     color: var(--fg-dim);
-    text-decoration: none;
-    cursor: default;
-
-    &.warn { color: var(--bar-fg-warn); font-weight: 600; }
+    text-align: right;
 }
 
 .reset-text {
