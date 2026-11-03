@@ -22,10 +22,8 @@ from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.app import UsageMonitorForClaude
 from usage_monitor_for_claude.cache import CacheSnapshot
-from usage_monitor_for_claude.mcp_server import (
-    _LISTEN_ATTEMPTS, MAX_MESSAGE_BYTES, LineReader, _serve, _serve_connection, expects_answer, handle_line, mcp_channel_name,
-    start_mcp_server, usage_report,
-)
+from usage_monitor_for_claude.mcp_channel import MAX_MESSAGE_BYTES, LineReader, expects_answer, mcp_channel_name
+from usage_monitor_for_claude.mcp_server import _LISTEN_ATTEMPTS, _serve, _serve_connection, handle_line, start_mcp_server, usage_report
 
 _REAL_CHANNEL_AVAILABLE = sys.platform == 'win32' or hasattr(socket, 'AF_UNIX')
 _META = {
@@ -164,6 +162,14 @@ class TestUsageReport(unittest.TestCase):
             self.assertEqual(round(quota['used_percent'] + quota['remaining_percent'], 1), 100.0, used_percent)
             self.assertLessEqual(len(repr(quota['remaining_percent']).split('.')[-1]), 1, used_percent)
 
+    def test_nothing_remains_above_100(self):
+        """Utilization can exceed 100; remaining_percent stays at 0 instead of going negative."""
+        for used_percent in (100.0, 100.05, 100.1, 103.7, 250):
+            with self.subTest(used_percent=used_percent):
+                quota = usage_report(_snapshot({'five_hour': {'utilization': used_percent, 'resets_at': _resets_in(hours=1)}}))['quotas'][0]
+                self.assertEqual(quota['used_percent'], round(used_percent, 1))
+                self.assertEqual(quota['remaining_percent'], 0.0)
+
     def test_reset_time_is_local_and_whole_seconds(self):
         """The API sends UTC with microseconds; the model gets the user's clock time without them."""
         quota = usage_report(_snapshot({'five_hour': {'utilization': 1.0, 'resets_at': '2026-11-02T10:20:00.339983+00:00'}}))['quotas'][0]
@@ -278,7 +284,8 @@ class TestHandleLine(unittest.TestCase):
     """Tests for the answers to the messages a client of revision 2026-07-28 sends."""
 
     def setUp(self):
-        self.read_snapshot = MagicMock(return_value=_snapshot({'five_hour': {'utilization': 12.0, 'resets_at': _resets_in(hours=1)}}, last_success_time=time.time()))
+        usage = {'five_hour': {'utilization': 12.0, 'resets_at': _resets_in(hours=1)}}
+        self.read_snapshot = MagicMock(return_value=_snapshot(usage, last_success_time=time.time()))
 
     def _ask(self, method: str, params: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         answer = handle_line(_request(method, params, **kwargs), self.read_snapshot)
@@ -423,7 +430,7 @@ class TestHandleLine(unittest.TestCase):
         """A bug in the report must not reach the client as a traceback."""
         self.read_snapshot.side_effect = RuntimeError('boom')
 
-        with self.assertLogs('usage_monitor_for_claude.mcp_server', level='ERROR'):
+        with self.assertLogs('usage_monitor_for_claude.mcp_protocol', level='ERROR'):
             answer = self._ask('tools/call', {'name': 'get_usage'})
 
         self.assertEqual(answer['error']['code'], -32603)
@@ -499,7 +506,8 @@ class TestHandshakeRevisions(unittest.TestCase):
     """Tests for clients of the revisions before 2026-07-28, which open with initialize."""
 
     def setUp(self):
-        self.read_snapshot = MagicMock(return_value=_snapshot({'five_hour': {'utilization': 12.0, 'resets_at': _resets_in(hours=1)}}, last_success_time=time.time()))
+        usage = {'five_hour': {'utilization': 12.0, 'resets_at': _resets_in(hours=1)}}
+        self.read_snapshot = MagicMock(return_value=_snapshot(usage, last_success_time=time.time()))
 
     def _ask(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         answer = handle_line(_handshake_request(method, params), self.read_snapshot)
@@ -726,9 +734,9 @@ class TestServe(unittest.TestCase):
 
     def test_each_account_gets_its_own_channel(self):
         """A --config-dir instance serves its own account, so it must not share the default one's channel."""
-        with patch('usage_monitor_for_claude.mcp_server.config_dir_suffix', return_value=''):
+        with patch('usage_monitor_for_claude.mcp_channel.config_dir_suffix', return_value=''):
             default = mcp_channel_name()
-        with patch('usage_monitor_for_claude.mcp_server.config_dir_suffix', return_value='_0123456789ab'):
+        with patch('usage_monitor_for_claude.mcp_channel.config_dir_suffix', return_value='_0123456789ab'):
             secondary = mcp_channel_name()
 
         self.assertEqual(default, 'usage-monitor-for-claude-mcp')
@@ -755,24 +763,39 @@ class TestRealChannel(unittest.TestCase):
 
 
 class TestAppWiring(unittest.TestCase):
-    """Every instance serves its own account's channel."""
+    """The server runs only when the mcp_server setting turns it on, and then every instance serves its own account's channel."""
+
+    def _start_app(self, mcp_server: bool, is_default: bool = True) -> tuple[UsageMonitorForClaude, MagicMock]:
+        """Run the tray-ready startup of an application and return it with the mocked server start."""
+        with patch('usage_monitor_for_claude.app.pystray'), \
+             patch('usage_monitor_for_claude.app.create_icon_image'), \
+             patch('usage_monitor_for_claude.app.taskbar_uses_light_theme', return_value=False), \
+             patch('usage_monitor_for_claude.app.install_tray_activate_handler'), \
+             patch('usage_monitor_for_claude.app.is_default_config_dir', return_value=is_default):
+            app = UsageMonitorForClaude()
+
+        with patch('usage_monitor_for_claude.app.MCP_SERVER', mcp_server), \
+             patch('usage_monitor_for_claude.app.autostart_supported', return_value=False), \
+             patch('usage_monitor_for_claude.app.api_headers', return_value={'x': 'y'}), \
+             patch('usage_monitor_for_claude.app.threading.Thread'), \
+             patch('usage_monitor_for_claude.app.start_mcp_server') as mock_start, \
+             patch.object(app, 'poll_loop'):
+            app._on_icon_ready(MagicMock())
+
+        return app, mock_start
+
+    def test_no_listener_while_the_setting_is_off(self):
+        """An installation that never registered --mcp opens no IPC endpoint."""
+        for is_default in (True, False):
+            with self.subTest(is_default=is_default):
+                _, mock_start = self._start_app(mcp_server=False, is_default=is_default)
+
+                mock_start.assert_not_called()
 
     def test_default_and_secondary_instances_both_serve(self):
         for is_default in (True, False):
             with self.subTest(is_default=is_default):
-                with patch('usage_monitor_for_claude.app.pystray'), \
-                     patch('usage_monitor_for_claude.app.create_icon_image'), \
-                     patch('usage_monitor_for_claude.app.taskbar_uses_light_theme', return_value=False), \
-                     patch('usage_monitor_for_claude.app.install_tray_activate_handler'), \
-                     patch('usage_monitor_for_claude.app.is_default_config_dir', return_value=is_default):
-                    app = UsageMonitorForClaude()
-
-                with patch('usage_monitor_for_claude.app.autostart_supported', return_value=False), \
-                     patch('usage_monitor_for_claude.app.api_headers', return_value={'x': 'y'}), \
-                     patch('usage_monitor_for_claude.app.threading.Thread'), \
-                     patch('usage_monitor_for_claude.app.start_mcp_server') as mock_start, \
-                     patch.object(app, 'poll_loop'):
-                    app._on_icon_ready(MagicMock())
+                app, mock_start = self._start_app(mcp_server=True, is_default=is_default)
 
                 mock_start.assert_called_once()
                 self.assertEqual(mock_start.call_args.args[0](), app.cache.snapshot)

@@ -55,42 +55,6 @@ class TestNoWindowKwargs(unittest.TestCase):
         self.assertEqual(win32.no_window_kwargs(), {'creationflags': subprocess.CREATE_NO_WINDOW})
 
 
-class TestStartDetached(unittest.TestCase):
-    """Tests for starting a process that outlives the MCP bridge."""
-
-    def test_breaks_away_from_the_job_and_shares_no_stream(self):
-        import subprocess
-
-        with patch.object(win32.subprocess, 'Popen') as mock_popen:
-            win32.start_detached(['app.exe'], {'A': 'B'})
-
-        kwargs = mock_popen.call_args.kwargs
-        self.assertEqual(mock_popen.call_args.args, (['app.exe'],))
-        self.assertEqual(kwargs['env'], {'A': 'B'})
-        self.assertEqual(
-            kwargs['creationflags'], subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_BREAKAWAY_FROM_JOB,
-        )
-        self.assertEqual([kwargs[stream] for stream in ('stdin', 'stdout', 'stderr')], [subprocess.DEVNULL] * 3)
-
-    def test_starts_inside_a_job_that_forbids_breaking_away(self):
-        """CreateProcess refuses CREATE_BREAKAWAY_FROM_JOB with access denied when the job does not allow it."""
-        import subprocess
-
-        with patch.object(win32.subprocess, 'Popen', side_effect=[PermissionError(13, 'Access is denied'), MagicMock()]) as mock_popen:
-            win32.start_detached(['app.exe'], {})
-
-        self.assertEqual(mock_popen.call_count, 2)
-        self.assertEqual(mock_popen.call_args.kwargs['creationflags'], subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
-        self.assertEqual(mock_popen.call_args.kwargs['stdout'], subprocess.DEVNULL)
-
-    def test_other_errors_reach_the_caller(self):
-        with patch.object(win32.subprocess, 'Popen', side_effect=FileNotFoundError) as mock_popen:
-            with self.assertRaises(FileNotFoundError):
-                win32.start_detached(['missing.exe'], {})
-
-        mock_popen.assert_called_once()
-
-
 class TestSystemTimeFormat(unittest.TestCase):
     """Tests for locale-based 12h/24h detection."""
 

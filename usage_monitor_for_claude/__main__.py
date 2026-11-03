@@ -38,14 +38,13 @@ if _config_dir is not None:
 # --mcp turns this process into the MCP server an MCP client such as Claude
 # Desktop starts: no tray, no window, no single-instance guard, and nothing but
 # MCP messages on stdout. It passes them on to the running tray application of
-# the same --config-dir, and starts that application when it is not running,
-# so it must follow the block above and precede every console and GUI setup
-# below.
+# the same --config-dir, so it must follow the block above and precede every
+# console and GUI setup below.
 if '--mcp' in sys.argv:
-    from usage_monitor_for_claude.mcp_bridge import run_stdio_bridge, start_app_in_background
+    from usage_monitor_for_claude.mcp_bridge import run_stdio_bridge
     if sys.stdin is None or sys.stdout is None:
         sys.exit(1)
-    sys.exit(run_stdio_bridge(sys.stdin.buffer, sys.stdout.buffer, launch_app=start_app_in_background))
+    sys.exit(run_stdio_bridge(sys.stdin.buffer, sys.stdout.buffer))
 
 # In frozen builds (console=False), stdout/stderr go nowhere.
 # --verbose attaches a console so diagnostics are visible.
@@ -66,7 +65,6 @@ if _verbose:
 import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from usage_monitor_for_claude.app import UsageMonitorForClaude, crash_log
-from usage_monitor_for_claude.launch import app_command
 from usage_monitor_for_claude.platforms import register_notification_identity
 from usage_monitor_for_claude.platforms.instance import ensure_single_instance, release_instance_lock
 
@@ -116,7 +114,7 @@ def _run_app() -> None:
 
 try:
     _verbose_step('ensure_single_instance...')
-    if not ensure_single_instance(ask_to_replace='--exit-if-running' not in sys.argv):
+    if not ensure_single_instance():
         _verbose_step('another instance is running, exiting')
         sys.exit(0)
     _verbose_step('ensure_single_instance... OK')
@@ -142,14 +140,21 @@ try:
     if app and app.restart_requested:
         release_instance_lock()
 
-        # An MCP bridge may start an instance during the gap; the later of the two then exits without a dialog
-        passthrough_args = ['--exit-if-running']
+        passthrough_args = []
         if _config_dir is not None:
             passthrough_args.append(f'--config-dir={os.environ["CLAUDE_CONFIG_DIR"]}')
         if _verbose:
             passthrough_args.append('--verbose')
 
-        restart_command, restart_env = app_command(passthrough_args)
-        subprocess.Popen(restart_command, env=restart_env, **no_window_kwargs())
+        if getattr(sys, 'frozen', False):
+            # Clear PyInstaller's internal env vars so the new
+            # instance extracts to a fresh temp directory instead
+            # of reusing the current (soon-to-be-deleted) one.
+            env = {k: v for k, v in os.environ.items() if not k.startswith(('_PYI_', '_MEI'))}
+            subprocess.Popen([sys.executable, *passthrough_args], env=env, **no_window_kwargs())
+        else:
+            subprocess.Popen(
+                [sys.executable, '-m', 'usage_monitor_for_claude', *passthrough_args], **no_window_kwargs(),
+            )
 except Exception:
     crash_log(traceback.format_exc())

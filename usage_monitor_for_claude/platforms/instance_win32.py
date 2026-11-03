@@ -163,18 +163,12 @@ def _terminate_pid(pid: int) -> None:
     _kernel32.CloseHandle(handle)
 
 
-def ensure_single_instance(ask_to_replace: bool = True) -> bool:
+def ensure_single_instance() -> bool:
     """Ensure only one instance of the application is running.
 
     If another instance holds the mutex, shows a dialog asking the user
     whether to replace it.  The dialog title includes the running
     instance's version when available.
-
-    Parameters
-    ----------
-    ask_to_replace : bool
-        False exits without the dialog when another instance is running, for
-        a start nobody watches (the MCP bridge starting the application).
 
     Returns
     -------
@@ -199,12 +193,6 @@ def ensure_single_instance(ask_to_replace: bool = True) -> bool:
             f'Failed to create the single-instance mutex (Windows error {last_error}).',
             T['popup_title'],
         )
-        return False
-
-    if not ask_to_replace:
-        if _mutex_handle:
-            _kernel32.CloseHandle(_mutex_handle)
-        _mutex_handle = None
         return False
 
     # Another instance is running - ask the user.

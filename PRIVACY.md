@@ -14,11 +14,12 @@ data and, when extra usage is enabled for your account, your prepaid credit bala
 popup is open. No other network connections are made.
 
 The [MCP server](docs/mcp-server.md) lets Claude Code and Claude Desktop read your usage percentages and
-reset times. Claude starts the application a second time with `--mcp`, and that process asks the running
-application over a channel of the operating system that only your own user account can open: a named
-pipe on Windows, a socket file on Linux (listed below). If the application is not running, that process
-starts it first. The tool does not return your token, email address or account name. Whatever Claude
-reads becomes part of your conversation with Claude.
+reset times. It is off unless you turn it on with the `mcp_server` setting. Claude starts the application
+a second time with `--mcp`, and that process asks the running application over a channel of the
+operating system that only your own user account can open: a named pipe on Windows, a socket file on
+Linux (listed below). The application opens that channel only while the setting is on. The tool does
+not return your token, email address or account name. Whatever Claude reads becomes part of your
+conversation with Claude.
 
 The server certificate is verified against the Windows certificate store, the same store your browser
 uses. A proxy that your organization has installed with its own root certificate can therefore inspect
@@ -55,8 +56,9 @@ application changes on your system follows - there is nothing else.
   from running. It holds the process id and version, is created with owner-only permissions
   (`0600`), and lives in the session's runtime directory, which the system clears at logout.
 - `$XDG_RUNTIME_DIR/usage-monitor-for-claude-mcp.sock` - the socket of the MCP server, with
-  owner-only permissions (`0600`). Created when the application starts. It stays in the runtime
-  directory after the application quits and is replaced on the next start.
+  owner-only permissions (`0600`). Created only when the application starts with the `mcp_server`
+  setting on. It stays in the runtime directory after the application quits, until the next start
+  with the setting on replaces it or the system clears the directory at logout.
 
 Monitoring a second Claude account (`--config-dir`) adds a suffix to those names, so each account
 gets its own entry.

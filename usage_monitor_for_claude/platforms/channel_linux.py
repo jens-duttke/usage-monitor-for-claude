@@ -21,6 +21,8 @@ import socket
 import stat
 from pathlib import Path
 
+from .linux import runtime_directory
+
 __all__ = ['LocalChannelListener', 'open_local_channel']
 
 _BACKLOG = 8
@@ -35,6 +37,7 @@ class LocalChannelListener:
 
     def __init__(self, name: str) -> None:
         path = _socket_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
         _remove_stale_socket(path)
 
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -67,22 +70,7 @@ def open_local_channel(name: str) -> socket.socket:
 
 
 def _socket_path(name: str) -> Path:
-    return _runtime_directory() / f'{name}.sock'
-
-
-def _runtime_directory() -> Path:
-    """Return the per-user runtime directory, as the single-instance lock does.
-
-    ``XDG_RUNTIME_DIR`` is per-user, ``0700`` and cleared at logout.  Sessions
-    without it fall back to the user's cache directory.
-    """
-    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
-    if runtime_dir:
-        return Path(runtime_dir)
-
-    cache_dir = Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
+    return runtime_directory() / f'{name}.sock'
 
 
 def _remove_stale_socket(path: Path) -> None:

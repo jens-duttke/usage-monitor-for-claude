@@ -32,7 +32,7 @@ __all__ = [
     'CLI_COMMAND', 'COMPACT_HIDE', 'CURRENCY_SYMBOL',
     'FG', 'FG_DIM', 'FG_HEADING', 'FG_LINK',
     'ICON_DARK', 'ICON_FIELDS', 'ICON_LIGHT', 'ICON_STYLE', 'IDLE_INTERVAL', 'IDLE_PAUSE',
-    'LANGUAGE', 'MAX_BACKOFF', 'NOTIFY_CLAUDE_UPDATE',
+    'LANGUAGE', 'MAX_BACKOFF', 'MCP_SERVER', 'NOTIFY_CLAUDE_UPDATE',
     'ON_RESET_COMMAND', 'ON_STARTUP_COMMAND', 'ON_THRESHOLD_COMMAND', 'QUICK_ACTION_COMMAND',
     'POLL_ERROR', 'POLL_FAST', 'POLL_FAST_EXTRA', 'POLL_INTERVAL',
     'POPUP_FIELDS', 'SETTINGS_FILENAME', 'TIME_FORMAT', 'TOOLTIP_FIELDS',
@@ -60,7 +60,7 @@ _VALID_ICON_STYLES = frozenset({'number+bars', 'numbers'})
 _COMMAND_KEYS = frozenset({
     'quick_action_command', 'on_double_click_command', 'on_reset_command', 'on_startup_command', 'on_threshold_command',
 })
-_BOOL_KEYS = frozenset({'alert_time_aware', 'notify_claude_update'})
+_BOOL_KEYS = frozenset({'alert_time_aware', 'mcp_server', 'notify_claude_update'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields', 'compact_hide'})
 _WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
@@ -467,6 +467,10 @@ ALERT_TIME_AWARE_BELOW: float = _S.get('alert_time_aware_below', 90)
 
 # Notify when a background token refresh installs a new Claude CLI version
 NOTIFY_CLAUDE_UPDATE: bool = _S.get('notify_claude_update', True)
+
+# Serve the local channel the --mcp bridge connects to.  Off by default, so an
+# installation that never registered the MCP server opens no IPC endpoint.
+MCP_SERVER: bool = _S.get('mcp_server', False)
 
 # Currency
 

@@ -7,8 +7,9 @@ a Unix domain socket on Linux.  Both give the same interface - a listener
 whose ``accept()`` returns a connection with ``recv``, ``sendall`` and
 ``close`` - and both are reachable only by the current user.
 
-Kept out of :mod:`usage_monitor_for_claude.platforms` because the ``--mcp``
-bridge process needs only this, not the tray and window helpers.
+Kept out of :mod:`usage_monitor_for_claude.platforms` because it is the only
+IPC endpoint the application opens: in files of its own it can be audited on
+its own, and only the MCP server and the ``--mcp`` bridge import it.
 """
 from __future__ import annotations
 

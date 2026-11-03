@@ -6,33 +6,46 @@ The MCP server an MCP client starts: ``UsageMonitorForClaude.exe --mcp``.
 
 It passes each line the client writes to stdin on to the running tray
 application over the local channel, and writes the answer to stdout.  It
-holds no data, decides no protocol rule and never contacts the API - the
-tray application stays the only API client and answers every message itself.
-When the application is not running, the bridge starts it.
+holds no data and never contacts the API - the tray application stays the
+only API client and answers every message it can be reached for.
+
+When the application cannot be reached, the bridge answers the message itself
+through ``mcp_protocol.py``, the same code the application answers with: the
+handshake and the tool list succeed, and a ``get_usage`` call returns a tool
+error that says the application is not running.  An MCP client marks a server
+that fails its handshake as broken for the rest of the session, so an
+application started after Claude would otherwise stay out of reach until the
+user reconnects the server by hand.
+
+It never starts the application.  An application started from here would
+inherit the environment of the Claude session for its whole lifetime -
+``CLAUDECODE``, the session id and a messaging token among it - and hand it
+to every event command it runs.
+
+It never imports ``settings`` or ``api.py``: Claude starts this process
+without a window, and a settings dialog would block it before it reads its
+first message.
 """
 from __future__ import annotations
 
-import json
-import time
-from typing import Any, BinaryIO, Callable
+from typing import Any, BinaryIO
 
-from .launch import app_command
-from .mcp_server import Connection, LineReader, expects_answer, mcp_channel_name
-from .platforms import start_detached
+from .mcp_channel import Connection, LineReader, expects_answer, mcp_channel_name
+from .mcp_protocol import encode, handle_line, tool_result
 from .platforms.channel import open_local_channel
 
-__all__ = ['run_stdio_bridge', 'start_app_in_background']
+__all__ = ['run_stdio_bridge']
 
-_INTERNAL_ERROR = -32603
+_NOT_REACHABLE_MESSAGE = (
+    'Usage Monitor for Claude could not be reached. Do not show this message as is. '
+    'Tell the user, in their language, that it is one of the two: '
+    'the app is not running (start it), or the MCP server is turned off '
+    '(set "mcp_server": true in usage-monitor-settings.json and restart the app). '
+    'Suggest only these two steps.'
+)
 
-# The longest a request waits for the application to open its channel: a
-# frozen build unpacks itself and starts its GUI first.  The wait ends as soon
-# as the channel answers.
-_APP_WAIT_SECONDS = 30.0
-_APP_POLL_SECONDS = 0.25
 
-
-def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None = None, launch_app: Callable[[], None] | None = None) -> int:
+def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None = None) -> int:
     """Pass messages between the client's stdio and the tray application until the client closes stdin.
 
     Messages are forwarded one at a time, each answer before the next
@@ -40,12 +53,11 @@ def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None
     for synchronous use serializes a read and a write from two threads
     anyway.
 
-    A request that finds no application starts it through ``launch_app`` and
-    waits up to ``_APP_WAIT_SECONDS`` for its channel; an instance started
-    during a Restart exits by itself.  After a wait that ended without the
-    application, later requests still start it but do not wait, so an
-    application that cannot start costs each call an error, not the whole
-    wait, until a request reaches it again.
+    A message that finds the connection broken - the application quit or
+    restarted since the last one - is sent once more on a new connection.
+    A request that finds no channel at all is answered by the bridge itself
+    at once; the next one tries the channel again, so an application started
+    later is reached without reconnecting the client.
 
     Parameters
     ----------
@@ -53,8 +65,6 @@ def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None
         The streams the MCP client connected; one JSON-RPC message per line.
     channel_name : str or None
         The channel to connect to; this instance's channel when None.
-    launch_app : callable or None
-        Starts the application in the background; None never starts it.
 
     Returns
     -------
@@ -63,7 +73,6 @@ def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None
     """
     name = channel_name or mcp_channel_name()
     channel: _Channel | None = None
-    waits_for_app = True
 
     try:
         for raw_line in stdin:
@@ -80,18 +89,11 @@ def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None
                     channel = None
             if not delivered:
                 channel = _connect(name)
-                if channel is None and expects_answer(line):
-                    if launch_app is not None:
-                        launch_app()
-                    if waits_for_app:
-                        channel = _wait_for_channel(name)
-                    waits_for_app = channel is not None
                 if channel is not None:
-                    waits_for_app = True
                     delivered, answer = channel.exchange(line)
 
-            if not delivered and expects_answer(line):
-                answer = _encode(_not_running_error(line))
+            if not delivered:
+                answer = _answer_without_app(line)
             if answer is not None:
                 stdout.write(answer)
                 stdout.flush()
@@ -100,22 +102,6 @@ def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None
             channel.close()
 
     return 0
-
-
-def start_app_in_background() -> None:
-    """Start the tray application for the account this bridge serves, detached from the bridge.
-
-    The new process inherits the bridge's environment, ``CLAUDE_CONFIG_DIR``
-    included, so it opens the very channel the bridge connects to.  With
-    ``--exit-if-running`` it ends without a dialog when another instance is
-    starting at the same time, e.g. one started by a second Claude session.
-    """
-    command, env = app_command(['--exit-if-running'])
-    try:
-        start_detached(command, env)
-    except OSError:
-        # The request then waits for nothing and reports that the application is not running
-        pass
 
 
 class _Channel:
@@ -148,29 +134,12 @@ def _connect(name: str) -> _Channel | None:
         return None
 
 
-def _wait_for_channel(name: str) -> _Channel | None:
-    deadline = time.monotonic() + _APP_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        channel = _connect(name)
-        if channel is not None:
-            return channel
-        time.sleep(_APP_POLL_SECONDS)
+def _answer_without_app(line: bytes) -> bytes | None:
+    """Answer *line* as the application would, with a tool error in place of the usage; None for a notification."""
+    answer = handle_line(line, _not_reachable_result)
 
-    return None
+    return None if answer is None else encode(answer)
 
 
-def _not_running_error(line: bytes) -> dict[str, Any]:
-    try:
-        message = json.loads(line)
-    except (ValueError, RecursionError):
-        message = None
-    request_id = message.get('id') if isinstance(message, dict) else None
-
-    return {
-        'jsonrpc': '2.0', 'id': request_id,
-        'error': {'code': _INTERNAL_ERROR, 'message': 'Usage Monitor for Claude is not running. Start it, then try again.'},
-    }
-
-
-def _encode(message: dict[str, Any]) -> bytes:
-    return json.dumps(message, separators=(',', ':')).encode('utf-8') + b'\n'
+def _not_reachable_result() -> dict[str, Any]:
+    return tool_result(_NOT_REACHABLE_MESSAGE, is_error=True)

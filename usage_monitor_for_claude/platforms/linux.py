@@ -19,7 +19,6 @@ import locale
 import os
 import platform
 import shlex
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -34,9 +33,9 @@ __all__ = [
     'autostart_supported', 'install_tray_activate_handler', 'install_tray_click_handler', 'prepare_gui_environment', 'set_dpi_awareness',
     'diagnostic_post_init_rows', 'diagnostic_runtime_rows', 'diagnostic_system_rows',
     'double_click_seconds', 'get_idle_seconds', 'is_autostart_enabled',
-    'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs', 'register_notification_identity',
+    'is_screensaver_running', 'is_workstation_locked', 'load_font', 'no_window_kwargs', 'register_notification_identity', 'runtime_directory',
     'set_autostart', 'setup_console', 'show_error_box', 'show_notification', 'show_topmost_error', 'show_warning_box',
-    'start_detached', 'sync_autostart_path', 'system_time_format', 'taskbar_uses_light_theme', 'watch_theme_change',
+    'sync_autostart_path', 'system_time_format', 'taskbar_uses_light_theme', 'watch_theme_change',
 ]
 
 # Third-party packages worth reporting in the diagnostics output.  pythonnet
@@ -91,24 +90,22 @@ def no_window_kwargs() -> dict[str, Any]:
     return {}
 
 
-def start_detached(command: list[str], env: dict[str, str]) -> None:
-    """Start a process that outlives the caller and shares none of its standard streams.
+def runtime_directory() -> Path:
+    """Return the directory the single-instance lock and the MCP socket live in.
 
-    The process runs in a session of its own, so a hangup or signal sent to
-    the caller's session or process group does not reach it.  Inherited stdio
-    would keep the MCP client's pipes open after the caller exits, and the
-    client waits for those to close.
+    ``XDG_RUNTIME_DIR`` is the correct home for runtime state - it is
+    per-user, on tmpfs, and cleared at logout.  Sessions without it (some
+    minimal or containerised setups) fall back to the user's cache
+    directory, which is still per-user and writable.
 
-    Parameters
-    ----------
-    command : list[str]
-        Program and arguments.
-    env : dict[str, str]
-        The environment of the new process.
+    Only the path is returned; the directory is created by whoever writes
+    into it, so a process that only connects never creates it.
     """
-    subprocess.Popen(
-        command, env=env, start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+    if runtime_dir:
+        return Path(runtime_dir)
+
+    return Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache')
 
 
 def show_error_box(message: str, title: str) -> None:

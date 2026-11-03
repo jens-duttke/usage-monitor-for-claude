@@ -1,10 +1,20 @@
 # MCP Server
 
-While the app is running, Claude Code and Claude Desktop can ask it how much of your quota is left. A built-in [MCP](https://modelcontextprotocol.io) server offers one tool for this, `get_usage`.
+While the app is running, Claude Code and Claude Desktop can ask it how much of your quota is left. A built-in [MCP](https://modelcontextprotocol.io) server offers one tool for this, `get_usage`. It is off until you turn it on.
 
 ## Setup
 
-Claude starts the app's EXE a second time with `--mcp`. That process opens no window, passes Claude's requests on to the running app and ends when Claude closes it. If the app is not running, that process starts it.
+Turn the server on in your [settings file](configuration.md#mcp-server), then choose **Restart** in the tray menu:
+
+```json
+{
+  "mcp_server": true
+}
+```
+
+Claude starts the app's EXE a second time with `--mcp`. That process opens no window, passes Claude's requests on to the running app and ends when Claude closes it.
+
+If the app is not running or `mcp_server` is off, the tool reports an error. Turn on **Start at login** in the tray menu so the app is always running when Claude asks.
 
 ### Claude Code
 
@@ -95,4 +105,4 @@ The tool lists the same quotas as the popup, in the same order. Whatever you lea
 
 ## Access
 
-The `--mcp` process reaches the app over a channel of your operating system that only your own user account can open: a named pipe on Windows, a socket file in your session's runtime directory on Linux. Programs running under your account can read the data listed above. The tool returns nothing else: no token, no email address, no account name.
+The `--mcp` process reaches the app over a channel of your operating system that only your own user account can open: a named pipe on Windows, a socket file in your session's runtime directory on Linux. The app opens it only while `mcp_server` is on. Programs running under your account can read the data listed above. The tool returns nothing else: no token, no email address, no account name.

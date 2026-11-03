@@ -28,7 +28,7 @@ class _LockTestCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.addCleanup(si.release_instance_lock)
 
-        patcher = patch.object(si, '_lock_directory', return_value=self.directory)
+        patcher = patch.object(si, 'runtime_directory', return_value=self.directory)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -45,22 +45,22 @@ class TestLockPath(unittest.TestCase):
     def test_prefers_runtime_dir(self):
         """XDG_RUNTIME_DIR is the correct home for runtime state."""
         with patch.dict(os.environ, {'XDG_RUNTIME_DIR': '/run/user/42'}):
-            self.assertEqual(si._lock_directory(), Path('/run/user/42'))
+            self.assertEqual(si._lock_path().parent, Path('/run/user/42'))
 
     def test_falls_back_to_cache_home(self):
         """A session without a runtime dir still gets a per-user location."""
         with patch.dict(os.environ, {'XDG_CACHE_HOME': '/home/u/.cache'}, clear=True):
-            self.assertEqual(si._lock_directory(), Path('/home/u/.cache'))
+            self.assertEqual(si._lock_path().parent, Path('/home/u/.cache'))
 
     def test_falls_back_to_home_cache(self):
         """Without either variable the default cache directory is used."""
         with patch.dict(os.environ, {}, clear=True), \
              patch.object(Path, 'home', return_value=Path('/home/u')):
-            self.assertEqual(si._lock_directory(), Path('/home/u/.cache'))
+            self.assertEqual(si._lock_path().parent, Path('/home/u/.cache'))
 
     def test_config_dir_gets_own_lock(self):
         """A second monitored account is a singleton for itself only."""
-        with patch.object(si, '_lock_directory', return_value=Path('/run')), \
+        with patch.object(si, 'runtime_directory', return_value=Path('/run')), \
              patch.object(si, 'config_dir_suffix', return_value='-abc'):
             self.assertEqual(si._lock_path(), Path('/run/usage-monitor-for-claude-abc.lock'))
 
@@ -86,24 +86,6 @@ class TestEnsureSingleInstance(_LockTestCase):
 
         mock_ask.assert_called_once()
         self.assertIs(si._lock_fd, held_fd)
-
-    def test_second_instance_without_dialog_exits_quietly(self):
-        """A start nobody watches leaves the running instance alone and shows nothing."""
-        self.assertTrue(si.ensure_single_instance())
-        held_fd = si._lock_fd
-
-        with patch.object(si, '_acquire', return_value=None), \
-             patch.object(si, 'ask_yes_no', return_value=True) as mock_ask, \
-             patch.object(si, '_terminate_pid') as mock_terminate:
-            self.assertFalse(si.ensure_single_instance(ask_to_replace=False))
-
-        mock_ask.assert_not_called()
-        mock_terminate.assert_not_called()
-        self.assertIs(si._lock_fd, held_fd)
-
-    def test_first_instance_without_dialog_still_acquires(self):
-        """``ask_to_replace=False`` changes only what happens next to a running instance."""
-        self.assertTrue(si.ensure_single_instance(ask_to_replace=False))
 
     def test_replace_terminates_holder_and_retakes(self):
         """Accepting the dialog terminates the holder and retakes the lock."""
@@ -298,7 +280,7 @@ class TestRealLocking(_LockTestCase):
     def test_acquire_creates_the_directory(self):
         """A missing runtime directory is created rather than failing."""
         nested = self.directory / 'nested' / 'deeper'
-        with patch.object(si, '_lock_directory', return_value=nested):
+        with patch.object(si, 'runtime_directory', return_value=nested):
             fd = si._acquire(si._lock_path())
         self.assertIsNotNone(fd)
         os.close(fd)

@@ -34,20 +34,6 @@ class TestNoWindowKwargs(unittest.TestCase):
         self.assertEqual(linux.no_window_kwargs(), {})
 
 
-class TestStartDetached(unittest.TestCase):
-    """Tests for starting a process that outlives the MCP bridge."""
-
-    def test_new_session_and_no_shared_stream(self):
-        with patch.object(linux.subprocess, 'Popen') as mock_popen:
-            linux.start_detached(['python3', '-m', 'usage_monitor_for_claude'], {'A': 'B'})
-
-        kwargs = mock_popen.call_args.kwargs
-        self.assertEqual(mock_popen.call_args.args, (['python3', '-m', 'usage_monitor_for_claude'],))
-        self.assertEqual(kwargs['env'], {'A': 'B'})
-        self.assertTrue(kwargs['start_new_session'])
-        self.assertEqual([kwargs[stream] for stream in ('stdin', 'stdout', 'stderr')], [subprocess.DEVNULL] * 3)
-
-
 class TestSystemTimeFormat(unittest.TestCase):
     """Tests for locale-based 12h/24h detection."""
 

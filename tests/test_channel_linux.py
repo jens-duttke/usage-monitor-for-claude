@@ -84,6 +84,29 @@ class TestSocketChannel(_RuntimeDirTestCase):
 
         self.assertEqual(path, Path(cache_home.name) / 'channel.sock')
 
+    def test_socket_lives_next_to_the_instance_lock(self):
+        """Both come from the one runtime_directory() helper, so they cannot drift apart."""
+        from usage_monitor_for_claude.platforms import instance_linux
+
+        self.assertEqual(channel_linux._socket_path('channel').parent, instance_linux._lock_path().parent)
+
+    def test_listener_creates_a_missing_directory(self):
+        nested = self.runtime_dir / 'nested' / 'deeper'
+        with patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(nested)}):
+            self._listen('channel')
+
+        self.assertTrue(stat.S_ISSOCK((nested / 'channel.sock').lstat().st_mode))
+
+    def test_connecting_creates_no_directory(self):
+        """The bridge only connects; it must not create the fallback cache directory as a side effect."""
+        missing = self.runtime_dir / 'missing-cache'
+        with patch.dict(os.environ, {'XDG_CACHE_HOME': str(missing)}):
+            del os.environ['XDG_RUNTIME_DIR']
+            with self.assertRaises(OSError):
+                open_local_channel('channel')
+
+        self.assertFalse(missing.exists())
+
 
 class TestLeftoverSocket(_RuntimeDirTestCase):
     """Tests for what a previous run left behind."""
@@ -146,7 +169,7 @@ class TestRestart(_RuntimeDirTestCase):
         self.assertEqual(client.recv(100), b'new\n')
 
     def test_leftover_socket_reads_as_not_running(self):
-        """The bridge treats it like a missing socket and starts the application."""
+        """The bridge treats it like a missing socket and reports that the application is not reachable."""
         self._listen('channel')._listener.close()
 
         with self.assertRaises(ConnectionRefusedError):
