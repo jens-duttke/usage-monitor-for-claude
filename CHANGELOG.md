@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.27.0...HEAD)
+
+## [1.27.0] - 2026-11-04
+
 ### Added
 
 - [Refresh now](https://github.com/jens-duttke/usage-monitor-for-claude/discussions/30) - a button next to the update time in the detail popup and an entry in the tray menu fetch new numbers on demand instead of waiting for the next poll. While a refresh has to wait - right after the last update, or shortly before a quota resets - the button's tooltip shows how long (thanks to [@regisbsb](https://github.com/regisbsb) for the contribution)
@@ -15,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The detail popup shows your plan under the name claude.ai uses - e.g. "Ultra" instead of "Claude Max" since the Max 20x plan was renamed - and hovering the plan shows the plan identifiers Anthropic reports for your account
 
-[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.26.0...HEAD)
+[Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.26.0...v1.27.0)
 
 ## [1.26.0] - 2026-11-03
 
