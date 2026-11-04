@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.cache import CacheSnapshot
 from usage_monitor_for_claude.popup import (
-    PopupWindowCache, UsagePopup, _init_config, _snapshot_to_dict, _usage_entries, new_window_cache,
+    PopupWindowCache, UsagePopup, _init_config, _readable_identifier, _snapshot_to_dict, _usage_entries, new_window_cache,
 )
 
 
@@ -229,6 +229,61 @@ class TestSnapshotToDict(unittest.TestCase):
         self.assertEqual(result['profile']['email'], 'test@example.com')
         self.assertEqual(result['profile']['plan'], 'Pro Team')
 
+    def test_plan_display_name_wins_over_organization_type(self):
+        """A renamed plan shows the name claude.ai uses, not the unchanged internal type."""
+        organization = {'organization_type': 'claude_max', 'rate_limit_tier': 'default_claude_max_20x', 'plan_display_name': 'Ultra'}
+        result = _snapshot_to_dict(_snap(profile={'organization': organization}), installations=[])
+        self.assertEqual(result['profile']['plan'], 'Ultra')
+
+    def test_plan_display_name_is_stripped(self):
+        result = _snapshot_to_dict(_snap(profile={'organization': {'plan_display_name': '  Ultra '}}), installations=[])
+        self.assertEqual(result['profile']['plan'], 'Ultra')
+
+    def test_unusable_plan_display_name_falls_back_to_organization_type(self):
+        """A null, blank or non-string display name keeps the formatted organization type."""
+        for display_name in (None, '', '   ', 42, ['Ultra'], {'name': 'Ultra'}):
+            with self.subTest(display_name=display_name):
+                organization = {'organization_type': 'claude_max', 'plan_display_name': display_name}
+                result = _snapshot_to_dict(_snap(profile={'organization': organization}), installations=[])
+                self.assertEqual(result['profile']['plan'], 'Claude Max')
+
+    def test_non_string_organization_type_gives_empty_plan(self):
+        """A null or non-string organization type without a display name hides the plan instead of crashing."""
+        for organization_type in (None, 7, ['claude_max']):
+            with self.subTest(organization_type=organization_type):
+                result = _snapshot_to_dict(_snap(profile={'organization': {'organization_type': organization_type}}), installations=[])
+                self.assertEqual(result['profile']['plan'], '')
+
+    def test_plan_details_list_raw_identifiers(self):
+        """The tooltip carries the internal identifiers behind the shown plan name."""
+        organization = {'organization_type': 'claude_max', 'rate_limit_tier': 'default_claude_max_20x', 'plan_display_name': 'Ultra'}
+        result = _snapshot_to_dict(_snap(profile={'organization': organization}), installations=[])
+        self.assertEqual(result['profile']['plan_details'], 'Organization Type: Claude Max\nRate Limit Tier: Default Claude Max 20x')
+
+    def test_readable_identifier(self):
+        """Underscores become spaces and each word starts upper-case, without changing the rest of the word."""
+        cases = {
+            'default_claude_max_20x': 'Default Claude Max 20x',
+            'organization_type': 'Organization Type',
+            'pro': 'Pro',
+            'claude__max_': 'Claude Max',
+            '': '',
+            '_': '',
+        }
+        for identifier, expected in cases.items():
+            with self.subTest(identifier=identifier):
+                self.assertEqual(_readable_identifier(identifier), expected)
+
+    def test_plan_details_skip_missing_and_unusable_identifiers(self):
+        organization = {'organization_type': 'pro', 'rate_limit_tier': None}
+        result = _snapshot_to_dict(_snap(profile={'organization': organization}), installations=[])
+        self.assertEqual(result['profile']['plan_details'], 'Organization Type: Pro')
+
+        for rate_limit_tier in ('', 5, {'tier': 'x'}):
+            with self.subTest(rate_limit_tier=rate_limit_tier):
+                result = _snapshot_to_dict(_snap(profile={'organization': {'rate_limit_tier': rate_limit_tier}}), installations=[])
+                self.assertEqual(result['profile']['plan_details'], '')
+
     def test_empty_profile_hidden(self):
         """Empty profile dict from API is treated as absent (no broken UI)."""
         result = _snapshot_to_dict(_snap(profile={}), installations=[])
@@ -245,6 +300,7 @@ class TestSnapshotToDict(unittest.TestCase):
         result = _snapshot_to_dict(_snap(profile={'account': None, 'organization': None}), installations=[])
         self.assertEqual(result['profile']['email'], '')
         self.assertEqual(result['profile']['plan'], '')
+        self.assertEqual(result['profile']['plan_details'], '')
 
     # -- usage bars --
 

@@ -12,7 +12,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from usage_monitor_for_claude.cache import CacheSnapshot, UpdateResult, UsageCache
+from usage_monitor_for_claude.cache import CacheSnapshot, UpdateResult, UsageCache, _profile_log_summary
 from usage_monitor_for_claude.claude_cli import RefreshResult
 
 _SUCCESS_DATA = {'five_hour': {'utilization': 42.0}}
@@ -996,6 +996,45 @@ class TestEnsureProfile(unittest.TestCase):
 
         mock_fetch.assert_called_once()
         self.assertEqual(cache.profile, {'name': 'Test User'})
+
+    @patch('usage_monitor_for_claude.cache.fetch_profile')
+    def test_logs_plan_identifiers(self, mock_fetch):
+        """The verbose log names the plan identifiers the API reported, so a wrong plan name can be traced."""
+        mock_fetch.return_value = {
+            'account': {'email': 'secret@example.com'},
+            'organization': {'organization_type': 'claude_max', 'rate_limit_tier': 'default_claude_max_20x', 'plan_display_name': 'Ultra'},
+        }
+        cache = _make_cache()
+        with self.assertLogs('usage_monitor_for_claude.cache', level='INFO') as logs:
+            cache.ensure_profile()
+
+        self.assertIn(
+            "fetch_profile -> OK (organization_type='claude_max', rate_limit_tier='default_claude_max_20x', plan_display_name='Ultra')",
+            logs.output[-1],
+        )
+        self.assertNotIn('secret@example.com', '\n'.join(logs.output))
+
+
+class TestProfileLogSummary(unittest.TestCase):
+    """Tests for _profile_log_summary()."""
+
+    def test_failed_fetch(self):
+        self.assertEqual(_profile_log_summary(None), 'failed')
+        self.assertEqual(_profile_log_summary({}), 'failed')
+
+    def test_missing_identifiers_show_as_none(self):
+        """A missing or null identifier is logged as None, apart from an empty string."""
+        summary = _profile_log_summary({'organization': {'organization_type': 'pro', 'rate_limit_tier': ''}})
+        self.assertEqual(summary, "OK (organization_type='pro', rate_limit_tier='', plan_display_name=None)")
+
+    def test_unusable_organization_block(self):
+        """An organization block that is null or not a dict logs plain OK instead of raising."""
+        for organization in (None, [], 'claude_max'):
+            with self.subTest(organization=organization):
+                self.assertEqual(_profile_log_summary({'organization': organization}), 'OK')
+
+    def test_non_dict_profile(self):
+        self.assertEqual(_profile_log_summary(['unexpected']), 'OK')  # type: ignore[arg-type]  # undocumented response shape
 
 
 # ---------------------------------------------------------------------------

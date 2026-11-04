@@ -81,7 +81,7 @@ Chrome does not add a second opinion. It passes every downloaded executable to t
 ## Requirements
 
 - **Windows 10 or Windows 11** (64-bit), or **Linux** with a freedesktop desktop environment (see [Linux](#linux) below)
-- **A Claude subscription** (Pro, Max, Team, or Enterprise) - the app displays the session and weekly rate limits that come with your plan. Pay-as-you-go API billing through the Anthropic Console has no such limits and is not supported.
+- **A Claude subscription** (Pro, Max, Ultra, Team, or Enterprise) - the app displays the session and weekly rate limits that come with your plan. Pay-as-you-go API billing through the Anthropic Console has no such limits and is not supported.
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** installed and logged in (CLI, VS Code extension, or JetBrains plugin - any variant works). The app reads the OAuth token that Claude Code stores locally (`~/.claude/.credentials.json`), or from `CLAUDE_CONFIG_DIR` when that is set; the `--config-dir="<path>"` command-line parameter overrides both. To run one instance per Claude account, log each account in via Claude Code with `CLAUDE_CONFIG_DIR` pointing at its own directory first.
 
 > [!TIP]
