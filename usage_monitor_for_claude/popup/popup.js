@@ -5,6 +5,7 @@ let textTimerId = null;
 let popupPinned = false;
 let compactHide = [];
 let lastData = null;
+let refreshPending = false;
 
 /**
  * Set CSS custom properties for theme colors and inject translation strings.
@@ -34,6 +35,7 @@ function init(config) {
     changelogLink.textContent = translations.changelog;
     changelogLink.addEventListener('click', () => pywebview.api.open_url());
     document.getElementById('closeBtn').addEventListener('click', () => pywebview.api.close());
+    setupRefreshButton();
     setupPinButton();
     setupPinnedDrag();
 
@@ -62,6 +64,57 @@ function init(config) {
 
     updateData(config.data);
     requestAnimationFrame(() => document.body.classList.add('open'));
+}
+
+function setupRefreshButton() {
+    const refreshBtn = document.getElementById('refreshBtn');
+    refreshBtn.setAttribute('aria-label', translations.refresh);
+
+    refreshBtn.addEventListener('click', async () => {
+        if (refreshBtn.disabled) {
+            return;
+        }
+
+        refreshPending = true;
+        renderRefreshButton();
+        try {
+            await pywebview.api.refresh();
+        } catch (_error) {
+            // The existing snapshot stays visible when a manual refresh fails.
+        } finally {
+            refreshPending = false;
+            renderRefreshButton();
+        }
+    });
+    renderRefreshButton();
+}
+
+/** Return the localized reason a manual refresh must wait. */
+function refreshWaitText() {
+    const seconds = Math.ceil((statusState.manualRefreshRetryAt || 0) - Date.now() / 1000);
+    if (seconds <= 0) {
+        return '';
+    }
+    const messages = {
+        reset: translations.refresh_deferred_reset,
+        cooldown: translations.refresh_cooldown,
+        backoff: translations.refresh_backoff,
+    };
+    const message = messages[statusState.manualRefreshReason];
+    return message ? message.replace('{duration}', formatCountdown(seconds)) : '';
+}
+
+/** Keep popup and tray refresh state consistent with the latest snapshot. */
+function renderRefreshButton() {
+    const refreshBtn = document.getElementById('refreshBtn');
+    if (!refreshBtn) {
+        return;
+    }
+    const loading = refreshPending || !!statusState.refreshing;
+    const waiting = (statusState.manualRefreshRetryAt || 0) > Date.now() / 1000;
+    refreshBtn.disabled = loading || waiting;
+    refreshBtn.classList.toggle('refreshing', loading);
+    document.getElementById('refreshControl').title = refreshWaitText() || (loading ? translations.status_refreshing : translations.refresh);
 }
 
 function setupPinButton() {
@@ -221,8 +274,8 @@ function updateData(data) {
 /**
  * Update the status footer with live timer data or static text.
  *
- * Live mode (has last_success_time): starts a 1-second interval for
- * the text counter.  Static mode (has text): shows plain text.
+ * A 1-second interval updates the last-success counter and the refresh
+ * tooltip when their timestamps are available.
  */
 function updateStatus(status) {
     if (textTimerId) {
@@ -231,6 +284,8 @@ function updateStatus(status) {
     }
 
     if (!status) {
+        statusState = {};
+        renderRefreshButton();
         els.statusSection.classList.remove('visible');
         return;
     }
@@ -239,21 +294,20 @@ function updateStatus(status) {
     // view, so the stale-dimming of the usage bars still updates.
     els.statusSection.classList.toggle('visible', !compactHidden('status'));
 
-    if (status.last_success_time !== undefined) {
-        statusState = {
-            lastSuccessTime: status.last_success_time,
-            nextPollTime: status.next_poll_time,
-            refreshing: status.refreshing,
-            error: status.error,
-        };
-        els.statusSection.classList.toggle('error', !!status.error);
-        tickStatusText();
+    statusState = {
+        lastSuccessTime: status.last_success_time,
+        nextPollTime: status.next_poll_time,
+        refreshing: status.refreshing,
+        error: status.error,
+        text: status.text,
+        isError: status.is_error,
+        manualRefreshReason: status.manual_refresh_reason,
+        manualRefreshRetryAt: status.manual_refresh_retry_at,
+    };
+    els.statusSection.classList.toggle('error', !!(status.error || status.is_error));
+    tickStatusText();
+    if (status.last_success_time !== undefined || status.manual_refresh_retry_at) {
         textTimerId = setInterval(tickStatusText, 1000);
-    } else {
-        statusState = {};
-        els.statusText.textContent = status.text || '';
-        els.statusText.title = status.is_error ? (status.text || '') : '';
-        els.statusSection.classList.toggle('error', !!status.is_error);
     }
 }
 
@@ -265,7 +319,12 @@ function updateStatus(status) {
  * + refreshing or error appended with · separator
  */
 function tickStatusText() {
-    if (!statusState.lastSuccessTime) return;
+    renderRefreshButton();
+    if (typeof statusState.lastSuccessTime !== 'number') {
+        els.statusText.textContent = statusState.text || '';
+        els.statusText.title = statusState.isError ? els.statusText.textContent : '';
+        return;
+    }
 
     const now = Date.now() / 1000;
     const secondsAgo = Math.max(0, Math.floor(now - statusState.lastSuccessTime));
@@ -285,7 +344,6 @@ function tickStatusText() {
             parts.push(translations.status_next_update.replace('{duration}', formatCountdown(secondsUntil)));
         }
     }
-
     els.statusText.textContent = parts.join(' \u00b7 ');
     // Errors are raw API messages that can overflow; reveal the full text on hover.
     els.statusText.title = statusState.error ? els.statusText.textContent : '';

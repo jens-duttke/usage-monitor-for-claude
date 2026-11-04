@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -22,7 +23,7 @@ from usage_monitor_for_claude.popup import (
 
 def _snap(
     usage=None, profile=None, prepaid=None, last_success_time=None,
-    refreshing=False, last_error=None, version=1,
+    refreshing=False, last_error=None, version=1, manual_refresh_reason=None, manual_refresh_retry_at=None,
 ) -> CacheSnapshot:
     """Build a CacheSnapshot with convenient defaults."""
     return CacheSnapshot(
@@ -33,6 +34,8 @@ def _snap(
         refreshing=refreshing,
         last_error=last_error,
         version=version,
+        manual_refresh_reason=manual_refresh_reason,
+        manual_refresh_retry_at=manual_refresh_retry_at,
     )
 
 
@@ -692,7 +695,29 @@ class TestSnapshotToDict(unittest.TestCase):
             _snap(usage=usage, last_success_time=1000.0, refreshing=True, last_error='Server down'),
             installations=[], next_poll_time=1180.0,
         )
-        self.assertEqual(set(result['status'].keys()), {'last_success_time', 'next_poll_time', 'refreshing', 'error'})
+        self.assertEqual(set(result['status'].keys()), {
+            'last_success_time', 'next_poll_time', 'refreshing', 'error', 'manual_refresh_reason', 'manual_refresh_retry_at',
+        })
+
+    def test_refresh_wait_state_preserved_without_usage(self):
+        """Empty and failed caches still tell the popup when refresh is available."""
+        for reason, error in [('reset', None), ('cooldown', 'Connection failed'), ('backoff', 'Rate limited')]:
+            with self.subTest(reason=reason):
+                result = _snapshot_to_dict(_snap(
+                    last_error=error, manual_refresh_reason=reason, manual_refresh_retry_at=1234.0,
+                ), installations=[])
+                self.assertEqual(result['status']['manual_refresh_reason'], reason)
+                self.assertEqual(result['status']['manual_refresh_retry_at'], 1234.0)
+                self.assertFalse(result['status']['refreshing'])
+
+    def test_refresh_wait_state_preserved_with_usage(self):
+        """Cached values retain their refresh delay without becoming a loading state."""
+        result = _snapshot_to_dict(_snap(
+            usage={'five_hour': {'utilization': 42}}, manual_refresh_reason='reset', manual_refresh_retry_at=1234.0,
+        ), installations=[])
+        self.assertEqual(result['status']['manual_refresh_reason'], 'reset')
+        self.assertEqual(result['status']['manual_refresh_retry_at'], 1234.0)
+        self.assertFalse(result['status']['refreshing'])
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
@@ -1141,6 +1166,42 @@ class TestUpdateLoopResilience(unittest.TestCase):
         self.assertEqual(popup._window.evaluate_js.call_count, 2)
         self.assertEqual(popup._last_version, 1)
 
+    def test_time_only_refresh_transitions_are_pushed_without_installation_scan(self):
+        """Clock-driven reset and backoff changes do not need a cache version bump."""
+        initial = _snap(version=7)
+        states = [
+            initial,
+            replace(initial, manual_refresh_reason='reset', manual_refresh_retry_at=2000.0),
+            replace(initial, manual_refresh_reason='backoff', manual_refresh_retry_at=2020.0),
+            replace(initial, manual_refresh_reason='cooldown', manual_refresh_retry_at=2030.0001),
+            replace(initial, manual_refresh_reason='cooldown', manual_refresh_retry_at=2030.0002),
+            initial,
+        ]
+        popup = object.__new__(UsagePopup)
+        popup._running = True
+        popup._last_version = initial.version
+        popup._window = MagicMock()
+        popup.app = MagicMock()
+        popup.app._next_poll_time = 2100.0
+        state_index = -1
+
+        def advance_clock(_seconds):
+            nonlocal state_index
+            state_index += 1
+            if state_index == len(states):
+                popup._running = False
+                return
+            popup.app.cache.snapshot = states[state_index]
+
+        with patch('usage_monitor_for_claude.popup.time.sleep', side_effect=advance_clock), \
+             patch('usage_monitor_for_claude.popup.find_installations', return_value=[]) as find, \
+             patch('usage_monitor_for_claude.popup._snapshot_to_dict', return_value={}) as serialize:
+            popup._update_loop()
+
+        self.assertEqual(popup._window.evaluate_js.call_count, 5)
+        self.assertEqual([call.args[0] for call in serialize.call_args_list], [states[index] for index in (0, 1, 2, 3, 5)])
+        find.assert_called_once_with()
+
 
 # ---------------------------------------------------------------------------
 # Window reuse
@@ -1414,5 +1475,21 @@ class TestNewWindowCache(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _tray_position
+# _PopupApi.refresh
 # ---------------------------------------------------------------------------
+
+class TestPopupApiRefresh(unittest.TestCase):
+    """Tests for the refresh command exposed to JavaScript."""
+
+    def test_bridge_requests_refresh_without_returning_snapshot(self) -> None:
+        """The update loop is the only channel that serializes cache snapshots."""
+        from usage_monitor_for_claude.popup import _PopupApi
+
+        popup = MagicMock()
+        with patch('usage_monitor_for_claude.popup._snapshot_to_dict') as serialize, \
+             patch('usage_monitor_for_claude.popup.find_installations') as find:
+            result = _PopupApi(popup).refresh()
+        popup.app.refresh_now.assert_called_once_with()
+        serialize.assert_not_called()
+        find.assert_not_called()
+        self.assertIsNone(result)

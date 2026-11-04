@@ -61,6 +61,7 @@
     <button onclick="loadPreset('minimal')">Minimal (next update)</button>
     <button onclick="loadPreset('error')">Error state</button>
     <button onclick="loadPreset('refreshing')">Refreshing (hours)</button>
+    <button onclick="loadPreset('cooldown')">Manual refresh cooldown</button>
     <button onclick="loadPreset('loading')">Initial load</button>
     <button onclick="randomize()">Randomize bars</button>
 </div>
@@ -146,6 +147,20 @@ const PRESETS = {
         profile: null, usage: [], extra: null, installations: [],
         status: { staticKey: 'status_refreshing', is_error: false, refreshing: true },
     },
+    cooldown: {
+        profile: null,
+        usage: [
+            { unit: 'hour', suffix: '5hr', pct: 10, warn: false,
+              reset: { kind: 'in', duration: '4h 50m', clock: '17:00' }, dividers: [0.2, 0.4, 0.6, 0.8], marker_rel: 0.03 },
+        ],
+        extra: null,
+        installations: [],
+        // A manual refresh was just sent -> the button stays disabled and its tooltip counts down.
+        status: () => ({
+            last_success_time: now() - 5, next_poll_time: now() + 175, refreshing: false, error: null,
+            manual_refresh_reason: 'cooldown', manual_refresh_retry_at: now() + 115,
+        }),
+    },
 };
 
 const iframe = document.getElementById('popup');
@@ -165,6 +180,8 @@ function buildTranslations(loc) {
         claude_code: loc.claude_code, changelog: loc.changelog,
         status_updated_s: loc.status_updated_s, status_updated: loc.status_updated,
         status_next_update: loc.status_next_update, status_refreshing: loc.status_refreshing,
+        refresh: loc.refresh, refresh_deferred_reset: loc.refresh_deferred_reset,
+        refresh_cooldown: loc.refresh_cooldown, refresh_backoff: loc.refresh_backoff,
         duration_hm: loc.duration_hm, duration_m: loc.duration_m, duration_s: loc.duration_s,
     };
 }
@@ -270,7 +287,7 @@ async function applyLanguage(code) {
     currentLang = code;
     currentLocale = await loadLocale(code);
     await reloadFrame();
-    win().pywebview = { api: { close() {}, open_url() {},
+    win().pywebview = { api: { close() {}, open_url() {}, refresh: async () => { win().updateData(resolveData(currentPreset, currentLocale)); },
         set_pinned(pinned) { return Promise.resolve(pinned); },
         begin_drag() { return Promise.resolve(true); },
         drag() { return Promise.resolve(true); },

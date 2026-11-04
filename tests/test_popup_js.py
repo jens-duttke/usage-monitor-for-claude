@@ -28,6 +28,8 @@ class StubElement {
         this.className = '';
         this.textContent = '';
         this.title = '';
+        this.listeners = {};
+        this.disabled = false;
         this.style = {};
         this.dataset = {};
         this.children = [];
@@ -47,11 +49,13 @@ class StubElement {
         };
     }
     _classSet() { return new Set(this.className.split(/\s+/).filter(Boolean)); }
+    addEventListener(name, callback) { this.listeners[name] = callback; }
     setAttribute(name, value) {
         if (name === 'class') this.className = String(value);
         else (this.attributes ||= {})[name] = String(value);
     }
     getAttribute(name) { return name === 'class' ? this.className : (this.attributes || {})[name]; }
+    click() { if (this.listeners.click) this.listeners.click(); }
     appendChild(node) { node.parentNode = this; this.children.push(node); return node; }
     append(...nodes) { for (const node of nodes) this.appendChild(node); }
     replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
@@ -84,6 +88,7 @@ class StubElement {
 globalThis.document = {
     createElement: (tag) => new StubElement(tag),
     createElementNS: (_namespace, tag) => new StubElement(tag),
+    getElementById: () => null,
     body: new StubElement('body'),
 };
 globalThis.ResizeObserver = class { constructor() {} observe() {} };
@@ -138,7 +143,7 @@ def _run_scenario(scenario: str) -> dict:
     with TemporaryDirectory() as tmp:
         script_path = Path(tmp) / 'scenario.js'
         script_path.write_text(script, encoding='utf-8')
-        proc = subprocess.run([_NODE, str(script_path)], capture_output=True, text=True, timeout=30)
+        proc = subprocess.run([_NODE, str(script_path)], capture_output=True, text=True, encoding='utf-8', timeout=30)
     if proc.returncode != 0:
         raise AssertionError(f'Node scenario failed:\n{proc.stderr}')
     return json.loads(proc.stdout)
@@ -246,7 +251,6 @@ console.log(JSON.stringify({ text: els.extraBalance.textContent, display: els.ex
         self.assertEqual(result, {'text': '', 'display': 'none'})
 
 
-
 @unittest.skipUnless(_NODE, 'Node.js not available')
 class TestForecastChart(unittest.TestCase):
     """Tests for a usage entry drawn as a forecast chart in place of its bar."""
@@ -340,6 +344,181 @@ updateUsageBars([makeEntry({ chart: makeChart({ actual: [[0, 0], [0.5, 50]], mea
 console.log(JSON.stringify(chartPaths(els.usageBars.children[0]).map((path) => path.class)));
 ''')
         self.assertEqual(result, ['assumed', 'projection'])
+
+
+_REFRESH_PRELUDE = r'''
+const refreshBtn = document.createElement('button');
+const refreshControl = document.createElement('span');
+refreshControl.appendChild(refreshBtn);
+document.getElementById = (id) => ({ refreshBtn, refreshControl }[id] || null);
+translations = {
+    refresh: 'Refresh', status_refreshing: 'Refreshing...',
+    refresh_deferred_reset: 'Refresh available after quota reset ({duration})',
+    refresh_cooldown: 'Refresh available in {duration}',
+    refresh_backoff: 'Rate limit: retry in {duration}',
+    duration_s: '{s}s', duration_m: '{m}m', duration_hm: '{h}h {m}m',
+    status_updated_s: 'Updated {s}s ago', status_updated: 'Updated {duration} ago',
+    status_next_update: 'Next update in {duration}',
+};
+let now = 1000;
+Date.now = () => now * 1000;
+globalThis.setInterval = () => 1;
+globalThis.clearInterval = () => {};
+els = makeEls();
+setupRefreshButton();
+'''
+
+
+@unittest.skipUnless(_NODE, 'Node.js not available')
+class TestManualRefresh(unittest.TestCase):
+    """Tests for the popup refresh command and cache-driven wait state."""
+
+    def test_duplicate_click_suppressed_and_result_does_not_replace_snapshot(self):
+        """The command result never competes with the pushed snapshot channel."""
+        result = _run_scenario(_REFRESH_PRELUDE + '''
+let resolveRefresh;
+let calls = 0;
+globalThis.pywebview = { api: { refresh: () => {
+    calls += 1;
+    return new Promise((resolve) => { resolveRefresh = resolve; });
+} } };
+const snapshot = { profile: null, usage: [makeEntry({ pct_text: '42%' })], installations: [], status: null };
+updateData(snapshot);
+refreshBtn.click();
+refreshBtn.click();
+const loading = refreshBtn.disabled && refreshBtn.classList.contains('refreshing');
+const newer = { ...snapshot, usage: [makeEntry({ pct_text: '43%' })] };
+updateData(newer);
+resolveRefresh({ status: { text: 'older response' } });
+setTimeout(() => console.log(JSON.stringify({
+    calls, loading, retainedNewest: lastData === newer,
+    pct: els.usageBars.children[0].querySelector('.bar-pct').textContent,
+    disabled: refreshBtn.disabled, refreshing: refreshBtn.classList.contains('refreshing'),
+    title: refreshControl.title, ariaLabel: refreshBtn.getAttribute('aria-label'),
+})), 0);
+''')
+        self.assertEqual(result, {
+            'calls': 1, 'loading': True, 'retainedNewest': True, 'pct': '43%',
+            'disabled': False, 'refreshing': False, 'title': 'Refresh', 'ariaLabel': 'Refresh',
+        })
+
+    def test_rejection_restores_button_without_replacing_data(self):
+        """A rejected bridge call removes only its own pending state."""
+        result = _run_scenario(_REFRESH_PRELUDE + '''
+let rejectRefresh;
+globalThis.pywebview = { api: { refresh: () => new Promise((_resolve, reject) => { rejectRefresh = reject; }) } };
+const snapshot = { profile: null, usage: [makeEntry({ pct_text: '42%' })], installations: [], status: null };
+updateData(snapshot);
+refreshBtn.click();
+const loading = refreshBtn.disabled && refreshBtn.classList.contains('refreshing');
+rejectRefresh(new Error('offline'));
+setTimeout(() => console.log(JSON.stringify({
+    loading, retained: lastData === snapshot, disabled: refreshBtn.disabled,
+    refreshing: refreshBtn.classList.contains('refreshing'),
+})), 0);
+''')
+        self.assertEqual(result, {'loading': True, 'retained': True, 'disabled': False, 'refreshing': False})
+
+    def test_synchronous_bridge_exception_cleans_loading_state(self):
+        """A bridge unavailable before it creates a promise also leaves the button usable."""
+        result = _run_scenario(_REFRESH_PRELUDE + '''
+globalThis.pywebview = { api: { refresh: () => { throw new Error('bridge unavailable'); } } };
+refreshBtn.click();
+console.log(JSON.stringify({ disabled: refreshBtn.disabled, refreshing: refreshBtn.classList.contains('refreshing') }));
+''')
+        self.assertEqual(result, {'disabled': False, 'refreshing': False})
+
+    def test_snapshot_refreshing_prevents_requests_and_survives_promise_completion(self):
+        """Tray or automatic loading remains active when the popup command completes."""
+        result = _run_scenario(_REFRESH_PRELUDE + '''
+let calls = 0;
+let resolveRefresh;
+globalThis.pywebview = { api: { refresh: () => {
+    calls += 1;
+    return new Promise((resolve) => { resolveRefresh = resolve; });
+} } };
+updateStatus({ text: 'Loading', refreshing: true });
+refreshBtn.click();
+const snapshotBlocked = calls === 0 && refreshBtn.disabled;
+updateStatus({ text: 'Ready', refreshing: false });
+refreshBtn.click();
+updateStatus({ text: 'Loading', refreshing: true });
+resolveRefresh();
+setTimeout(() => {
+    const stillLoading = refreshBtn.disabled && refreshBtn.classList.contains('refreshing');
+    updateStatus({ text: 'Ready', refreshing: false });
+    console.log(JSON.stringify({ snapshotBlocked, calls, stillLoading, disabled: refreshBtn.disabled }));
+}, 0);
+''')
+        self.assertEqual(result, {'snapshotBlocked': True, 'calls': 1, 'stillLoading': True, 'disabled': False})
+
+    def test_reset_deferral_countdown_without_usage(self):
+        """A reset delay is shown in the tooltip and leaves static status alone."""
+        result = _run_scenario(_REFRESH_PRELUDE + '''
+updateStatus({ text: 'Loading...', refreshing: false, manual_refresh_reason: 'reset', manual_refresh_retry_at: 1005 });
+const initial = {
+    disabled: refreshBtn.disabled, spinning: refreshBtn.classList.contains('refreshing'),
+    text: els.statusText.textContent, title: refreshControl.title,
+};
+now = 1004;
+tickStatusText();
+const later = refreshControl.title;
+now = 1005;
+tickStatusText();
+console.log(JSON.stringify({ initial, later, expiredDisabled: refreshBtn.disabled, expiredTitle: refreshControl.title }));
+''')
+        self.assertEqual(result, {
+            'initial': {
+                'disabled': True, 'spinning': False,
+                'text': 'Loading...', 'title': 'Refresh available after quota reset (5s)',
+            },
+            'later': 'Refresh available after quota reset (1s)', 'expiredDisabled': False, 'expiredTitle': 'Refresh',
+        })
+
+    def test_cooldown_and_backoff_disable_requests_and_keep_cached_usage(self):
+        """The tooltip counts down without replacing the regular status or usage."""
+        for reason, message in [('cooldown', 'Refresh available in 10s'), ('backoff', 'Rate limit: retry in 10s')]:
+            with self.subTest(reason=reason):
+                result = _run_scenario(_REFRESH_PRELUDE + f'''
+let calls = 0;
+globalThis.pywebview = {{ api: {{ refresh: async () => {{ calls += 1; }} }} }};
+const snapshot = {{
+    profile: null, usage: [makeEntry({{ pct_text: '42%' }})], installations: [],
+    status: {{ last_success_time: 990, next_poll_time: 1050, refreshing: false,
+        manual_refresh_reason: '{reason}', manual_refresh_retry_at: 1010 }},
+}};
+updateData(snapshot);
+refreshBtn.click();
+const blocked = calls === 0 && refreshBtn.disabled;
+const title = refreshControl.title;
+const text = els.statusText.textContent;
+now = 1010;
+tickStatusText();
+const available = !refreshBtn.disabled;
+console.log(JSON.stringify({{
+    blocked, title, text, available, retained: lastData === snapshot,
+    pct: els.usageBars.children[0].querySelector('.bar-pct').textContent,
+}}));
+''')
+                self.assertEqual(result, {
+                    'blocked': True, 'title': message, 'text': 'Updated 10s ago',
+                    'available': True, 'retained': True, 'pct': '42%',
+                })
+
+    def test_error_status_still_shows_refresh_backoff(self):
+        """An empty failed cache keeps its error and shows backoff on hover."""
+        result = _run_scenario(_REFRESH_PRELUDE + '''
+updateStatus({ text: 'Rate limited', is_error: true, refreshing: false,
+    manual_refresh_reason: 'backoff', manual_refresh_retry_at: 1008 });
+console.log(JSON.stringify({
+    text: els.statusText.textContent, title: els.statusText.title,
+    tooltip: refreshControl.title, error: els.statusSection.classList.contains('error'), disabled: refreshBtn.disabled,
+}));
+''')
+        self.assertEqual(result, {
+            'text': 'Rate limited', 'title': 'Rate limited',
+            'tooltip': 'Rate limit: retry in 8s', 'error': True, 'disabled': True,
+        })
 
 
 if __name__ == '__main__':

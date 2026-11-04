@@ -7,6 +7,7 @@ tray rendering, polling interval, and reset notifications.
 """
 from __future__ import annotations
 
+import threading
 import unittest
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -3350,17 +3351,22 @@ class TestUpdateForce(unittest.TestCase):
 
     def test_force_forwarded_to_cache_update(self):
         self.app.update(force=True)
-        self.app.cache.update.assert_called_once_with(force=True, with_prepaid=False)
+        self.app.cache.update.assert_called_once_with(force=True, manual=False, with_prepaid=False)
 
     def test_default_not_forced(self):
         self.app.update()
-        self.app.cache.update.assert_called_once_with(force=False, with_prepaid=False)
+        self.app.cache.update.assert_called_once_with(force=False, manual=False, with_prepaid=False)
+
+    def test_manual_forwarded_to_cache_update(self):
+        """A manual application update reaches the cache with its own flag."""
+        self.app.update(manual=True)
+        self.app.cache.update.assert_called_once_with(force=False, manual=True, with_prepaid=False)
 
     def test_open_popup_reads_prepaid_balance(self):
         """The prepaid balance is read along with the usage only while the popup shows it."""
         self.app._popup_open = True
         self.app.update()
-        self.app.cache.update.assert_called_once_with(force=False, with_prepaid=True)
+        self.app.cache.update.assert_called_once_with(force=False, manual=False, with_prepaid=True)
 
 
 # ---------------------------------------------------------------------------
@@ -3911,6 +3917,79 @@ class TestDoubleClickWiring(unittest.TestCase):
         _icon, on_single, on_double = mock_install.call_args[0]
         self.assertEqual(on_single, app.on_show_popup)
         self.assertEqual(on_double, app._run_quick_action)
+
+
+# ---------------------------------------------------------------------------
+# Manual refresh
+# ---------------------------------------------------------------------------
+
+class TestManualRefresh(unittest.TestCase):
+    """Manual requests coalesce without blocking the tray thread."""
+
+    def test_overlapping_requests_share_update(self) -> None:
+        """A second request while one runs waits for it instead of starting another update."""
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
+        original_wait = app._manual_refresh_condition.wait
+
+        def wait_for_update():
+            waiting.set()
+            return original_wait()
+
+        def update(*, manual=False):
+            self.assertTrue(manual)
+            entered.set()
+            self.assertTrue(release.wait(3))
+
+        with patch.object(app, 'update', side_effect=update) as called,              patch.object(app._manual_refresh_condition, 'wait', side_effect=wait_for_update):
+            first = threading.Thread(target=app.refresh_now)
+            second = threading.Thread(target=app.refresh_now)
+            first.start()
+            try:
+                self.assertTrue(entered.wait(3))
+                second.start()
+                self.assertTrue(waiting.wait(3))
+            finally:
+                release.set()
+                first.join(3)
+                if second.ident is not None:
+                    second.join(3)
+            called.assert_called_once_with(manual=True)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertFalse(app._manual_refresh_active)
+
+    def test_failure_releases_manual_guard(self) -> None:
+        """An exception in the update leaves the next manual request free to run."""
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        with patch.object(app, 'update', side_effect=RuntimeError('synthetic failure')):
+            with self.assertRaises(RuntimeError):
+                app.refresh_now()
+        self.assertFalse(app._manual_refresh_active)
+
+        with patch.object(app, 'update') as update:
+            app.refresh_now()
+        update.assert_called_once_with(manual=True)
+
+    def test_request_reaches_real_update_and_cache(self) -> None:
+        """The manual entry point forwards the flag without mocking app.update."""
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        with patch.object(app.cache, 'update', return_value=UpdateResult(data=None)) as update:
+            app.refresh_now()
+        update.assert_called_once_with(force=False, manual=True, with_prepaid=False)
+
+    def test_tray_action_is_asynchronous(self) -> None:
+        """The tray entry hands the refresh to a worker thread."""
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        with patch('usage_monitor_for_claude.app.threading.Thread') as worker:
+            app.on_refresh()
+        worker.assert_called_once_with(target=app.refresh_now, daemon=True)
+        worker.return_value.start.assert_called_once_with()
 
 
 if __name__ == '__main__':

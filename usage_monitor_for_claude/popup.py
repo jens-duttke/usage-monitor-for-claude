@@ -219,6 +219,9 @@ def _snapshot_to_dict(
             'refreshing': snap.refreshing,
             'error': snap.last_error[:120] if snap.last_error else None,
         }
+    status['refreshing'] = snap.refreshing
+    status['manual_refresh_reason'] = snap.manual_refresh_reason
+    status['manual_refresh_retry_at'] = snap.manual_refresh_retry_at
 
     return {
         'profile': profile,
@@ -240,9 +243,12 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
             'usage': T['usage'], 'extra_usage': T['extra_usage'], 'forecast_now': T['forecast_now'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
+            'refresh': T['refresh'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],
             'status_next_update': T['status_next_update'], 'status_refreshing': T['status_refreshing'],
+            'refresh_deferred_reset': T['refresh_deferred_reset'],
+            'refresh_cooldown': T['refresh_cooldown'], 'refresh_backoff': T['refresh_backoff'],
             'duration_hm': T['duration_hm'], 'duration_m': T['duration_m'], 'duration_s': T['duration_s'],
         },
         'app_version': __version__,
@@ -266,6 +272,10 @@ class _PopupApi:
 
     def open_url(self) -> None:
         webbrowser.open(CHANGELOG_URL)
+
+    def refresh(self) -> None:
+        """Request a refresh; the update loop supplies the resulting snapshot."""
+        self._popup.app.refresh_now()
 
     def set_pinned(self, pinned: bool) -> bool:
         return self._popup._set_pinned(pinned)
@@ -568,6 +578,7 @@ class UsagePopup:
         """Poll for data changes and push updates to the popup."""
         cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
         last_next_poll_time = self.app._next_poll_time
+        last_refresh_state: tuple[str | None, float | None] | None = None
         while self._running:
             time.sleep(self._CHECK_MS / 1000)
             if not self._running:
@@ -575,7 +586,13 @@ class UsagePopup:
             try:
                 snap = self.app.cache.snapshot
                 next_poll_time = self.app._next_poll_time
-                if snap.version == self._last_version and next_poll_time == last_next_poll_time:
+                retry_at = snap.manual_refresh_retry_at
+                refresh_state = (snap.manual_refresh_reason, round(retry_at, 0) if retry_at is not None else None)
+                if (
+                    snap.version == self._last_version
+                    and next_poll_time == last_next_poll_time
+                    and refresh_state == last_refresh_state
+                ):
                     continue
                 if snap.version != self._last_version:
                     cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
@@ -586,6 +603,7 @@ class UsagePopup:
                 # by the dedup check until the next data change.
                 self._last_version = snap.version
                 last_next_poll_time = next_poll_time
+                last_refresh_state = refresh_state
             except Exception:
                 # A transient failure (snapshot conversion, filesystem scan,
                 # one-off evaluate_js hiccup) must not end the update stream -

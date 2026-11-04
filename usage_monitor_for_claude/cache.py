@@ -13,6 +13,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, read_access_token
@@ -20,9 +21,17 @@ from .claude_cli import RefreshResult, refresh_token
 from .forecast import record_samples
 from .settings import FORECAST_CHART, MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
 
-__all__ = ['CacheSnapshot', 'UpdateResult', 'UsageCache']
+__all__ = ['CacheSnapshot', 'MANUAL_REFRESH_INTERVAL', 'RESET_BUFFER', 'UpdateResult', 'UsageCache', 'reset_offsets']
 
 log = logging.getLogger(__name__)
+
+# Seconds after a reset at which to place the confirming poll.  A small buffer
+# absorbs minor timing differences (clocks, caches, server-side propagation).
+RESET_BUFFER = 5
+
+# Seconds a manual refresh waits after the latest usage request finished, so a
+# double click does not send a second request.
+MANUAL_REFRESH_INTERVAL = 15
 
 _PLAN_LOG_KEYS = ('organization_type', 'rate_limit_tier', 'plan_display_name')
 
@@ -39,6 +48,8 @@ class CacheSnapshot:
     last_error: str | None
     version: int
     history: dict[str, dict[str, Any]] = field(default_factory=dict)
+    manual_refresh_reason: str | None = None
+    manual_refresh_retry_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +103,8 @@ class UsageCache:
         self._consecutive_errors = 0
         self._last_failed_token: str | None = None
         self._rate_limit_until: float = 0
+        self._last_attempt_monotonic: float | None = None
+        self._last_manual_monotonic: float | None = None
 
     # Public properties
 
@@ -139,6 +152,7 @@ class UsageCache:
     def snapshot(self) -> CacheSnapshot:
         """Return a consistent snapshot for the popup to display."""
         with self._state_lock:
+            reason, retry_at = self._manual_refresh_state(time.time())
             return CacheSnapshot(
                 usage=self._usage,
                 profile=self._profile,
@@ -148,6 +162,8 @@ class UsageCache:
                 last_error=self._last_error,
                 version=self._version,
                 history=self._history,
+                manual_refresh_reason=reason,
+                manual_refresh_retry_at=retry_at,
             )
 
     # Public methods
@@ -217,7 +233,7 @@ class UsageCache:
 
             self._refresh_prepaid(self._usage, self._usage_token)
 
-    def update(self, *, force: bool = False, with_prepaid: bool = False) -> UpdateResult:
+    def update(self, *, force: bool = False, manual: bool = False, with_prepaid: bool = False) -> UpdateResult:
         """Fetch usage data with lock and cooldown protection.
 
         Parameters
@@ -229,6 +245,9 @@ class UsageCache:
             selected account has no polling history, so it cannot be the
             source of a rate limit those throttles guard against.  The
             update lock is still honored, so concurrent fetches never run.
+        manual : bool
+            Wait for any in-progress request, then refresh only outside the
+            reset window and both manual cooldowns. Retain rate-limit backoff.
         with_prepaid : bool
             When True, a successful fetch also reads the prepaid credit
             balance, unless it was read within the last ``POLL_FAST``
@@ -243,18 +262,50 @@ class UsageCache:
             when the call was skipped.  If a token refresh was
             attempted, ``token_refresh`` carries the outcome.
         """
-        if not self._lock.acquire(blocking=False):
+        if not self._lock.acquire(blocking=manual):
             log.debug('update skipped (another update in progress)')
             return UpdateResult(data=None)
 
         try:
-            return self._update_locked(force=force, with_prepaid=with_prepaid)
+            return self._update_locked(manual=manual, force=force, with_prepaid=with_prepaid)
         finally:
             self._lock.release()
 
     # Private helpers
 
-    def _update_locked(self, *, force: bool = False, with_prepaid: bool = False) -> UpdateResult:
+    def _manual_refresh_state(self, now: float) -> tuple[str | None, float | None]:
+        """Return the reason and retry time for a withheld manual request.
+
+        The caller holds ``_state_lock``.  Both cooldowns use monotonic
+        time, so a clock correction cannot shorten them.
+
+        Returns
+        -------
+        tuple[str | None, float | None]
+            ``'backoff'``, ``'reset'`` or ``'cooldown'`` with the wall-clock
+            time at which a manual request is allowed again, or
+            ``(None, None)`` when it is allowed now.
+        """
+        if now < self._rate_limit_until:
+            return 'backoff', self._rate_limit_until
+
+        if self._last_success_time is not None:
+            offsets = reset_offsets(self._usage, datetime.fromtimestamp(now, timezone.utc))
+            protected = [offset for offset in offsets if -RESET_BUFFER < offset < POLL_FAST]
+            if protected:
+                return 'reset', now + max(protected) + RESET_BUFFER
+
+        monotonic_now = time.monotonic()
+        remaining = 0.0
+        if self._last_attempt_monotonic is not None:
+            remaining = MANUAL_REFRESH_INTERVAL - (monotonic_now - self._last_attempt_monotonic)
+        if self._last_manual_monotonic is not None:
+            remaining = max(remaining, POLL_FAST - (monotonic_now - self._last_manual_monotonic))
+        if remaining > 0:
+            return 'cooldown', now + remaining
+        return None, None
+
+    def _update_locked(self, *, manual: bool = False, force: bool = False, with_prepaid: bool = False) -> UpdateResult:
         """Execute the actual update while holding ``_lock``."""
         # Clamp epoch-based throttle state after a backward clock jump
         # (manual correction, NTP step, VM restore) - otherwise cooldown and
@@ -266,13 +317,20 @@ class UsageCache:
         if self._rate_limit_until - now > MAX_BACKOFF:
             self._rate_limit_until = now + MAX_BACKOFF
 
-        if not force and self._last_success_time is not None and time.time() - self._last_success_time < POLL_FAST:
+        if not (force or manual) and self._last_success_time is not None and time.time() - self._last_success_time < POLL_FAST:
             log.debug('update skipped (cooldown, %.0fs remaining)', POLL_FAST - (time.time() - self._last_success_time))
             return UpdateResult(data=None)
 
         if not force and time.time() < self._rate_limit_until:
             log.debug('update skipped (rate-limit backoff, %.0fs remaining)', self._rate_limit_until - time.time())
             return UpdateResult(data=None)
+
+        if manual and not force:
+            with self._state_lock:
+                reason, _retry_at = self._manual_refresh_state(now)
+            if reason is not None:
+                log.debug('manual update deferred (%s)', reason)
+                return UpdateResult(data=None)
 
         if self._last_failed_token is not None:
             if read_access_token() == self._last_failed_token:
@@ -285,16 +343,22 @@ class UsageCache:
             self._version += 1
 
         try:
-            return self._fetch_and_process(with_prepaid=with_prepaid)
+            return self._fetch_and_process(manual=manual and not force, with_prepaid=with_prepaid)
         except Exception:
             with self._state_lock:
                 self._refreshing = False
+                self._last_attempt_monotonic = time.monotonic()
                 self._version += 1
             raise
 
-    def _fetch_and_process(self, *, with_prepaid: bool = False) -> UpdateResult:
+    def _fetch_and_process(self, *, manual: bool = False, with_prepaid: bool = False) -> UpdateResult:
         """Fetch usage data and process the response."""
         token_before = read_access_token()
+        if manual and token_before:
+            # Only a request that is actually sent counts against the manual
+            # allowance - without a token fetch_usage() sends nothing.
+            with self._state_lock:
+                self._last_manual_monotonic = time.monotonic()
         log.info('fetch_usage started')
         data = fetch_usage()
 
@@ -324,6 +388,7 @@ class UsageCache:
 
             with self._state_lock:
                 self._refreshing = False
+                self._last_attempt_monotonic = time.monotonic()
                 self._version += 1
             return UpdateResult(data=data, token_refresh=token_refresh)
 
@@ -458,6 +523,7 @@ class UsageCache:
                 self._prepaid = None
                 self._prepaid_read_at = None
             self._refreshing = False
+            self._last_attempt_monotonic = time.monotonic()
             self._version += 1
 
     def _try_token_refresh(self, token_before: str | None, *, with_prepaid: bool = False) -> tuple[RefreshResult | None, dict[str, Any] | None]:
@@ -521,6 +587,37 @@ class UsageCache:
             self._apply_rate_limit_backoff(data)
 
         return result, data
+
+
+def reset_offsets(usage: dict[str, Any], now: datetime) -> list[float]:
+    """Return the seconds until each quota reset in a usage response.
+
+    Parameters
+    ----------
+    usage : dict
+        Usage API response.  Entries without a parsable ``resets_at`` are
+        skipped, so a field of any other shape never raises.
+    now : datetime
+        Timezone-aware current time.
+
+    Returns
+    -------
+    list[float]
+        One offset per quota with a reset time, negative once it has passed.
+    """
+    offsets = []
+    for entry in usage.values():
+        if not isinstance(entry, dict) or not entry.get('resets_at'):
+            continue
+        try:
+            # The subtraction stays inside the guard: a timestamp without a
+            # UTC offset parses fine and only fails when subtracted.
+            reset_time = datetime.fromisoformat(entry['resets_at'])
+            offsets.append((reset_time - now).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            continue
+
+    return offsets
 
 
 def _profile_log_summary(profile: dict[str, Any] | None) -> str:

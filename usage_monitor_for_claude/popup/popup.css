@@ -242,6 +242,7 @@ footer {
     gap: 8px;
 
     & > #statusText {
+        flex: 1 1 auto;
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -251,4 +252,24 @@ footer {
     & > #appVersion { flex-shrink: 0; }
 
     &.error > #statusText { color: var(--bar-fg-warn); }
+
+    & > #refreshControl {
+        display: inline-flex;
+        flex: 0 0 auto;
+
+        & > #refreshBtn {
+            border: 0;
+            padding: 0;
+            color: inherit;
+            background: transparent;
+            font: inherit;
+            cursor: pointer;
+
+            /* Let the wrapper receive hover and show the disabled tooltip. */
+            &:disabled { pointer-events: none; }
+            &.refreshing { animation: refresh-spin 0.8s linear infinite; }
+        }
+    }
 }
+
+@keyframes refresh-spin { to { transform: rotate(360deg); } }
