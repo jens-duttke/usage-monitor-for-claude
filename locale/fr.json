@@ -13,6 +13,10 @@
     "autostart": "Lancer à la connexion",
     "restart": "Redémarrer",
     "menu_project": "Projet sur GitHub",
+    "refresh": "Actualiser maintenant",
+    "refresh_deferred_reset": "Actualisation disponible après la réinitialisation du quota ({duration})",
+    "refresh_cooldown": "Actualisation disponible dans {duration}",
+    "refresh_backoff": "Limite de requêtes : nouvel essai dans {duration}",
     "test_commands": "Tester les commandes d'événements",
     "test_reset_5h": "Reset (5 heures)",
     "test_reset_7d": "Reset (7 jours)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} dépensé",
     "extra_usage_spent_no_limit": "{used} dépensé",
     "extra_usage_balance": "{balance} disponible",
+    "forecast_runs_out": "À ce rythme : épuisé ~{when}",
+    "forecast_at_reset": "À ce rythme : ~{pct}% à la réinitialisation",
+    "forecast_now": "Maint.",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Épingler la fenêtre contextuelle",
@@ -71,6 +78,5 @@
     "status_next_update": "Prochaine MàJ : {duration}",
     "status_refreshing": "Actualisation...",
     "already_running": "Usage Monitor for Claude v{running_version} est déjà en cours d'exécution.\n\nVoulez-vous remplacer l'instance en cours ?",
-    "replace_failed": "L'instance en cours n'a pas pu être remplacée.\n\nVeuillez la fermer manuellement et réessayer.",
-    "refresh": "Actualiser maintenant"
+    "replace_failed": "L'instance en cours n'a pas pu être remplacée.\n\nVeuillez la fermer manuellement et réessayer."
 }

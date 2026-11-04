@@ -11,6 +11,8 @@ import sys
 import threading
 import time
 import unittest
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.cache import CacheSnapshot
@@ -21,7 +23,7 @@ from usage_monitor_for_claude.popup import (
 
 def _snap(
     usage=None, profile=None, prepaid=None, last_success_time=None,
-    refreshing=False, last_error=None, version=1,
+    refreshing=False, last_error=None, version=1, manual_refresh_reason=None, manual_refresh_retry_at=None,
 ) -> CacheSnapshot:
     """Build a CacheSnapshot with convenient defaults."""
     return CacheSnapshot(
@@ -32,6 +34,8 @@ def _snap(
         refreshing=refreshing,
         last_error=last_error,
         version=version,
+        manual_refresh_reason=manual_refresh_reason,
+        manual_refresh_retry_at=manual_refresh_retry_at,
     )
 
 
@@ -159,6 +163,58 @@ class TestUsageEntries(unittest.TestCase):
 class TestSnapshotToDict(unittest.TestCase):
     """Tests for _snapshot_to_dict - converts CacheSnapshot to popup JSON."""
 
+    # -- forecast chart --
+
+    def _chart_usage(self):
+        resets_at = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+        return resets_at, {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': resets_at},
+            'seven_day_sonnet': {'utilization': 10.0, 'resets_at': resets_at},
+        }
+
+    def _charts(self, snap):
+        return {entry['key']: entry['chart'] for entry in _snapshot_to_dict(snap, installations=[])['usage']}
+
+    def test_bar_is_the_default(self):
+        """Without the setting no entry carries a chart."""
+        _, usage = self._chart_usage()
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', False):
+            charts = self._charts(_snap(usage=usage))
+        self.assertEqual(charts, {'seven_day': None, 'seven_day_sonnet': None})
+
+    def test_chart_replaces_bar_of_icon_top_field(self):
+        """The setting gives a chart only to the quota the tray icon shows as its number."""
+        _, usage = self._chart_usage()
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True), patch('usage_monitor_for_claude.popup.ICON_FIELDS', ['five_hour', 'seven_day_sonnet']):
+            charts = self._charts(_snap(usage=usage))
+        self.assertIsNone(charts['seven_day'])
+        self.assertIsNotNone(charts['seven_day_sonnet'])
+
+    def test_no_separate_forecast_payload(self):
+        """The chart lives in its usage entry; there is no section of its own."""
+        _, usage = self._chart_usage()
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True):
+            result = _snapshot_to_dict(_snap(usage=usage), installations=[])
+        self.assertNotIn('forecast', result)
+
+    def test_chart_uses_snapshot_history(self):
+        """Readings logged in the snapshot become the measured line."""
+        now = datetime.now(timezone.utc)
+        resets_at, usage = self._chart_usage()
+        history = {'seven_day': {'resets_at': resets_at, 'samples': (((now - timedelta(days=1)).timestamp(), 20.0),)}}
+        snap = CacheSnapshot(usage=usage, profile=None, prepaid=None, last_success_time=None, refreshing=False, last_error=None, version=1, history=history)
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True), patch('usage_monitor_for_claude.popup.ICON_FIELDS', ['seven_day', 'five_hour']):
+            charts = self._charts(snap)
+        self.assertEqual([y for _, y in charts['seven_day']['actual']], [0.0, 20.0, 50.0])
+
+    def test_quota_without_period_keeps_its_bar(self):
+        """A code-named quota in the icon's top slot has no period, so it stays a bar."""
+        usage = {'iguana_necktie': {'utilization': 5.0, 'resets_at': '2026-11-05T07:59:00+00:00'}}
+        with patch('usage_monitor_for_claude.popup.FORECAST_CHART', True), patch('usage_monitor_for_claude.popup.ICON_FIELDS', ['iguana_necktie', 'five_hour']):
+            charts = self._charts(_snap(usage=usage))
+        self.assertEqual(charts, {'iguana_necktie': None})
+
     # -- profile --
 
     def test_no_profile(self):
@@ -194,6 +250,27 @@ class TestSnapshotToDict(unittest.TestCase):
         self.assertEqual(result['profile']['plan'], '')
 
     # -- usage bars --
+
+    def test_active_schedule_drives_marker_and_warning(self):
+        """Popup pacing follows the same working-time reference as alerts and tray bars."""
+        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+        snap = _snap(usage={'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'}})
+        with (
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', None),
+            patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()),
+            patch(
+                'usage_monitor_for_claude.formatting._local_boundary',
+                side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour),
+            ),
+            patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock,
+        ):
+            clock.now.return_value = datetime(2026, 1, 12, 9, tzinfo=timezone.utc)
+            data = _snapshot_to_dict(snap, installations=[])
+
+        self.assertAlmostEqual(data['usage'][0]['marker_rel'], .375)
+        self.assertTrue(data['usage'][0]['warn'])
+        self.assertEqual(data['usage'][0]['pct_text'], '45%')
 
     def test_no_usage_data(self):
         """Empty usage dict produces empty usage list."""
@@ -343,6 +420,22 @@ class TestSnapshotToDict(unittest.TestCase):
         result = _snapshot_to_dict(_snap(usage=usage), installations=[])
         keys = [bar['key'] for bar in result['usage']]
         self.assertEqual(keys, ['five_hour', 'seven_day_opus'])
+
+    @patch('usage_monitor_for_claude.popup.POPUP_FIELDS', ['*', '-iguana_necktie'])
+    @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
+    @patch('usage_monitor_for_claude.popup.time_until', return_value='')
+    @patch('usage_monitor_for_claude.popup.divider_positions', return_value=[])
+    def test_excluded_active_code_named_quota_not_rendered(self, _mock_div, _mock_tu, _mock_ep):
+        """The wildcard keeps other and newly introduced quotas after one is hidden."""
+        usage = {
+            'iguana_necktie': {'utilization': 40, 'resets_at': '2026-01-01T05:00:00Z'},
+            'nimbus_quill': {'utilization': 30, 'resets_at': '2026-01-01T05:00:00Z'},
+            'seven_day_fable': {'utilization': 20, 'resets_at': None},
+            'five_hour': {'utilization': 10, 'resets_at': '2026-01-01T05:00:00Z'},
+        }
+        result = _snapshot_to_dict(_snap(usage=usage), installations=[])
+        self.assertEqual([bar['key'] for bar in result['usage']], ['five_hour', 'seven_day_fable', 'nimbus_quill'])
+        self.assertEqual([bar['pct_text'] for bar in result['usage']], ['10%', '20%', '30%'])
 
     @patch('usage_monitor_for_claude.popup.POPUP_FIELDS', ['typo_field', 'seven_day'])
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
@@ -546,7 +639,29 @@ class TestSnapshotToDict(unittest.TestCase):
             _snap(usage=usage, last_success_time=1000.0, refreshing=True, last_error='Server down'),
             installations=[], next_poll_time=1180.0,
         )
-        self.assertEqual(set(result['status'].keys()), {'last_success_time', 'next_poll_time', 'refreshing', 'error'})
+        self.assertEqual(set(result['status'].keys()), {
+            'last_success_time', 'next_poll_time', 'refreshing', 'error', 'manual_refresh_reason', 'manual_refresh_retry_at',
+        })
+
+    def test_refresh_wait_state_preserved_without_usage(self):
+        """Empty and failed caches still tell the popup when refresh is available."""
+        for reason, error in [('reset', None), ('cooldown', 'Connection failed'), ('backoff', 'Rate limited')]:
+            with self.subTest(reason=reason):
+                result = _snapshot_to_dict(_snap(
+                    last_error=error, manual_refresh_reason=reason, manual_refresh_retry_at=1234.0,
+                ), installations=[])
+                self.assertEqual(result['status']['manual_refresh_reason'], reason)
+                self.assertEqual(result['status']['manual_refresh_retry_at'], 1234.0)
+                self.assertFalse(result['status']['refreshing'])
+
+    def test_refresh_wait_state_preserved_with_usage(self):
+        """Cached values retain their refresh delay without becoming a loading state."""
+        result = _snapshot_to_dict(_snap(
+            usage={'five_hour': {'utilization': 42}}, manual_refresh_reason='reset', manual_refresh_retry_at=1234.0,
+        ), installations=[])
+        self.assertEqual(result['status']['manual_refresh_reason'], 'reset')
+        self.assertEqual(result['status']['manual_refresh_retry_at'], 1234.0)
+        self.assertFalse(result['status']['refreshing'])
 
     @patch('usage_monitor_for_claude.popup.elapsed_pct', return_value=None)
     @patch('usage_monitor_for_claude.popup.time_until', return_value='')
@@ -995,6 +1110,42 @@ class TestUpdateLoopResilience(unittest.TestCase):
         self.assertEqual(popup._window.evaluate_js.call_count, 2)
         self.assertEqual(popup._last_version, 1)
 
+    def test_time_only_refresh_transitions_are_pushed_without_installation_scan(self):
+        """Clock-driven reset and backoff changes do not need a cache version bump."""
+        initial = _snap(version=7)
+        states = [
+            initial,
+            replace(initial, manual_refresh_reason='reset', manual_refresh_retry_at=2000.0),
+            replace(initial, manual_refresh_reason='backoff', manual_refresh_retry_at=2020.0),
+            replace(initial, manual_refresh_reason='cooldown', manual_refresh_retry_at=2030.0001),
+            replace(initial, manual_refresh_reason='cooldown', manual_refresh_retry_at=2030.0002),
+            initial,
+        ]
+        popup = object.__new__(UsagePopup)
+        popup._running = True
+        popup._last_version = initial.version
+        popup._window = MagicMock()
+        popup.app = MagicMock()
+        popup.app._next_poll_time = 2100.0
+        state_index = -1
+
+        def advance_clock(_seconds):
+            nonlocal state_index
+            state_index += 1
+            if state_index == len(states):
+                popup._running = False
+                return
+            popup.app.cache.snapshot = states[state_index]
+
+        with patch('usage_monitor_for_claude.popup.time.sleep', side_effect=advance_clock), \
+             patch('usage_monitor_for_claude.popup.find_installations', return_value=[]) as find, \
+             patch('usage_monitor_for_claude.popup._snapshot_to_dict', return_value={}) as serialize:
+            popup._update_loop()
+
+        self.assertEqual(popup._window.evaluate_js.call_count, 5)
+        self.assertEqual([call.args[0] for call in serialize.call_args_list], [states[index] for index in (0, 1, 2, 3, 5)])
+        find.assert_called_once_with()
+
 
 # ---------------------------------------------------------------------------
 # Window reuse
@@ -1268,17 +1419,21 @@ class TestNewWindowCache(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _tray_position
+# _PopupApi.refresh
 # ---------------------------------------------------------------------------
 
+class TestPopupApiRefresh(unittest.TestCase):
+    """Tests for the refresh command exposed to JavaScript."""
 
-class TestManualRefreshBridge(unittest.TestCase):
-    def test_bridge_returns_fresh_snapshot_after_refresh(self) -> None:
+    def test_bridge_requests_refresh_without_returning_snapshot(self) -> None:
+        """The update loop is the only channel that serializes cache snapshots."""
         from usage_monitor_for_claude.popup import _PopupApi
+
         popup = MagicMock()
-        popup.app._next_poll_time = None
-        with patch('usage_monitor_for_claude.popup._snapshot_to_dict', return_value={'fresh': True}) as serialize:
+        with patch('usage_monitor_for_claude.popup._snapshot_to_dict') as serialize, \
+             patch('usage_monitor_for_claude.popup.find_installations') as find:
             result = _PopupApi(popup).refresh()
         popup.app.refresh_now.assert_called_once_with()
-        serialize.assert_called_once_with(popup.app.cache.snapshot, next_poll_time=None)
-        self.assertEqual(result, {'fresh': True})
+        serialize.assert_not_called()
+        find.assert_not_called()
+        self.assertIsNone(result)

@@ -69,27 +69,52 @@ function init(config) {
 function setupRefreshButton() {
     const refreshBtn = document.getElementById('refreshBtn');
     refreshBtn.setAttribute('aria-label', translations.refresh);
-    refreshBtn.title = translations.refresh;
 
     refreshBtn.addEventListener('click', async () => {
-        if (refreshPending) {
+        if (refreshBtn.disabled) {
             return;
         }
 
         refreshPending = true;
-        refreshBtn.disabled = true;
-        refreshBtn.classList.add('refreshing');
+        renderRefreshButton();
         try {
-            const data = await pywebview.api.refresh();
-            updateData(data);
+            await pywebview.api.refresh();
         } catch (_error) {
             // The existing snapshot stays visible when a manual refresh fails.
         } finally {
             refreshPending = false;
-            refreshBtn.disabled = false;
-            refreshBtn.classList.remove('refreshing');
+            renderRefreshButton();
         }
     });
+    renderRefreshButton();
+}
+
+/** Return the localized reason a manual refresh must wait. */
+function refreshWaitText() {
+    const seconds = Math.ceil((statusState.manualRefreshRetryAt || 0) - Date.now() / 1000);
+    if (seconds <= 0) {
+        return '';
+    }
+    const messages = {
+        reset: translations.refresh_deferred_reset,
+        cooldown: translations.refresh_cooldown,
+        backoff: translations.refresh_backoff,
+    };
+    const message = messages[statusState.manualRefreshReason];
+    return message ? message.replace('{duration}', formatCountdown(seconds)) : '';
+}
+
+/** Keep popup and tray refresh state consistent with the latest snapshot. */
+function renderRefreshButton() {
+    const refreshBtn = document.getElementById('refreshBtn');
+    if (!refreshBtn) {
+        return;
+    }
+    const loading = refreshPending || !!statusState.refreshing;
+    const waiting = (statusState.manualRefreshRetryAt || 0) > Date.now() / 1000;
+    refreshBtn.disabled = loading || waiting;
+    refreshBtn.classList.toggle('refreshing', loading);
+    document.getElementById('refreshControl').title = refreshWaitText() || (loading ? translations.status_refreshing : translations.refresh);
 }
 
 function setupPinButton() {
@@ -248,8 +273,8 @@ function updateData(data) {
 /**
  * Update the status footer with live timer data or static text.
  *
- * Live mode (has last_success_time): starts a 1-second interval for
- * the text counter.  Static mode (has text): shows plain text.
+ * A 1-second interval updates the last-success counter and the refresh
+ * tooltip when their timestamps are available.
  */
 function updateStatus(status) {
     if (textTimerId) {
@@ -258,6 +283,8 @@ function updateStatus(status) {
     }
 
     if (!status) {
+        statusState = {};
+        renderRefreshButton();
         els.statusSection.classList.remove('visible');
         return;
     }
@@ -266,21 +293,20 @@ function updateStatus(status) {
     // view, so the stale-dimming of the usage bars still updates.
     els.statusSection.classList.toggle('visible', !compactHidden('status'));
 
-    if (status.last_success_time !== undefined) {
-        statusState = {
-            lastSuccessTime: status.last_success_time,
-            nextPollTime: status.next_poll_time,
-            refreshing: status.refreshing,
-            error: status.error,
-        };
-        els.statusSection.classList.toggle('error', !!status.error);
-        tickStatusText();
+    statusState = {
+        lastSuccessTime: status.last_success_time,
+        nextPollTime: status.next_poll_time,
+        refreshing: status.refreshing,
+        error: status.error,
+        text: status.text,
+        isError: status.is_error,
+        manualRefreshReason: status.manual_refresh_reason,
+        manualRefreshRetryAt: status.manual_refresh_retry_at,
+    };
+    els.statusSection.classList.toggle('error', !!(status.error || status.is_error));
+    tickStatusText();
+    if (status.last_success_time !== undefined || status.manual_refresh_retry_at) {
         textTimerId = setInterval(tickStatusText, 1000);
-    } else {
-        statusState = {};
-        els.statusText.textContent = status.text || '';
-        els.statusText.title = status.is_error ? (status.text || '') : '';
-        els.statusSection.classList.toggle('error', !!status.is_error);
     }
 }
 
@@ -292,7 +318,12 @@ function updateStatus(status) {
  * + refreshing or error appended with · separator
  */
 function tickStatusText() {
-    if (!statusState.lastSuccessTime) return;
+    renderRefreshButton();
+    if (typeof statusState.lastSuccessTime !== 'number') {
+        els.statusText.textContent = statusState.text || '';
+        els.statusText.title = statusState.isError ? els.statusText.textContent : '';
+        return;
+    }
 
     const now = Date.now() / 1000;
     const secondsAgo = Math.max(0, Math.floor(now - statusState.lastSuccessTime));
@@ -312,7 +343,6 @@ function tickStatusText() {
             parts.push(translations.status_next_update.replace('{duration}', formatCountdown(secondsUntil)));
         }
     }
-
     els.statusText.textContent = parts.join(' \u00b7 ');
     // Errors are raw API messages that can overflow; reveal the full text on hover.
     els.statusText.title = statusState.error ? els.statusText.textContent : '';
@@ -363,28 +393,30 @@ function updateUsageBars(entries) {
     // an in-place update would show the new values under the old labels.
     const bars = els.usageBars.children;
     const sameFields = entries.length === bars.length
-        && entries.every((entry, i) => bars[i].dataset.key === entry.key);
+        && entries.every((entry, i) => bars[i].dataset.key === entry.key && bars[i].classList.contains('chart-entry') === !!entry.chart);
 
     if (!sameFields) {
-        els.usageBars.replaceChildren(...entries.map(createBarElement));
+        els.usageBars.replaceChildren(...entries.map((entry) => (entry.chart ? createChartElement(entry) : createBarElement(entry))));
         requestAnimationFrame(() => {
             for (let i = 0; i < entries.length; i++) {
-                els.usageBars.children[i].querySelector('.bar-fill').style.width =
-                    `${entries[i].fill_pct * 100}%`;
+                const fill = els.usageBars.children[i].querySelector('.bar-fill');
+                if (fill) {
+                    fill.style.width = `${entries[i].fill_pct * 100}%`;
+                }
             }
         });
     } else {
         for (let i = 0; i < entries.length; i++) {
-            updateBarElement(els.usageBars.children[i], entries[i]);
+            if (entries[i].chart) {
+                updateChartElement(els.usageBars.children[i], entries[i]);
+            } else {
+                updateBarElement(els.usageBars.children[i], entries[i]);
+            }
         }
     }
 }
 
-function createBarElement(entry) {
-    const div = document.createElement('div');
-    div.className = 'usage-entry';
-    div.dataset.key = entry.key;
-
+function createEntryHeader(entry) {
     const header = document.createElement('div');
     header.className = 'bar-header';
     const label = document.createElement('span');
@@ -393,6 +425,16 @@ function createBarElement(entry) {
     pct.className = 'bar-pct';
     pct.textContent = entry.pct_text;
     header.append(label, pct);
+
+    return header;
+}
+
+function createBarElement(entry) {
+    const div = document.createElement('div');
+    div.className = 'usage-entry';
+    div.dataset.key = entry.key;
+
+    const header = createEntryHeader(entry);
 
     const container = document.createElement('div');
     container.className = 'bar-container';
@@ -467,6 +509,124 @@ function updateBarElement(div, entry) {
     } else if (resetEl) {
         resetEl.remove();
     }
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgElement(tag, attributes) {
+    const element = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) {
+        element.setAttribute(name, value);
+    }
+    return element;
+}
+
+/**
+ * Create a usage entry that shows a forecast chart in place of the bar.
+ *
+ * @param {object} entry - Usage entry whose `chart` is the payload from forecast.usage_forecast().
+ */
+function createChartElement(entry) {
+    const div = document.createElement('div');
+    div.className = 'usage-entry chart-entry';
+    div.dataset.key = entry.key;
+
+    const chart = svgElement('svg', { class: 'forecast-chart', 'aria-hidden': 'true' });
+    const footer = document.createElement('div');
+    footer.className = 'chart-footer';
+    const reset = document.createElement('span');
+    reset.className = 'reset-text';
+    const summary = document.createElement('span');
+    summary.className = 'forecast-summary';
+    footer.append(reset, summary);
+    div.append(createEntryHeader(entry), chart, footer);
+
+    // The chart is drawn in CSS pixels, so redraw it whenever its width settles or changes.
+    new ResizeObserver(() => drawChart(chart, div.chartData)).observe(chart);
+
+    updateChartElement(div, entry);
+
+    return div;
+}
+
+function updateChartElement(div, entry) {
+    div.chartData = entry.chart;
+    div.querySelector('.bar-pct').textContent = entry.pct_text;
+    div.querySelector('.reset-text').textContent = entry.reset_text;
+    div.querySelector('.forecast-summary').textContent = entry.chart.summary;
+    drawChart(div.querySelector('.forecast-chart'), entry.chart);
+}
+
+/**
+ * Draw the forecast chart: x is the wall-clock share of the quota window,
+ * y the utilization.  The line is measured from the first reading this
+ * session saw (dotted before it, where only the 0% window start is known);
+ * the dashed line projects the current pace to the reset or to 100%.
+ *
+ * @param {SVGElement} svg - Chart element to draw into.
+ * @param {object} forecast - Payload from forecast.usage_forecast().
+ */
+function drawChart(svg, forecast) {
+    const width = svg.clientWidth || 308;
+    const height = svg.clientHeight || 80;
+    const left = 30;
+    const top = 4;
+    const bottom = height - 16;
+    const plotWidth = width - left;
+    const plotHeight = bottom - top;
+    const px = (x) => left + x * plotWidth;
+    const py = (y) => bottom - (y / 100) * plotHeight;
+    const path = (points) => points.map(([x, y], i) => `${i ? 'L' : 'M'}${px(x).toFixed(1)},${py(y).toFixed(1)}`).join(' ');
+
+    const children = [];
+    children.push(svgElement('rect', {
+        class: forecast.runs_out ? 'ahead warn' : 'ahead',
+        x: px(forecast.now_x), y: top, width: Math.max(0, plotWidth * (1 - forecast.now_x)), height: plotHeight,
+    }));
+
+    for (const pct of [0, 50]) {
+        children.push(svgElement('line', { class: 'grid', x1: left, x2: width, y1: py(pct), y2: py(pct) }));
+    }
+    children.push(svgElement('line', { class: 'limit', x1: left, x2: width, y1: py(100), y2: py(100) }));
+    for (const pct of [0, 50, 100]) {
+        const label = svgElement('text', { class: 'axis-text', x: left - 5, y: py(pct) + 3.5, 'text-anchor': 'end' });
+        label.textContent = `${pct}%`;
+        children.push(label);
+    }
+
+    const nowX = px(forecast.now_x);
+    const dayWidth = forecast.ticks.length > 1 ? (forecast.ticks[1].x - forecast.ticks[0].x) * plotWidth : 0;
+    for (const tick of forecast.ticks) {
+        const x = px(tick.x);
+        children.push(svgElement('line', { class: 'grid', x1: x, x2: x, y1: top, y2: bottom }));
+        // Centre each day label in its day, and keep clear of the "Now" label.
+        const labelX = x + dayWidth / 2;
+        if (tick.label && Math.abs(labelX - nowX) > 26 && labelX < width - 8) {
+            const label = svgElement('text', { class: 'axis-text', x: labelX, y: height - 3, 'text-anchor': 'middle' });
+            label.textContent = tick.label;
+            children.push(label);
+        }
+    }
+
+    children.push(svgElement('line', { class: 'now', x1: nowX, x2: nowX, y1: top, y2: bottom }));
+    const nowLabel = svgElement('text', { class: 'axis-text', x: nowX, y: height - 3, 'text-anchor': 'middle' });
+    nowLabel.textContent = translations.forecast_now;
+    children.push(nowLabel);
+
+    const firstMeasured = forecast.actual.findIndex(([x]) => x >= forecast.measured_from);
+    children.push(svgElement('path', { class: 'assumed', d: path(forecast.actual.slice(0, firstMeasured + 1)) }));
+    if (forecast.actual.length - firstMeasured > 1) {
+        children.push(svgElement('path', { class: 'actual', d: path(forecast.actual.slice(firstMeasured)) }));
+    }
+
+    if (forecast.projection.length) {
+        const warnClass = forecast.runs_out ? ' warn' : '';
+        children.push(svgElement('path', { class: `projection${warnClass}`, d: path(forecast.projection) }));
+        const [endX, endY] = forecast.projection[forecast.projection.length - 1];
+        children.push(svgElement('circle', { class: `end-dot${warnClass}`, cx: px(endX), cy: py(endY), r: 3 }));
+    }
+
+    svg.replaceChildren(...children);
 }
 
 // Report content height changes to the host (pywebview or dev.html iframe parent).

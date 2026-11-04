@@ -13,6 +13,10 @@
     "autostart": "Beim Anmelden starten",
     "restart": "Neu starten",
     "menu_project": "Projekt auf GitHub",
+    "refresh": "Jetzt aktualisieren",
+    "refresh_deferred_reset": "Aktualisieren nach dem Zurücksetzen des Kontingents möglich ({duration})",
+    "refresh_cooldown": "Aktualisieren in {duration} verfügbar",
+    "refresh_backoff": "Anfragelimit: erneut versuchen in {duration}",
     "test_commands": "Ereignisbefehle testen",
     "test_reset_5h": "Reset (5-Stunden)",
     "test_reset_7d": "Reset (7-Tage)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} verbraucht",
     "extra_usage_spent_no_limit": "{used} verbraucht",
     "extra_usage_balance": "{balance} verfügbar",
+    "forecast_runs_out": "Bei diesem Tempo: leer ~{when}",
+    "forecast_at_reset": "Bei diesem Tempo: ~{pct}% beim Reset",
+    "forecast_now": "Jetzt",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Popup anheften",
@@ -71,6 +78,5 @@
     "status_next_update": "Nächstes Update in {duration}",
     "status_refreshing": "Aktualisiere...",
     "already_running": "Usage Monitor for Claude v{running_version} wird bereits ausgeführt.\n\nMöchten Sie die laufende Instanz ersetzen?",
-    "replace_failed": "Die laufende Instanz konnte nicht ersetzt werden.\n\nBitte beenden Sie sie manuell und versuchen Sie es erneut.",
-    "refresh": "Jetzt aktualisieren"
+    "replace_failed": "Die laufende Instanz konnte nicht ersetzt werden.\n\nBitte beenden Sie sie manuell und versuchen Sie es erneut."
 }

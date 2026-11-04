@@ -13,6 +13,10 @@
     "autostart": "로그인 시 실행",
     "restart": "다시 시작",
     "menu_project": "GitHub 프로젝트",
+    "refresh": "지금 새로 고침",
+    "refresh_deferred_reset": "할당량 초기화 후 새로 고침 가능 ({duration})",
+    "refresh_cooldown": "{duration} 후 새로 고침 가능",
+    "refresh_backoff": "요청 한도: {duration} 후 다시 시도",
     "test_commands": "이벤트 명령 테스트",
     "test_reset_5h": "리셋 (5시간)",
     "test_reset_7d": "리셋 (7일)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} 사용",
     "extra_usage_spent_no_limit": "{used} 사용",
     "extra_usage_balance": "{balance} 사용 가능",
+    "forecast_runs_out": "이 속도면 ~{when}에 소진",
+    "forecast_at_reset": "이 속도면 재설정 시 ~{pct}%",
+    "forecast_now": "현재",
     "claude_code": "CLAUDE CODE",
     "changelog": "변경 내역",
     "pin_popup": "팝업 고정",
@@ -71,6 +78,5 @@
     "status_next_update": "다음 업데이트 {duration} 후",
     "status_refreshing": "새로고침 중...",
     "already_running": "Usage Monitor for Claude v{running_version}가 실행 중입니다.\n\n실행 중인 인스턴스를 교체하시겠습니까?",
-    "replace_failed": "실행 중인 인스턴스를 교체할 수 없습니다.\n\n수동으로 종료한 후 다시 시도하세요.",
-    "refresh": "지금 새로 고침"
+    "replace_failed": "실행 중인 인스턴스를 교체할 수 없습니다.\n\n수동으로 종료한 후 다시 시도하세요."
 }

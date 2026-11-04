@@ -17,30 +17,29 @@ from typing import Any
 import pystray  # type: ignore[import-untyped]  # no type stubs available
 
 from .api import api_headers, read_access_token
-from .cache import UsageCache
+from .cache import RESET_BUFFER, UsageCache
 from .claude_cli import PROJECT_URL
 from .command import run_event_command
 from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import (
-    autostart_supported, get_idle_seconds, install_tray_activate_handler, install_tray_click_handler,
+    TOOLTIP_MAX_LENGTH, autostart_supported, get_idle_seconds, install_tray_activate_handler, install_tray_click_handler,
     is_autostart_enabled, is_screensaver_running, is_workstation_locked, set_autostart, show_error_box,
     show_notification, sync_autostart_path, taskbar_uses_light_theme, watch_theme_change,
 )
 from .settings import (
-    ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_INTERVAL, IDLE_PAUSE,
+    ALERT_EXTRA_USAGE_SPENT, ALERT_TIME_AWARE, ALERT_TIME_AWARE_BELOW, ICON_FIELDS, IDLE_INTERVAL, IDLE_PAUSE, MCP_SERVER,
     NOTIFY_CLAUDE_UPDATE, ON_RESET_COMMAND, ON_STARTUP_COMMAND, ON_THRESHOLD_COMMAND, POLL_ERROR, POLL_FAST,
-    POLL_FAST_EXTRA, POLL_INTERVAL, QUICK_ACTION_COMMAND, get_alert_thresholds,
+    POLL_FAST_EXTRA, POLL_INTERVAL, POPUP_FIELDS, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
-from .formatting import elapsed_pct, field_period, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label
+from .formatting import (
+    elapsed_pct, field_period, fit_tooltip, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label, resolve_icon_fields,
+)
 from .i18n import T
+from .mcp_server import start_mcp_server
 from .popup import UsagePopup, new_window_cache
 from .tray_icon import create_icon_image, create_status_image
 
 __all__ = ['UsageMonitorForClaude', 'crash_log']
-
-# Seconds after a reset at which to place the confirming poll.  A small buffer
-# absorbs minor timing differences (clocks, caches, server-side propagation).
-RESET_BUFFER = 5
 
 
 def _future_iso(**kwargs: float) -> str:
@@ -159,6 +158,7 @@ class UsageMonitorForClaude:
                     T['menu_quick_action'], self.on_run_quick_action,
                     visible=self._quick_action_menu_visible,
                 ),
+                pystray.MenuItem(T['refresh'], self.on_refresh),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(
                     T['autostart'], self.on_toggle_autostart,
@@ -174,7 +174,6 @@ class UsageMonitorForClaude:
                     pystray.MenuItem(T['test_quick_action'], self.on_test_quick_action, enabled=bool(QUICK_ACTION_COMMAND)),
                 ), enabled=bool(ON_RESET_COMMAND or ON_STARTUP_COMMAND or ON_THRESHOLD_COMMAND or QUICK_ACTION_COMMAND)),
                 pystray.MenuItem(T['restart'], self.on_restart),
-                pystray.MenuItem(T['refresh'], self.on_refresh),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(T['menu_project'], self.on_open_project),
                 pystray.Menu.SEPARATOR,
@@ -397,8 +396,7 @@ class UsageMonitorForClaude:
         if 'error' in data:
             self.icon.icon = create_status_image('C!' if data.get('auth_error') else '!', self._light_taskbar)
         else:
-            top_field, top_mode = ICON_FIELDS[0].split(':', 1) if ':' in ICON_FIELDS[0] else (ICON_FIELDS[0], 'utilization')
-            bottom_field, bottom_mode = ICON_FIELDS[1].split(':', 1) if ':' in ICON_FIELDS[1] else (ICON_FIELDS[1], 'utilization')
+            (top_field, top_mode), (bottom_field, bottom_mode) = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, data)
             # isinstance instead of truthiness: a configured field may point at
             # a non-dict response value (e.g. the raw limits array).
             top_entry = data.get(top_field)
@@ -411,8 +409,8 @@ class UsageMonitorForClaude:
             pct_bottom = bottom_entry.get('utilization', 0) or 0
             top_period = field_period(top_field)
             bottom_period = field_period(bottom_field)
-            time_pct_top = elapsed_pct(top_entry.get('resets_at', ''), top_period) if top_period else None
-            time_pct_bottom = elapsed_pct(bottom_entry.get('resets_at', ''), bottom_period) if bottom_period else None
+            time_pct_top = elapsed_pct(top_entry.get('resets_at', ''), top_period, field=top_field) if top_period else None
+            time_pct_bottom = elapsed_pct(bottom_entry.get('resets_at', ''), bottom_period, field=bottom_field) if bottom_period else None
             extra = data.get('extra_usage') or {}
             extra_limit = extra.get('monthly_limit') or 0
             extra_used = extra.get('used_credits') or 0
@@ -425,7 +423,7 @@ class UsageMonitorForClaude:
                 time_pct_top=time_pct_top, time_pct_bottom=time_pct_bottom,
                 extra_usage_available=extra_usage_available,
             )
-        self.icon.title = self._tooltip_prefix + format_tooltip(data)
+        self.icon.title = fit_tooltip(self._tooltip_prefix + format_tooltip(data), TOOLTIP_MAX_LENGTH)
 
     def _on_theme_changed(self) -> None:
         """Re-render the tray icon when the Windows theme changes."""
@@ -444,18 +442,16 @@ class UsageMonitorForClaude:
 
         Parameters
         ----------
-        manual : bool
-            Bypass the successful-fetch cooldown, retaining rate-limit backoff.
         force : bool
             When True, bypass the cache cooldown and the 429 rate-limit
             backoff so the refresh happens immediately.  Used after a
             confirmed account switch, where the freshly selected account
             has no polling history that those throttles need to protect.
+        manual : bool
+            Allow an early refresh while retaining the manual floor,
+            reset protection, rate-limit backoff, and recovery guards.
         """
-        if manual:
-            result = self.cache.update(force=force, manual=True, with_prepaid=self._popup_open)
-        else:
-            result = self.cache.update(force=force, with_prepaid=self._popup_open)
+        result = self.cache.update(force=force, manual=manual, with_prepaid=self._popup_open)
         if result.data is None:
             return
 
@@ -504,6 +500,7 @@ class UsageMonitorForClaude:
             self._prev_utilization = {}
             self._notified_thresholds = {}
             self._prev_account_uuid = current_account_uuid
+            self.cache.restart_history()
             return
         self._prev_account_uuid = current_account_uuid
 
@@ -548,7 +545,7 @@ class UsageMonitorForClaude:
         self._check_threshold_alerts(result.data)
 
         # Adaptive polling: speed up when icon top field usage is increasing
-        icon_top_key = ICON_FIELDS[0].split(':', 1)[0]
+        icon_top_key = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, result.data)[0][0]
         icon_top_pct = quota_fields.get(icon_top_key, 0)
         icon_top_prev = self._prev_utilization.get(icon_top_key)
         if icon_top_prev is not None and icon_top_pct > icon_top_prev:
@@ -629,7 +626,7 @@ class UsageMonitorForClaude:
             if ALERT_TIME_AWARE and highest_exceeded > last_notified and highest_exceeded < ALERT_TIME_AWARE_BELOW:
                 period = field_period(variant_key)
                 if period:
-                    time_pct = elapsed_pct(entry.get('resets_at'), period)
+                    time_pct = elapsed_pct(entry.get('resets_at'), period, field=variant_key)
                     if time_pct is not None and pct <= time_pct:
                         self._notified_thresholds[variant_key] = highest_exceeded
                         continue
@@ -1096,6 +1093,8 @@ class UsageMonitorForClaude:
             if not api_headers():
                 self._notify(f"{T['warn_no_token']}\n{T['warn_login']}", T['popup_title'])
             threading.Thread(target=watch_theme_change, args=(self._on_theme_changed,), daemon=True).start()
+            if MCP_SERVER:
+                start_mcp_server(lambda: self.cache.snapshot)
             self.poll_loop()
         except Exception:
             crash_log(traceback.format_exc())

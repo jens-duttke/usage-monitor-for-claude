@@ -13,6 +13,10 @@
     "autostart": "Mulai saat login",
     "restart": "Mulai Ulang",
     "menu_project": "Proyek di GitHub",
+    "refresh": "Segarkan sekarang",
+    "refresh_deferred_reset": "Penyegaran tersedia setelah kuota direset ({duration})",
+    "refresh_cooldown": "Penyegaran tersedia dalam {duration}",
+    "refresh_backoff": "Batas permintaan: coba lagi dalam {duration}",
     "test_commands": "Uji perintah event",
     "test_reset_5h": "Reset (5-jam)",
     "test_reset_7d": "Reset (7-hari)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} terpakai",
     "extra_usage_spent_no_limit": "{used} terpakai",
     "extra_usage_balance": "{balance} tersedia",
+    "forecast_runs_out": "Pada laju ini: habis ~{when}",
+    "forecast_at_reset": "Pada laju ini: ~{pct}% saat reset",
+    "forecast_now": "Kini",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Sematkan popup",
@@ -71,6 +78,5 @@
     "status_next_update": "Pembaruan berik.: {duration}",
     "status_refreshing": "Memperbarui...",
     "already_running": "Usage Monitor for Claude v{running_version} sudah berjalan.\n\nApakah Anda ingin mengganti instans yang sedang berjalan?",
-    "replace_failed": "Instans yang sedang berjalan tidak dapat digantikan.\n\nSilakan tutup secara manual lalu coba lagi.",
-    "refresh": "Segarkan sekarang"
+    "replace_failed": "Instans yang sedang berjalan tidak dapat digantikan.\n\nSilakan tutup secara manual lalu coba lagi."
 }

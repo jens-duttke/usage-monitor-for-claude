@@ -13,6 +13,10 @@
     "autostart": "Iniciar al iniciar sesión",
     "restart": "Reiniciar",
     "menu_project": "Proyecto en GitHub",
+    "refresh": "Actualizar ahora",
+    "refresh_deferred_reset": "Actualización disponible después del restablecimiento de la cuota ({duration})",
+    "refresh_cooldown": "Actualización disponible en {duration}",
+    "refresh_backoff": "Límite de solicitudes: reintento en {duration}",
     "test_commands": "Probar comandos de eventos",
     "test_reset_5h": "Reset (5 horas)",
     "test_reset_7d": "Reset (7 dias)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} gastado",
     "extra_usage_spent_no_limit": "{used} gastado",
     "extra_usage_balance": "{balance} disponible",
+    "forecast_runs_out": "A este ritmo: agotado ~{when}",
+    "forecast_at_reset": "A este ritmo: ~{pct}% al reiniciarse",
+    "forecast_now": "Ahora",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Fijar ventana emergente",
@@ -71,6 +78,5 @@
     "status_next_update": "Próx. actualiz.: {duration}",
     "status_refreshing": "Actualizando...",
     "already_running": "Usage Monitor for Claude v{running_version} ya se está ejecutando.\n\n¿Desea reemplazar la instancia en ejecución?",
-    "replace_failed": "No se pudo reemplazar la instancia en ejecución.\n\nCiérrela manualmente e inténtelo de nuevo.",
-    "refresh": "Actualizar ahora"
+    "replace_failed": "No se pudo reemplazar la instancia en ejecución.\n\nCiérrela manualmente e inténtelo de nuevo."
 }

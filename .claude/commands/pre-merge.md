@@ -227,6 +227,8 @@ Use the handle captured in Step 0 - never guess.
 
 If satisfied, stage `CHANGELOG.md` and run `/commit-message` for a properly formatted commit message.
 
+For a contributor PR, the result lands through the PR itself, never as a separate commit on `main` followed by closing the PR - see the contributor-PR rule under "Git" in `CLAUDE.md` for the sequence (follow-up commit on the PR branch, push to the fork, `gh pr merge --squash`).
+
 ---
 
 ## Final checklist before merge

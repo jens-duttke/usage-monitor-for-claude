@@ -13,6 +13,10 @@
     "autostart": "Start at login",
     "restart": "Restart",
     "menu_project": "Project on GitHub",
+    "refresh": "Refresh now",
+    "refresh_deferred_reset": "Refresh available after quota reset ({duration})",
+    "refresh_cooldown": "Refresh available in {duration}",
+    "refresh_backoff": "Rate limit: retry in {duration}",
     "test_commands": "Test event commands",
     "test_reset_5h": "Reset (5-hour)",
     "test_reset_7d": "Reset (7-day)",
@@ -51,6 +55,9 @@
     "extra_usage_spent": "{used} / {limit} spent",
     "extra_usage_spent_no_limit": "{used} spent",
     "extra_usage_balance": "{balance} available",
+    "forecast_runs_out": "At this pace: empty ~{when}",
+    "forecast_at_reset": "At this pace: ~{pct}% at reset",
+    "forecast_now": "Now",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Pin popup",
@@ -63,6 +70,5 @@
     "status_next_update": "Next update in {duration}",
     "status_refreshing": "Refreshing...",
     "already_running": "Usage Monitor for Claude v{running_version} is already running.\n\nDo you want to replace the running instance?",
-    "replace_failed": "The running instance could not be replaced.\n\nPlease close it manually and try again.",
-    "refresh": "Refresh now"
+    "replace_failed": "The running instance could not be replaced.\n\nPlease close it manually and try again."
 }

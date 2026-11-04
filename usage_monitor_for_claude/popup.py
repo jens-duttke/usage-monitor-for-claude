@@ -16,6 +16,7 @@ import json
 import threading
 import time
 import webbrowser
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,10 +24,15 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 
 from . import __version__
 from .claude_cli import CHANGELOG_URL, find_installations
-from .formatting import divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, time_until
+from .forecast import usage_forecast
+from .formatting import (
+    divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, resolve_icon_fields, time_until,
+)
 from .i18n import T
 from .platforms.popup import REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
-from .settings import BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, POPUP_FIELDS
+from .settings import (
+    BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, FORECAST_CHART, ICON_FIELDS, POPUP_FIELDS,
+)
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 
@@ -93,12 +99,16 @@ def _snapshot_to_dict(
     # Usage bars
     usage = []
     if snap.usage:
+        # The quota the tray icon shows as its number can be drawn as a chart;
+        # an entry without a forecast (no period, no reset window) keeps its bar.
+        chart_field = resolve_icon_fields(ICON_FIELDS, POPUP_FIELDS, snap.usage)[0][0] if FORECAST_CHART else None
+        now = datetime.now(timezone.utc)
         for label, entry, period, field in _usage_entries(snap.usage):
             if not entry or entry.get('utilization') is None:
                 continue
             pct = entry.get('utilization', 0) or 0
             resets_at = entry.get('resets_at', '')
-            time_pct = elapsed_pct(resets_at, period) if period else None
+            time_pct = elapsed_pct(resets_at, period, field=field) if period else None
             warn = pct >= 100 or (time_pct is not None and pct > time_pct)
             marker_rel = max(0.0, min(1.0, time_pct / 100)) if time_pct is not None else None
 
@@ -109,8 +119,9 @@ def _snapshot_to_dict(
                 'fill_pct': max(0.0, min(1.0, pct / 100)),
                 'warn': warn,
                 'reset_text': time_until(resets_at) if resets_at else '',
-                'dividers': divider_positions(resets_at, period) if period else [],
+                'dividers': divider_positions(resets_at, period, field=field) if period else [],
                 'marker_rel': marker_rel,
+                'chart': usage_forecast(field, snap.usage, snap.history, now) if field == chart_field else None,
             })
 
     # Extra usage
@@ -166,6 +177,9 @@ def _snapshot_to_dict(
             'refreshing': snap.refreshing,
             'error': snap.last_error[:120] if snap.last_error else None,
         }
+    status['refreshing'] = snap.refreshing
+    status['manual_refresh_reason'] = snap.manual_refresh_reason
+    status['manual_refresh_retry_at'] = snap.manual_refresh_retry_at
 
     return {
         'profile': profile,
@@ -185,12 +199,14 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
         },
         't': {
             'title': T['popup_title'], 'account': T['account'], 'email': T['email'], 'plan': T['plan'],
-            'usage': T['usage'], 'extra_usage': T['extra_usage'],
+            'usage': T['usage'], 'extra_usage': T['extra_usage'], 'forecast_now': T['forecast_now'],
             'claude_code': T['claude_code'], 'changelog': T['changelog'],
             'refresh': T['refresh'],
             'pin_popup': T['pin_popup'], 'unpin_popup': T['unpin_popup'],
             'status_updated_s': T['status_updated_s'], 'status_updated': T['status_updated'],
             'status_next_update': T['status_next_update'], 'status_refreshing': T['status_refreshing'],
+            'refresh_deferred_reset': T['refresh_deferred_reset'],
+            'refresh_cooldown': T['refresh_cooldown'], 'refresh_backoff': T['refresh_backoff'],
             'duration_hm': T['duration_hm'], 'duration_m': T['duration_m'], 'duration_s': T['duration_s'],
         },
         'app_version': __version__,
@@ -215,10 +231,9 @@ class _PopupApi:
     def open_url(self) -> None:
         webbrowser.open(CHANGELOG_URL)
 
-    def refresh(self) -> dict[str, Any]:
-        """Refresh usage and return the latest popup data."""
+    def refresh(self) -> None:
+        """Request a refresh; the update loop supplies the resulting snapshot."""
         self._popup.app.refresh_now()
-        return _snapshot_to_dict(self._popup.app.cache.snapshot, next_poll_time=self._popup.app._next_poll_time)
 
     def set_pinned(self, pinned: bool) -> bool:
         return self._popup._set_pinned(pinned)
@@ -521,6 +536,7 @@ class UsagePopup:
         """Poll for data changes and push updates to the popup."""
         cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
         last_next_poll_time = self.app._next_poll_time
+        last_refresh_state: tuple[str | None, float | None] | None = None
         while self._running:
             time.sleep(self._CHECK_MS / 1000)
             if not self._running:
@@ -528,7 +544,13 @@ class UsagePopup:
             try:
                 snap = self.app.cache.snapshot
                 next_poll_time = self.app._next_poll_time
-                if snap.version == self._last_version and next_poll_time == last_next_poll_time:
+                retry_at = snap.manual_refresh_retry_at
+                refresh_state = (snap.manual_refresh_reason, round(retry_at, 0) if retry_at is not None else None)
+                if (
+                    snap.version == self._last_version
+                    and next_poll_time == last_next_poll_time
+                    and refresh_state == last_refresh_state
+                ):
                     continue
                 if snap.version != self._last_version:
                     cached_installations = [{'name': i.name, 'version': i.version} for i in find_installations()]
@@ -539,6 +561,7 @@ class UsagePopup:
                 # by the dedup check until the next data change.
                 self._last_version = snap.version
                 last_next_poll_time = next_poll_time
+                last_refresh_state = refresh_state
             except Exception:
                 # A transient failure (snapshot conversion, filesystem scan,
                 # one-off evaluate_js hiccup) must not end the update stream -

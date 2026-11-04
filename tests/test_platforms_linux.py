@@ -20,6 +20,13 @@ if sys.platform == 'win32':
 import usage_monitor_for_claude.platforms.linux as linux  # noqa: E402
 
 
+class TestTooltipMaxLength(unittest.TestCase):
+
+    def test_no_limit(self):
+        """The indicator takes the title as a plain string, so the tooltip is never shortened."""
+        self.assertIsNone(linux.TOOLTIP_MAX_LENGTH)
+
+
 class TestNoWindowKwargs(unittest.TestCase):
 
     def test_is_empty(self):

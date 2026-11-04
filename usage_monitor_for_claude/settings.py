@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import locale as _locale
+import math
 import sys
 from pathlib import Path
 
@@ -25,12 +26,13 @@ from .instance_id import effective_config_dir, is_default_config_dir
 from .platforms import show_warning_box, system_time_format
 
 __all__ = [
+    'ACTIVE_SCHEDULE', 'ACTIVE_SCHEDULE_FIELDS',
     'ALERT_EXTRA_USAGE_SPENT', 'ALERT_TIME_AWARE', 'ALERT_TIME_AWARE_BELOW',
     'BAR_BG', 'BAR_DIVIDER', 'BAR_FG', 'BAR_FG_WARN', 'BAR_MARKER', 'BG',
     'CLI_COMMAND', 'COMPACT_HIDE', 'CURRENCY_SYMBOL',
-    'FG', 'FG_DIM', 'FG_HEADING', 'FG_LINK',
+    'FG', 'FG_DIM', 'FG_HEADING', 'FG_LINK', 'FORECAST_CHART',
     'ICON_DARK', 'ICON_FIELDS', 'ICON_LIGHT', 'ICON_STYLE', 'IDLE_INTERVAL', 'IDLE_PAUSE',
-    'LANGUAGE', 'MAX_BACKOFF', 'NOTIFY_CLAUDE_UPDATE',
+    'LANGUAGE', 'MAX_BACKOFF', 'MCP_SERVER', 'NOTIFY_CLAUDE_UPDATE',
     'ON_RESET_COMMAND', 'ON_STARTUP_COMMAND', 'ON_THRESHOLD_COMMAND', 'QUICK_ACTION_COMMAND',
     'POLL_ERROR', 'POLL_FAST', 'POLL_FAST_EXTRA', 'POLL_INTERVAL',
     'POPUP_FIELDS', 'SETTINGS_FILENAME', 'TIME_FORMAT', 'TOOLTIP_FIELDS',
@@ -58,10 +60,11 @@ _VALID_ICON_STYLES = frozenset({'number+bars', 'numbers'})
 _COMMAND_KEYS = frozenset({
     'quick_action_command', 'on_double_click_command', 'on_reset_command', 'on_startup_command', 'on_threshold_command',
 })
-_BOOL_KEYS = frozenset({'alert_time_aware', 'notify_claude_update'})
+_BOOL_KEYS = frozenset({'alert_time_aware', 'forecast_chart', 'mcp_server', 'notify_claude_update'})
 _STRING_LIST_KEYS = frozenset({'tooltip_fields', 'compact_hide'})
 _WILDCARD_STRING_LIST_KEYS = frozenset({'popup_fields'})
 _VALID_BAR_MODES = frozenset({'utilization', 'overage'})
+_WEEKDAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
 
 
 def _quick_action_command(settings: dict) -> list[str]:
@@ -128,13 +131,76 @@ def _valid_rgba(value: object) -> bool:
     )
 
 
+def _valid_hour(value: object) -> bool:
+    """Return True if *value* is a finite JSON number (booleans excluded)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+
+    return not isinstance(value, float) or math.isfinite(value)
+
+
+def _schedule_errors(value: object) -> list[str]:
+    """Validate local weekday slots without partially accepting a bad schedule."""
+    if not isinstance(value, dict):
+        return ['  active_schedule: expected an object keyed by weekday']
+
+    errors: list[str] = []
+    for day, slots in value.items():
+        path = f'active_schedule.{day}'
+        if day not in _WEEKDAYS:
+            errors.append(f'  {path}: expected a weekday key from mon to sun')
+            continue
+        if not isinstance(slots, list):
+            errors.append(f'  {path}: expected a slot [start, end] or an array of slots')
+            continue
+        if not slots:
+            continue
+
+        ranges = slots if isinstance(slots[0], list) else [slots]
+        for index, slot in enumerate(ranges):
+            location = f'{path}[{index}]'
+            if not isinstance(slot, list) or len(slot) != 2:
+                errors.append(f'  {location}: expected a slot [start, end]')
+                continue
+
+            start, end = slot
+            if not (_valid_hour(start) and _valid_hour(end)):
+                errors.append(f'  {location}: hours must be finite numbers')
+            elif not (0 <= start < 24 and 0 <= end <= 24):
+                errors.append(f'  {location}: start must be >= 0 and < 24; end must be >= 0 and <= 24')
+            elif start == end:
+                errors.append(f'  {location}: start and end must differ; use [0, 24] for a full day')
+
+    return errors
+
+
+def _active_schedule(settings: dict) -> dict[str, list[tuple[float, float]]] | None:
+    """Normalize validated weekday slots for the shared pacing calculation."""
+    value = settings.get('active_schedule')
+    if value is None:
+        return None
+
+    normalized: dict[str, list[tuple[float, float]]] = {}
+    for day, slots in value.items():
+        ranges = slots if not slots or isinstance(slots[0], list) else [slots]
+        normalized[day] = [(float(start), float(end)) for start, end in ranges]
+
+    return normalized
+
+
 def _validate(data: dict, path: Path) -> dict:
     """Drop entries with invalid types or values and show a MessageBox listing errors."""
     errors: list[str] = []
     drop: list[str] = []
 
     for key, value in data.items():
-        if key in _NUMERIC_BOUNDS:
+        if key == 'active_schedule':
+            schedule_errors = _schedule_errors(value)
+            if schedule_errors:
+                errors.extend(schedule_errors)
+                drop.append(key)
+
+        elif key in _NUMERIC_BOUNDS:
             min_val = _NUMERIC_BOUNDS[key]
             if isinstance(value, bool) or not isinstance(value, int):
                 errors.append(f'  {key}: expected an integer, got {type(value).__name__}')
@@ -237,6 +303,9 @@ def _validate(data: dict, path: Path) -> dict:
             elif any(not isinstance(item, str) or not item for item in value):
                 errors.append(f'  {key}: all entries must be non-empty strings')
                 drop.append(key)
+            elif any(item in ('-', '-*') for item in value):
+                errors.append(f'  {key}: exclusions must name a field (e.g. "-iguana_necktie")')
+                drop.append(key)
             elif value.count('*') > 1:
                 errors.append(f'  {key}: "*" may appear at most once')
                 drop.append(key)
@@ -248,6 +317,21 @@ def _validate(data: dict, path: Path) -> dict:
                         seen_wc.add(item)
                         deduped_wc.append(item)
                 data[key] = deduped_wc
+
+        elif key == 'active_schedule_fields':
+            # Entries are glob patterns, not popup_fields tokens: "*" matches
+            # inside a name and there are no "-field" exclusions.
+            if not isinstance(value, list):
+                errors.append(f'  {key}: expected an array, got {type(value).__name__}')
+                drop.append(key)
+            elif any(not isinstance(item, str) or not item for item in value):
+                errors.append(f'  {key}: all entries must be non-empty strings')
+                drop.append(key)
+            elif any(item.startswith('-') for item in value):
+                errors.append(f'  {key}: exclusions are not supported - list the fields to include (e.g. "seven_day*")')
+                drop.append(key)
+            else:
+                data[key] = list(dict.fromkeys(value))
 
         elif key == 'icon_fields':
             if not isinstance(value, list):
@@ -369,6 +453,14 @@ TOOLTIP_FIELDS: list[str] = _S.get('tooltip_fields', ['five_hour', 'seven_day'])
 # Popup fields
 POPUP_FIELDS: list[str] = _S.get('popup_fields', ['*'])
 
+# Draw the popup entry of the tray icon's top quota as a forecast chart instead of a bar
+FORECAST_CHART: bool = _S.get('forecast_chart', False)
+
+# Work-hour pacing: a missing schedule keeps wall-clock pacing, a missing field
+# list applies it to every quota of a day or longer, an empty one to none
+ACTIVE_SCHEDULE: dict[str, list[tuple[float, float]]] | None = _active_schedule(_S)
+ACTIVE_SCHEDULE_FIELDS: list[str] | None = _S.get('active_schedule_fields')
+
 # Sections and usage bars hidden while the popup is pinned (compact view)
 COMPACT_HIDE: list[str] = _S.get('compact_hide', [])
 
@@ -378,6 +470,10 @@ ALERT_TIME_AWARE_BELOW: float = _S.get('alert_time_aware_below', 90)
 
 # Notify when a background token refresh installs a new Claude CLI version
 NOTIFY_CLAUDE_UPDATE: bool = _S.get('notify_claude_update', True)
+
+# Serve the local channel the --mcp bridge connects to.  Off by default, so an
+# installation that never registered the MCP server opens no IPC endpoint.
+MCP_SERVER: bool = _S.get('mcp_server', False)
 
 # Currency
 

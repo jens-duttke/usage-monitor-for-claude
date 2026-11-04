@@ -13,6 +13,10 @@
     "autostart": "Avvia all'accesso",
     "restart": "Riavvia",
     "menu_project": "Progetto su GitHub",
+    "refresh": "Aggiorna ora",
+    "refresh_deferred_reset": "Aggiornamento disponibile dopo il ripristino della quota ({duration})",
+    "refresh_cooldown": "Aggiornamento disponibile tra {duration}",
+    "refresh_backoff": "Limite di richieste: riprova tra {duration}",
     "test_commands": "Testa comandi eventi",
     "test_reset_5h": "Reset (5 ore)",
     "test_reset_7d": "Reset (7 giorni)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} speso",
     "extra_usage_spent_no_limit": "{used} speso",
     "extra_usage_balance": "{balance} disponibile",
+    "forecast_runs_out": "A questo ritmo: esaurito ~{when}",
+    "forecast_at_reset": "A questo ritmo: ~{pct}% al reset",
+    "forecast_now": "Ora",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Fissa popup",
@@ -71,6 +78,5 @@
     "status_next_update": "Pross. aggiorn.: {duration}",
     "status_refreshing": "Aggiornamento...",
     "already_running": "Usage Monitor for Claude v{running_version} è già in esecuzione.\n\nVuoi sostituire l'istanza in esecuzione?",
-    "replace_failed": "Non è stato possibile sostituire l'istanza in esecuzione.\n\nChiudila manualmente e riprova.",
-    "refresh": "Aggiorna ora"
+    "replace_failed": "Non è stato possibile sostituire l'istanza in esecuzione.\n\nChiudila manualmente e riprova."
 }

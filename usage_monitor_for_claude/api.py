@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 import requests
@@ -73,11 +74,21 @@ def api_headers() -> dict[str, str] | None:
     }
 
 
-def fetch_usage() -> dict[str, Any]:
-    """Fetch usage data from the Anthropic OAuth usage API."""
+def fetch_usage(*, on_send: Callable[[], None] | None = None) -> dict[str, Any]:
+    """Fetch usage data from the Anthropic OAuth usage API.
+
+    Parameters
+    ----------
+    on_send : callable or None
+        Called just before attempting the HTTP request, after credentials
+        are available. A signed-out lookup does not call it.
+    """
     headers = api_headers()
     if not headers:
         return {'error': T['no_token']}
+
+    if on_send is not None:
+        on_send()
 
     try:
         resp = requests.get(API_URL_USAGE, headers=headers, timeout=10)

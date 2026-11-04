@@ -3,23 +3,75 @@ Formatting Tests
 =================
 
 Unit tests for parse_field_name(), tooltip_label(), elapsed_pct(),
-time_until(), format_tooltip(), and format_credits().
+time_until(), format_tooltip(), fit_tooltip(), format_credits(), and
+resolve_icon_fields().
 """
 from __future__ import annotations
 
 import json
+import struct
 import unittest
-from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from io import BytesIO
+from typing import Iterator
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 from usage_monitor_for_claude.formatting import (
     PERIOD_5H, PERIOD_7D,
-    divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits,
-    format_tooltip, parse_field_name, popup_label, time_until, tooltip_label,
+    divider_positions, elapsed_fraction, elapsed_pct, expand_popup_fields, field_period, fit_tooltip, format_credits,
+    format_tooltip, parse_field_name, popup_label, resolve_icon_fields, time_until, tooltip_label,
+    _local_boundary, _local_date, _schedule_period,
 )
 from usage_monitor_for_claude.i18n import LOCALE_DIR
 
 EN = json.loads((LOCALE_DIR / 'en.json').read_text(encoding='utf-8'))
+
+
+@contextmanager
+def _active_schedule(
+    schedule: dict[str, list[tuple[float, float]]] | None,
+    fields: list[str] | None = None,
+    local_zone: tzinfo = timezone.utc,
+) -> Iterator[None]:
+    """Use a deterministic local timezone without changing the host's settings."""
+    def local_boundary(day: date, hour: float) -> datetime:
+        return (datetime(day.year, day.month, day.day) + timedelta(hours=hour)).replace(tzinfo=local_zone).astimezone(timezone.utc)
+
+    with (
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', fields),
+        patch('usage_monitor_for_claude.formatting._local_boundary', side_effect=local_boundary),
+        patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda value: value.astimezone(local_zone).date()),
+    ):
+        yield
+
+
+def _workweek() -> dict[str, list[tuple[float, float]]]:
+    """Return the normalized Monday-Friday 09:00-17:00 review example."""
+    return {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+
+
+def _numeric_elapsed_pct(resets_at: str, period_seconds: int, field: str | None = None) -> float:
+    """Require a calculable elapsed fraction before numeric comparisons."""
+    result = elapsed_pct(resets_at, period_seconds, field)
+    assert result is not None
+    return result
+
+
+def _dst_test_zone() -> ZoneInfo:
+    """Build a tiny European DST timezone using only the standard library."""
+    transitions = [
+        int(datetime(2026, 3, 29, 1, tzinfo=timezone.utc).timestamp()),
+        int(datetime(2026, 10, 25, 1, tzinfo=timezone.utc).timestamp()),
+    ]
+    header = b'TZif\0' + b'\0' * 15 + struct.pack('>6l', 0, 0, 0, 2, 2, 9)
+    body = (
+        struct.pack('>2l', *transitions) + bytes([1, 0])
+        + struct.pack('>lbb', 3600, 0, 0) + struct.pack('>lbb', 7200, 1, 4) + b'CET\0CEST\0'
+    )
+    return ZoneInfo.from_file(BytesIO(header + body), key='Test/Europe')
 
 
 # ---------------------------------------------------------------------------
@@ -88,19 +140,19 @@ class TestTooltipLabel(unittest.TestCase):
         self.assertEqual(tooltip_label('seven_day'), '7d')
 
     def test_seven_day_sonnet(self):
-        self.assertEqual(tooltip_label('seven_day_sonnet'), '7d Sonnet')
+        self.assertEqual(tooltip_label('seven_day_sonnet'), 'Sonnet 7d')
 
     def test_seven_day_opus(self):
-        self.assertEqual(tooltip_label('seven_day_opus'), '7d Opus')
+        self.assertEqual(tooltip_label('seven_day_opus'), 'Opus 7d')
 
     def test_three_day_cowork(self):
-        self.assertEqual(tooltip_label('three_day_cowork'), '3d Cowork')
+        self.assertEqual(tooltip_label('three_day_cowork'), 'Cowork 3d')
 
     def test_five_hour_something(self):
-        self.assertEqual(tooltip_label('five_hour_something'), '5h Something')
+        self.assertEqual(tooltip_label('five_hour_something'), 'Something 5h')
 
     def test_multi_word_variant(self):
-        self.assertEqual(tooltip_label('seven_day_oauth_apps'), '7d OAuth Apps')
+        self.assertEqual(tooltip_label('seven_day_oauth_apps'), 'OAuth Apps 7d')
 
     def test_unknown_number_fallback(self):
         """Unrecognized number word falls back to title case."""
@@ -119,11 +171,11 @@ class TestTooltipLabel(unittest.TestCase):
 
     def test_abbreviation_oauth(self):
         """oauth is title-cased as OAuth."""
-        self.assertEqual(tooltip_label('seven_day_oauth'), '7d OAuth')
+        self.assertEqual(tooltip_label('seven_day_oauth'), 'OAuth 7d')
 
     def test_abbreviation_api(self):
         """api is title-cased as API."""
-        self.assertEqual(tooltip_label('seven_day_api'), '7d API')
+        self.assertEqual(tooltip_label('seven_day_api'), 'API 7d')
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +268,61 @@ class TestExpandPopupFields(unittest.TestCase):
         usage = self._usage(five_hour=10, seven_day=20, seven_day_sonnet=30)
         result = expand_popup_fields(['seven_day_sonnet', '*'], usage)
         self.assertEqual(result, ['seven_day_sonnet', 'five_hour', 'seven_day'])
+
+    def test_exclusion_applies_before_or_after_wildcard(self):
+        """An exclusion hides an active code-named quota wherever it appears."""
+        usage = self._usage(seven_day=20, five_hour=10)
+        usage['iguana_necktie'] = {'utilization': 30, 'resets_at': '2026-01-01T00:00:00Z'}
+        for fields in (['*', '-iguana_necktie'], ['-iguana_necktie', '*']):
+            with self.subTest(popup_fields=fields):
+                self.assertEqual(expand_popup_fields(fields, usage), ['five_hour', 'seven_day'])
+
+    def test_exclusion_overrides_explicit_inclusion(self):
+        """Explicitly naming a field cannot restore a globally excluded quota."""
+        usage = self._usage(five_hour=10, seven_day=20)
+        for fields in (
+            ['five_hour', '-five_hour', 'seven_day'],
+            ['-five_hour', 'five_hour', 'seven_day'],
+            ['five_hour', '*', '-five_hour'],
+            ['-five_hour', '*', 'five_hour'],
+        ):
+            with self.subTest(popup_fields=fields):
+                self.assertEqual(expand_popup_fields(fields, usage), ['seven_day'])
+
+    def test_exclusion_preserves_explicit_and_wildcard_order(self):
+        """Removing one quota preserves the configured positions of the others."""
+        usage = self._usage(seven_day_sonnet=30, seven_day_opus=40, seven_day=20, five_hour=10)
+        for fields in (
+            ['seven_day_sonnet', '*', '-seven_day'],
+            ['-seven_day', 'seven_day_sonnet', '*'],
+            ['seven_day_sonnet', '-seven_day', '*'],
+        ):
+            with self.subTest(popup_fields=fields):
+                self.assertEqual(expand_popup_fields(fields, usage), ['seven_day_sonnet', 'five_hour', 'seven_day_opus'])
+
+    def test_exclusions_match_exact_field_names(self):
+        """Excluding a base quota leaves variants and similarly named quotas visible."""
+        usage = self._usage(five_hour=10, five_hour_sonnet=20, seven_day=30)
+        self.assertEqual(expand_popup_fields(['*', '-five_hour'], usage), ['five_hour_sonnet', 'seven_day'])
+
+    def test_multiple_duplicate_and_unknown_exclusions(self):
+        """Repeated or unavailable exclusions do not disturb the remaining quotas."""
+        usage = self._usage(seven_day_sonnet=30, seven_day=20, five_hour=10)
+        fields = ['-five_hour', '*', '-seven_day', '-five_hour', '-unknown_quota']
+        self.assertEqual(expand_popup_fields(fields, usage), ['seven_day_sonnet'])
+
+    def test_exclusions_without_inclusions_show_no_fields(self):
+        """An exclusion-only list does not implicitly add a wildcard."""
+        usage = self._usage(five_hour=10, seven_day=20)
+        self.assertEqual(expand_popup_fields(['-five_hour'], usage), [])
+
+    def test_exclusions_with_empty_null_and_malformed_usage(self):
+        """Exclusions keep the existing filtering of unavailable quota data."""
+        for value in (None, {}, {'utilization': None, 'resets_at': ''}, 'error', [], 42, False):
+            with self.subTest(value=value):
+                usage = {'five_hour': value, 'seven_day': value}
+                self.assertEqual(expand_popup_fields(['*', '-five_hour'], usage), [])
+        self.assertEqual(expand_popup_fields(['*', '-five_hour'], {}), [])
 
     def test_null_fields_skipped(self):
         """Fields with None utilization are skipped."""
@@ -346,6 +453,132 @@ class TestExpandPopupFields(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# elapsed_fraction
+# ---------------------------------------------------------------------------
+
+class TestElapsedFraction(unittest.TestCase):
+    """Tests for elapsed_fraction(), the instant-based form of elapsed_pct()."""
+
+    RESET = datetime(2026, 11, 5, 19, 0, tzinfo=timezone.utc)
+
+    def test_wall_clock_share_at_any_instant(self):
+        fraction_at = elapsed_fraction(self.RESET.isoformat(), PERIOD_7D)
+        self.assertAlmostEqual(fraction_at(self.RESET - timedelta(days=7)), 0.0)
+        self.assertAlmostEqual(fraction_at(self.RESET - timedelta(days=3.5)), 0.5)
+        self.assertAlmostEqual(fraction_at(self.RESET), 1.0)
+
+    def test_clamped_outside_period(self):
+        fraction_at = elapsed_fraction(self.RESET.isoformat(), PERIOD_7D)
+        self.assertEqual(fraction_at(self.RESET - timedelta(days=8)), 0.0)
+        self.assertEqual(fraction_at(self.RESET + timedelta(days=1)), 1.0)
+
+    def test_matches_elapsed_pct_now(self):
+        """elapsed_pct() is elapsed_fraction() evaluated at the current time."""
+        resets_at = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        fraction = elapsed_fraction(resets_at, PERIOD_7D)(datetime.now(timezone.utc))
+        self.assertAlmostEqual(elapsed_pct(resets_at, PERIOD_7D), fraction * 100, places=3)
+
+    def test_invalid_input_returns_none(self):
+        self.assertIsNone(elapsed_fraction('', PERIOD_7D))
+        self.assertIsNone(elapsed_fraction('not a date', PERIOD_7D))
+        self.assertIsNone(elapsed_fraction(self.RESET.isoformat(), 0))
+
+    def test_timestamp_without_offset_returns_none(self):
+        """A naive timestamp is rejected up front instead of failing on every call."""
+        self.assertIsNone(elapsed_fraction('2026-11-05T19:00:00', PERIOD_7D))
+
+    def test_active_schedule_flat_outside_working_hours(self):
+        """With a schedule the share only grows during working time."""
+        reset = datetime(2026, 1, 19, 0, tzinfo=timezone.utc)
+        schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+        with (
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+            patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', None),
+            patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.astimezone(timezone.utc).date()),
+            patch('usage_monitor_for_claude.formatting._local_boundary',
+                  side_effect=lambda day, hour: datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)),
+        ):
+            fraction_at = elapsed_fraction(reset.isoformat(), PERIOD_7D, field='seven_day')
+            monday_evening = fraction_at(datetime(2026, 1, 12, 18, tzinfo=timezone.utc))
+            tuesday_morning = fraction_at(datetime(2026, 1, 13, 8, tzinfo=timezone.utc))
+            tuesday_noon = fraction_at(datetime(2026, 1, 13, 13, tzinfo=timezone.utc))
+
+        self.assertAlmostEqual(monday_evening, 0.2)
+        self.assertAlmostEqual(tuesday_morning, 0.2)
+        self.assertAlmostEqual(tuesday_noon, 0.3)
+
+
+# ---------------------------------------------------------------------------
+# resolve_icon_fields
+# ---------------------------------------------------------------------------
+
+class TestResolveIconFields(unittest.TestCase):
+    """Tests for resolve_icon_fields()."""
+
+    WEEKLY = {'utilization': 50.0, 'resets_at': '2026-11-05T19:00:00+00:00'}
+    FABLE = {'utilization': 5.0, 'resets_at': '2026-11-05T19:00:00+00:00', 'from_account_limits': True}
+
+    def test_available_fields_keep_their_slots_and_modes(self):
+        """Configured fields present in the response are used unchanged."""
+        usage = {'five_hour': {'utilization': 10.0, 'resets_at': ''}, 'seven_day': self.WEEKLY}
+        result = resolve_icon_fields(['five_hour:overage', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('five_hour', 'overage'), ('seven_day', 'utilization')])
+
+    def test_null_top_field_promotes_bottom_and_fills_from_popup(self):
+        """A plan without a five-hour session shows the weekly quota on top."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE, 'extra_usage': {'utilization': None}}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('seven_day_fable', 'utilization')])
+
+    def test_missing_field_is_treated_like_null(self):
+        """A configured field absent from the response gives up its slot."""
+        usage = {'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE}
+        result = resolve_icon_fields(['seven_day_opus', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('seven_day_fable', 'utilization')])
+
+    def test_null_bottom_field_is_filled_without_moving_top(self):
+        """Only the unavailable slot is replaced."""
+        usage = {'five_hour': {'utilization': 10.0, 'resets_at': ''}, 'seven_day': self.WEEKLY, 'seven_day_sonnet': None}
+        result = resolve_icon_fields(['five_hour', 'seven_day_sonnet'], ['*'], usage)
+        self.assertEqual(result, [('five_hour', 'utilization'), ('seven_day', 'utilization')])
+
+    def test_fallback_skips_fields_already_shown(self):
+        """A fallback never repeats a field that already holds a slot."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY}
+        result = resolve_icon_fields(['seven_day', 'five_hour'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('five_hour', 'utilization')])
+
+    def test_fallback_respects_popup_exclusions(self):
+        """A field hidden from the popup is not used as a fallback either."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['*', '-seven_day_fable'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('five_hour', 'utilization')])
+
+    def test_fallback_follows_popup_order(self):
+        """Fallbacks are taken in the order the popup lists its bars."""
+        usage = {'five_hour': None, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE, 'seven_day_sonnet': self.WEEKLY}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['seven_day_sonnet', '*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('seven_day_sonnet', 'utilization')])
+
+    def test_nothing_available_keeps_configured_fields(self):
+        """With no quota at all the configured fields stay in place (rendered as 0%)."""
+        result = resolve_icon_fields(['five_hour:overage', 'seven_day'], ['*'], {'five_hour': None})
+        self.assertEqual(result, [('five_hour', 'overage'), ('seven_day', 'utilization')])
+
+    def test_zero_utilization_between_windows_stays(self):
+        """A named quota at 0% with no reset window (right after a reset) keeps its slot."""
+        usage = {'five_hour': {'utilization': 0.0, 'resets_at': None}, 'seven_day': self.WEEKLY, 'seven_day_fable': self.FABLE}
+        result = resolve_icon_fields(['five_hour', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('five_hour', 'utilization'), ('seven_day', 'utilization')])
+
+    def test_non_dict_field_is_unavailable(self):
+        """A field pointing at a non-dict value (e.g. the limits array) is replaced."""
+        usage = {'limits': [{'percent': 12}], 'seven_day': self.WEEKLY}
+        result = resolve_icon_fields(['limits', 'seven_day'], ['*'], usage)
+        self.assertEqual(result, [('seven_day', 'utilization'), ('limits', 'utilization')])
+
+
+# ---------------------------------------------------------------------------
 # elapsed_pct
 # ---------------------------------------------------------------------------
 
@@ -437,6 +670,127 @@ class TestElapsedPct(unittest.TestCase):
 
         assert result is not None
         self.assertAlmostEqual(result, 50.0)
+
+    def test_active_schedule_workweek_review_example(self, mock_dt):
+        """Thursday 10:00 to Thursday 10:00 reaches 37.5% on Monday at 09:00."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        with _active_schedule(_workweek()):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D, 'seven_day'), 37.5)
+
+    def test_active_schedule_freezes_over_weekend(self, mock_dt):
+        """Friday evening, Sunday, and Monday opening have the same active elapsed time."""
+        with _active_schedule(_workweek()):
+            for now in (datetime(2025, 1, 10, 17), datetime(2025, 1, 12, 12), datetime(2025, 1, 13, 9)):
+                with self.subTest(now=now):
+                    self._setup(mock_dt, now.replace(tzinfo=timezone.utc))
+                    self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D), 37.5)
+
+    def test_active_schedule_freezes_during_split_slot_break(self, mock_dt):
+        """A lunch break contributes no active time to a two-day quota."""
+        schedule = {'mon': [(9.0, 12.0), (13.0, 17.0)], 'tue': [(8.0, 12.0)]}
+        with _active_schedule(schedule):
+            for hour, minute in ((12, 0), (12, 30), (13, 0)):
+                with self.subTest(hour=hour, minute=minute):
+                    self._setup(mock_dt, datetime(2025, 1, 13, hour, minute, tzinfo=timezone.utc))
+                    self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 2 * 86400), 3 / 11 * 100)
+
+    def test_active_schedule_overnight_slots_are_clipped_to_window(self, mock_dt):
+        """A second overnight shift is clipped at the quota reset."""
+        self._setup(mock_dt, datetime(2025, 1, 14, 4, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(22.0, 6.0)]}):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 2 * 86400), 60.0)
+
+    def test_active_schedule_previous_day_overnight_is_included(self, mock_dt):
+        """An overnight shift beginning before the window retains its overlapping hours."""
+        self._setup(mock_dt, datetime(2025, 1, 14, 3, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(22.0, 6.0)]}):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 86400), 50.0)
+
+    def test_active_schedule_overlapping_slots_are_counted_once(self, mock_dt):
+        """Overlapping Tuesday and Monday overnight slots form one active interval."""
+        self._setup(mock_dt, datetime(2025, 1, 14, 4, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(0.0, 8.0)]}):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-15T00:00:00+00:00', 2 * 86400), 60.0)
+
+    def test_active_schedule_empty_or_nonoverlapping_falls_back_to_wall_time(self, mock_dt):
+        """A quota containing no scheduled work uses the ordinary elapsed fraction."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, tzinfo=timezone.utc))
+        for schedule in ({}, {'fri': [(9.0, 17.0)]}):
+            with self.subTest(schedule=schedule), _active_schedule(schedule):
+                self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-14T00:00:00+00:00', 86400), 50.0)
+
+    def test_active_schedule_unparseable_reset_returns_none(self, mock_dt):
+        """An empty or malformed resets_at stays uncalculable with a schedule, as without one."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        with _active_schedule(_workweek()):
+            for resets_at in ('', 'not-a-date'):
+                with self.subTest(resets_at=resets_at):
+                    self.assertIsNone(elapsed_pct(resets_at, PERIOD_7D, 'seven_day'))
+                    self.assertEqual(divider_positions(resets_at, PERIOD_7D, 'seven_day'), [])
+
+    def test_active_schedule_five_hour_always_uses_wall_time(self, mock_dt):
+        """Even an explicit wildcard filter cannot change five-hour pacing."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(11.0, 12.0)]}, ['*']):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-13T14:30:00+00:00', PERIOD_5H, 'five_hour'), 50.0)
+
+    def test_active_schedule_other_subday_windows_use_wall_time(self, mock_dt):
+        """The one-day eligibility boundary also excludes arbitrary shorter windows."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, 30, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(9.0, 17.0)]}, ['*']):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-14T00:00:00+00:00', 23 * 3600, 'twenty_three_hour'), 50.0)
+
+    def test_active_schedule_applies_to_daily_and_custom_durations(self, mock_dt):
+        """The default filter includes all periods of at least one day."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 12, tzinfo=timezone.utc))
+        with _active_schedule({'mon': [(9.0, 17.0)]}):
+            for seconds, field in ((86400, 'one_day'), (2 * 86400, 'two_day_custom')):
+                with self.subTest(seconds=seconds):
+                    self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-14T00:00:00+00:00', seconds, field), 37.5)
+
+    def test_active_schedule_fields_exact_wildcard_and_disabled(self, mock_dt):
+        """Only matching explicit field filters enable active-time pacing."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        reset = '2025-01-16T10:00:00+00:00'
+        wall_pct = 95 / 168 * 100
+        cases = (
+            (None, None, 37.5),
+            (['seven_day'], 'seven_day', 37.5),
+            (['seven_day'], 'seven_day_sonnet', wall_pct),
+            (['seven_day*'], 'seven_day_sonnet', 37.5),
+            (['*_sonnet'], 'seven_day_sonnet', 37.5),
+            (['five_hour', 'seven_day'], 'seven_day', 37.5),
+            ([], 'seven_day', wall_pct),
+            (['*'], None, wall_pct),
+        )
+        for fields, field, expected in cases:
+            with self.subTest(fields=fields, field=field), _active_schedule(_workweek(), fields):
+                self.assertAlmostEqual(_numeric_elapsed_pct(reset, PERIOD_7D, field), expected)
+
+    def test_active_schedule_clamps_before_and_after_window(self, mock_dt):
+        """Scheduled elapsed time remains bounded before start and after reset."""
+        with _active_schedule(_workweek()):
+            for now, expected in ((datetime(2025, 1, 1), 0.0), (datetime(2025, 2, 1), 100.0)):
+                with self.subTest(now=now):
+                    self._setup(mock_dt, now.replace(tzinfo=timezone.utc))
+                    self.assertEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D), expected)
+
+    def test_active_schedule_full_days_preserve_wall_time(self, mock_dt):
+        """An unrestricted seven-day schedule gives the original elapsed fraction."""
+        self._setup(mock_dt, datetime(2025, 1, 13, 9, tzinfo=timezone.utc))
+        schedule = {day: [(0.0, 24.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')}
+        with _active_schedule(schedule):
+            self.assertAlmostEqual(_numeric_elapsed_pct('2025-01-16T10:00:00+00:00', PERIOD_7D), 95 / 168 * 100)
+
+    def test_active_schedule_measures_real_time_across_both_dst_changes(self, mock_dt):
+        """Sunday 00:00-04:00 lasts three spring hours and five autumn hours."""
+        local_zone = _dst_test_zone()
+        for month, day, expected in ((3, 29, 2 / 3 * 100), (10, 25, 80.0)):
+            now = datetime(2026, month, day, 3, tzinfo=local_zone).astimezone(timezone.utc)
+            reset = datetime(2026, month, day + 1, tzinfo=local_zone).isoformat()
+            with self.subTest(month=month), _active_schedule({'sun': [(0.0, 4.0)]}, local_zone=local_zone):
+                self._setup(mock_dt, now)
+                self.assertAlmostEqual(_numeric_elapsed_pct(reset, PERIOD_7D), expected)
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +924,141 @@ class TestDividerPositions(unittest.TestCase):
         result = divider_positions(reset_iso, PERIOD_7D)
         self.assertGreater(len(result), 0)
         self.assertAlmostEqual(result[0], 12 / 168, places=2)
+
+    def test_active_schedule_workday_dividers_use_cumulative_active_time(self):
+        """The Thursday review window marks five workday starts, including its final partial day."""
+        with _active_schedule(_workweek()):
+            result = divider_positions('2025-01-16T10:00:00+00:00', PERIOD_7D, 'seven_day')
+        self.assertEqual(result, [7 / 40, 15 / 40, 23 / 40, 31 / 40, 39 / 40])
+
+    def test_active_schedule_split_slots_do_not_add_lunch_dividers(self):
+        """Two daily slots still produce only the next workday's divider."""
+        schedule = {'mon': [(9.0, 12.0), (13.0, 17.0)], 'tue': [(8.0, 12.0)]}
+        with _active_schedule(schedule):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [7 / 11])
+
+    def test_active_schedule_near_edge_dividers_are_hidden(self):
+        """Fractional-hour workdays do not draw dividers on either bar edge."""
+        schedules = (
+            {'mon': [(23.99, 24.0)], 'tue': [(0.0, 8.0)]},
+            {'mon': [(0.0, 23.99)], 'tue': [(0.0, 0.01)]},
+        )
+        for schedule in schedules:
+            with self.subTest(schedule=schedule), _active_schedule(schedule):
+                self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [])
+
+    def test_active_schedule_overnight_continuation_adds_no_midnight_divider(self):
+        """An overnight workday is divided only when the following workday starts."""
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(22.0, 6.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [0.8])
+
+    def test_active_schedule_previous_day_overnight_has_no_invented_start(self):
+        """A carried-over shift contributes time without inventing an interior workday start."""
+        with _active_schedule({'mon': [(22.0, 6.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 86400), [])
+
+    def test_active_schedule_first_slot_is_chronological(self):
+        """Unsorted split slots select the actual first daily slot for the divider."""
+        with _active_schedule({'mon': [(9.0, 17.0)], 'tue': [(13.0, 17.0), (9.0, 12.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [8 / 15])
+
+    def test_active_schedule_overlapping_workdays_use_union_time(self):
+        """A workday starting inside an overnight shift uses the union of active seconds."""
+        with _active_schedule({'mon': [(22.0, 6.0)], 'tue': [(0.0, 8.0)]}):
+            self.assertEqual(divider_positions('2025-01-15T00:00:00+00:00', 2 * 86400), [0.2])
+
+    def test_active_schedule_zero_time_uses_legacy_dividers(self):
+        """Empty and nonoverlapping schedules retain the ordinary calendar divider path."""
+        reset = '2025-01-14T12:00:00+00:00'
+        with _active_schedule(None):
+            expected = divider_positions(reset, 86400)
+        for schedule in ({}, {'fri': [(9.0, 17.0)]}):
+            with self.subTest(schedule=schedule), _active_schedule(schedule):
+                self.assertEqual(divider_positions(reset, 86400), expected)
+
+    def test_active_schedule_unmatched_and_empty_filters_keep_legacy_dividers(self):
+        """Explicit filters apply to dividers as well as to the elapsed marker."""
+        reset = '2025-01-16T10:00:00+00:00'
+        with _active_schedule(None):
+            expected = divider_positions(reset, PERIOD_7D)
+        for fields in ([], ['one_day'], ['seven_day']):
+            with self.subTest(fields=fields), _active_schedule(_workweek(), fields):
+                self.assertEqual(divider_positions(reset, PERIOD_7D, 'seven_day_sonnet'), expected)
+        with _active_schedule(_workweek(), ['seven_day*']):
+            self.assertEqual(divider_positions(reset, PERIOD_7D, 'seven_day_sonnet'), [7 / 40, 15 / 40, 23 / 40, 31 / 40, 39 / 40])
+
+    def test_active_schedule_five_hour_dividers_are_unchanged(self):
+        """Five-hour dividers remain equal hours even when the field filter matches."""
+        with _active_schedule({'mon': [(11.0, 12.0)]}, ['*']):
+            self.assertEqual(divider_positions('2025-01-13T14:30:00+00:00', PERIOD_5H, 'five_hour'), [0.2, 0.4, 0.6, 0.8])
+
+    def test_active_schedule_full_days_divide_at_daily_boundaries(self):
+        """An always-active UTC schedule places its daily dividers at UTC midnight."""
+        reset = '2025-01-16T10:00:00+00:00'
+        schedule = {day: [(0.0, 24.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')}
+        with _active_schedule(schedule):
+            self.assertEqual(divider_positions(reset, PERIOD_7D), [(14 + 24 * index) / 168 for index in range(7)])
+
+    def test_active_schedule_dst_workdays_use_real_local_boundaries(self):
+        """A Sunday DST change makes the next workday begin at three-sevenths or five-ninths."""
+        local_zone = _dst_test_zone()
+        for month, day, expected in ((3, 31, 3 / 7), (10, 27, 5 / 9)):
+            reset = datetime(2026, month, day, tzinfo=local_zone).isoformat()
+            with self.subTest(month=month), _active_schedule({'sun': [(0.0, 4.0)], 'mon': [(0.0, 4.0)]}, local_zone=local_zone):
+                self.assertEqual(divider_positions(reset, PERIOD_7D), [expected])
+
+    def test_local_boundary_resolves_wall_time_around_dst(self):
+        """The real helper maps a date and fractional hour to that local wall time
+        on both sides of the EU and US changeovers, and 24 to the next midnight."""
+        days = (
+            date(2026, 3, 7), date(2026, 3, 9), date(2026, 3, 28), date(2026, 3, 30),
+            date(2026, 10, 24), date(2026, 10, 26), date(2026, 10, 31), date(2026, 11, 2),
+        )
+        for day in days:
+            with self.subTest(day=day):
+                morning = _local_boundary(day, 9.5).astimezone()
+                self.assertEqual((morning.date(), morning.hour, morning.minute), (day, 9, 30))
+                end_of_day = _local_boundary(day, 24.0).astimezone()
+                self.assertEqual((end_of_day.date(), end_of_day.hour, end_of_day.minute), (day + timedelta(days=1), 0, 0))
+                self.assertEqual(_local_date(_local_boundary(day, 0.5)), day)
+                self.assertEqual(_local_date(_local_boundary(day, 23.5)), day)
+
+    def _assert_schedule_on_local_hours(self, reset_iso: str):
+        """Every boundary of an unpatched daily 09:30-17:00 schedule must land on
+        those local hours - also when a DST changeover falls inside the period.
+        Unlike the other schedule tests this runs the real _local_boundary() and
+        _local_date() against the system timezone."""
+        schedule = {day: [(9.5, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')}
+        end = datetime.fromisoformat(reset_iso)
+        begin = end - timedelta(seconds=PERIOD_7D)
+        with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule):
+            intervals, starts = _schedule_period(end, PERIOD_7D)
+
+        self.assertIn(len(intervals), (7, 8))
+        for lower, upper in intervals:
+            local_start, local_end = lower.astimezone(), upper.astimezone()
+            if lower != begin:
+                self.assertEqual((local_start.hour, local_start.minute), (9, 30), f'slot starts at {local_start.isoformat()}')
+            if upper != end:
+                self.assertEqual((local_end.hour, local_end.minute), (17, 0), f'slot ends at {local_end.isoformat()}')
+
+        self.assertIn(len(starts), (6, 7))
+        self.assertEqual(len({start.astimezone().date() for start in starts}), len(starts))
+        for start in starts:
+            local_start = start.astimezone()
+            self.assertEqual((local_start.hour, local_start.minute), (9, 30), f'workday starts at {local_start.isoformat()}')
+
+    def test_schedule_stays_on_local_hours_across_autumn_dst(self):
+        """A week spanning the late-October changeover (EU zones) keeps every slot on its local hours."""
+        self._assert_schedule_on_local_hours('2026-10-28T11:00:00+00:00')
+
+    def test_schedule_stays_on_local_hours_across_early_november_dst(self):
+        """A week spanning the early-November changeover (US zones) keeps every slot on its local hours."""
+        self._assert_schedule_on_local_hours('2026-11-04T11:00:00+00:00')
+
+    def test_schedule_stays_on_local_hours_across_spring_dst(self):
+        """A week spanning the late-March changeover (EU zones) keeps every slot on its local hours."""
+        self._assert_schedule_on_local_hours('2027-03-31T11:00:00+00:00')
 
 
 # ---------------------------------------------------------------------------
@@ -774,6 +1263,12 @@ class TestTimeUntil(unittest.TestCase):
 class TestFormatTooltip(unittest.TestCase):
     """Tests for format_tooltip()."""
 
+    def setUp(self):
+        # A default the per-test patches override - the real value comes from the user's settings file.
+        popup_fields = patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['*'])
+        popup_fields.start()
+        self.addCleanup(popup_fields.stop)
+
     def test_error(self):
         result = format_tooltip({'error': 'Connection failed'})
         self.assertEqual(result, 'Usage Monitor: Error\nConnection failed')
@@ -798,55 +1293,47 @@ class TestFormatTooltip(unittest.TestCase):
         error_line = result.split('\n')[1]
         self.assertEqual(len(error_line), 80)
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_both_periods(self, _mock_tu):
+    def test_both_periods(self):
         data = {
             'five_hour': {'utilization': 42.0, 'resets_at': ''},
             'seven_day': {'utilization': 15.0, 'resets_at': ''},
         }
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 42%\n7d: 15%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='Resets in 2h 30m (14:30)')
-    def test_with_reset_info(self, _mock_tu):
+    def test_reset_time_not_shown(self):
+        """Lines carry no reset time, so their length does not depend on the locale."""
         data = {'five_hour': {'utilization': 42.0, 'resets_at': '2025-01-15T14:30:00+00:00'}}
-        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 42% (Resets in 2h 30m (14:30))')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 42%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_utilization_none_skipped(self, _mock_tu):
+    def test_utilization_none_skipped(self):
         data = {
             'five_hour': {'utilization': None, 'resets_at': ''},
             'seven_day': {'utilization': 80.0, 'resets_at': ''},
         }
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 80%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_empty_data_shows_title_only(self, _mock_tu):
+    def test_empty_data_shows_title_only(self):
         self.assertEqual(format_tooltip({}), 'Claude Usage')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_zero_percent(self, _mock_tu):
+    def test_zero_percent(self):
         data = {'five_hour': {'utilization': 0.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 0%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_hundred_percent(self, _mock_tu):
+    def test_hundred_percent(self):
         data = {'five_hour': {'utilization': 100.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 100%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_entry_none_skipped(self, _mock_tu):
+    def test_entry_none_skipped(self):
         """Entry that is None is skipped by the guard clause."""
         data = {'five_hour': None, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_entry_empty_dict_skipped(self, _mock_tu):
+    def test_entry_empty_dict_skipped(self):
         """Entry with no utilization key is skipped."""
         data = {'five_hour': {}, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_only_seven_day(self, _mock_tu):
+    def test_only_seven_day(self):
         """Only seven_day present, five_hour absent."""
         data = {'seven_day': {'utilization': 25.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 25%')
@@ -857,8 +1344,7 @@ class TestFormatTooltip(unittest.TestCase):
         result = format_tooltip(data)
         self.assertEqual(result, 'Usage Monitor: Error\nSomething broke')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
-    def test_extra_usage_ignored(self, _mock_tu):
+    def test_extra_usage_ignored(self):
         """Extra usage data is not shown in tooltip."""
         data = {
             'five_hour': {'utilization': 26.0, 'resets_at': ''},
@@ -866,41 +1352,94 @@ class TestFormatTooltip(unittest.TestCase):
         }
         self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 26%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['seven_day_sonnet', 'five_hour'])
-    def test_custom_fields_and_order(self, _mock_tu):
+    def test_custom_fields_and_order(self):
         """Custom tooltip_fields controls which fields appear and in what order."""
         data = {
             'five_hour': {'utilization': 10.0, 'resets_at': ''},
             'seven_day': {'utilization': 20.0, 'resets_at': ''},
             'seven_day_sonnet': {'utilization': 30.0, 'resets_at': ''},
         }
-        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d Sonnet: 30%\n5h: 10%')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\nSonnet 7d: 30%\n5h: 10%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['seven_day_sonnet'])
-    def test_custom_field_null_skipped(self, _mock_tu):
-        """Configured field that is null in API response is skipped."""
+    def test_custom_field_null_gives_up_its_line(self):
+        """Configured field that is null in API response gives its line to the next popup bar."""
         data = {'seven_day_sonnet': None, 'five_hour': {'utilization': 50.0, 'resets_at': ''}}
-        self.assertEqual(format_tooltip(data), 'Claude Usage')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['nonexistent_field'])
-    def test_custom_field_missing_from_response_skipped(self, _mock_tu):
-        """Configured field not present in API response is skipped."""
+    def test_custom_field_missing_from_response_gives_up_its_line(self):
+        """Configured field not present in API response gives its line to the next popup bar."""
         data = {'five_hour': {'utilization': 50.0, 'resets_at': ''}}
-        self.assertEqual(format_tooltip(data), 'Claude Usage')
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 50%')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
+    @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['nonexistent_field', 'five_hour'])
+    def test_unavailable_field_skipped_when_no_other_quota_left(self):
+        """Without a popup bar to take its place the unavailable field is skipped."""
+        data = {'five_hour': {'utilization': 50.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 50%')
+
+    def test_plan_without_session_quota_lists_the_icon_quotas(self):
+        """With five_hour null the default tooltip names the quotas the tray icon shows."""
+        data = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': '2026-11-05T19:00:00+00:00'},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': '2026-11-05T19:00:00+00:00', 'from_account_limits': True},
+            'extra_usage': {'is_enabled': False, 'utilization': None},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%\nFable 7d: 5%')
+
+    @patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['*', '-seven_day_fable'])
+    def test_fallback_respects_popup_exclusions(self):
+        """A bar hidden from the popup does not take a free tooltip line either."""
+        data = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': ''},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': ''},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
+
+    @patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['seven_day_opus', '*'])
+    def test_fallback_follows_popup_order(self):
+        """Free lines are filled in the order the popup lists its bars."""
+        data = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': ''},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': ''},
+            'seven_day_opus': {'utilization': 7.0, 'resets_at': ''},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%\nOpus 7d: 7%')
+
+    @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['seven_day', 'five_hour'])
+    def test_fallback_never_repeats_a_listed_field(self):
+        """A field already in the tooltip is not used to fill a free line."""
+        data = {'five_hour': None, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%')
+
+    @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['nimbus_quill', 'seven_day'])
+    def test_quota_not_yet_applying_gives_up_its_line(self):
+        """A code-named quota listed before it applies is treated like a missing one."""
+        data = {
+            'nimbus_quill': {'utilization': 0.0, 'resets_at': None},
+            'seven_day': {'utilization': 50.0, 'resets_at': ''},
+            'seven_day_sonnet': {'utilization': 9.0, 'resets_at': ''},
+        }
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n7d: 50%\nSonnet 7d: 9%')
+
+    def test_zero_percent_between_windows_keeps_its_line(self):
+        """The session right after a reset (0%, no window) is still listed."""
+        data = {'five_hour': {'utilization': 0.0, 'resets_at': None}, 'seven_day': {'utilization': 50.0, 'resets_at': ''}}
+        self.assertEqual(format_tooltip(data), 'Claude Usage\n5h: 0%\n7d: 50%')
+
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', [])
-    def test_empty_fields_shows_title_only(self, _mock_tu):
+    def test_empty_fields_shows_title_only(self):
         """Empty tooltip_fields shows only the title."""
         data = {'five_hour': {'utilization': 50.0, 'resets_at': ''}}
         self.assertEqual(format_tooltip(data), 'Claude Usage')
 
-    @patch('usage_monitor_for_claude.formatting.time_until', return_value='')
     @patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', ['five_hour', 'limits'])
-    def test_custom_field_pointing_to_non_dict_skipped(self, _mock_tu):
+    def test_custom_field_pointing_to_non_dict_skipped(self):
         """A configured field holding a non-dict response value (e.g. the limits
         array) is skipped instead of crashing the poll loop."""
         data = {
@@ -915,44 +1454,74 @@ class TestFormatTooltip(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestTooltipMaxLength(unittest.TestCase):
-    """Verify tooltip text stays within Windows' 127-char limit for all locales."""
+    """Verify the tooltip stays within Windows' 127-char limit for all locales."""
 
     TOOLTIP_MAX = 127
+    KNOWN_FIELDS = [
+        'five_hour', 'seven_day', 'seven_day_sonnet', 'seven_day_opus',
+        'seven_day_cowork', 'seven_day_oauth_apps', 'seven_day_fable',
+    ]
 
-    def _longest_reset(self, t: dict, max_hours: int) -> str:
-        """Return the longest possible reset text for a given max-hour value."""
-        dur = t['duration_hm'].format(h=max_hours, m=59)
-        candidates = [
-            t['resets_in'].format(duration=dur, clock='23:59'),
-            t['resets_tomorrow'].format(clock='23:59'),
-        ]
-        for wd in t['weekdays']:
-            candidates.append(t['resets_weekday'].format(day=wd, clock='23:59'))
-
-        return max(candidates, key=len)
-
-    def _worst_case_tooltip(self, t: dict) -> str:
-        """Build the longest possible tooltip from a locale dict.
-
-        Worst case: both 5h and 7d visible at 100%, each with the longest
-        possible reset text (same-day, tomorrow, or weekday).
-        """
-        reset_5h = self._longest_reset(t, max_hours=4)
-        reset_7d = self._longest_reset(t, max_hours=23)
-
-        return f"{t['tooltip_title']}\n5h: 100% ({reset_5h})\n7d: 100% ({reset_7d})"
-
-    def test_all_locales_fit_tooltip(self):
-        """Every locale's worst-case tooltip must fit in 127 characters."""
+    def test_all_known_quotas_fit_in_every_locale(self):
+        """Every known quota at 100% in one tooltip still fits, whatever the locale."""
+        data = {field: {'utilization': 100.0, 'resets_at': '2026-11-05T19:00:00+00:00'} for field in self.KNOWN_FIELDS}
         for locale_file in sorted(LOCALE_DIR.glob('*.json')):
             with self.subTest(locale=locale_file.stem):
-                t = json.loads(locale_file.read_text(encoding='utf-8'))
-                tooltip = self._worst_case_tooltip(t)
-                self.assertLessEqual(
-                    len(tooltip), self.TOOLTIP_MAX,
-                    f"Locale '{locale_file.stem}' tooltip is {len(tooltip)} chars "
-                    f"(max {self.TOOLTIP_MAX}):\n{tooltip}",
-                )
+                locale_strings = json.loads(locale_file.read_text(encoding='utf-8'))
+                with (
+                    patch('usage_monitor_for_claude.formatting.T', locale_strings),
+                    patch('usage_monitor_for_claude.formatting.TOOLTIP_FIELDS', self.KNOWN_FIELDS),
+                    patch('usage_monitor_for_claude.formatting.POPUP_FIELDS', ['*']),
+                ):
+                    tooltip = format_tooltip(data)
+
+                self.assertEqual(tooltip.count('\n'), len(self.KNOWN_FIELDS))
+                self.assertLessEqual(len(tooltip), self.TOOLTIP_MAX, f"Locale '{locale_file.stem}' tooltip is {len(tooltip)} chars:\n{tooltip}")
+
+
+# ---------------------------------------------------------------------------
+# fit_tooltip
+# ---------------------------------------------------------------------------
+
+class TestFitTooltip(unittest.TestCase):
+    """Tests for fit_tooltip()."""
+
+    def test_no_limit_returns_text_unchanged(self):
+        text = 'Claude Usage\n' + '\n'.join(f'{number}d: 100%' for number in range(100))
+        self.assertEqual(fit_tooltip(text, None), text)
+
+    def test_text_within_limit_unchanged(self):
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%', 127), 'Claude Usage\n5h: 42%')
+
+    def test_text_exactly_at_limit_unchanged(self):
+        text = 'Claude Usage\n5h: 42%'
+        self.assertEqual(fit_tooltip(text, len(text)), text)
+
+    def test_drops_whole_lines_from_the_end(self):
+        """No line is shown cut off - a line that does not fit is left out entirely."""
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%\n7d: 15%', 22), 'Claude Usage\n5h: 42%')
+
+    def test_drops_several_lines(self):
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%\n7d: 15%\nOpus 7d: 3%', 13), 'Claude Usage')
+
+    def test_cuts_a_first_line_that_is_too_long_alone(self):
+        """A long account prefix in the first line is the one case that is cut."""
+        self.assertEqual(fit_tooltip('[' + 'x' * 200 + '] Claude Usage\n5h: 42%', 10), '[xxxxxxxxx')
+
+    def test_counts_utf16_code_units(self):
+        """An emoji takes two units of the Windows buffer - 25 characters here, but 27 units."""
+        text = '[\U0001F600\U0001F600] Claude Usage\n5h: 42%'
+        self.assertEqual(fit_tooltip(text, 26), '[\U0001F600\U0001F600] Claude Usage')
+
+    def test_cut_never_splits_a_character(self):
+        """Cutting a too-long first line removes whole characters, even two-unit ones."""
+        self.assertEqual(fit_tooltip('\U0001F600' * 10, 5), '\U0001F600\U0001F600')
+
+    def test_zero_limit(self):
+        self.assertEqual(fit_tooltip('Claude Usage\n5h: 42%', 0), '')
+
+    def test_empty_text(self):
+        self.assertEqual(fit_tooltip('', 127), '')
 
 
 # ---------------------------------------------------------------------------

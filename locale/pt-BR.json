@@ -13,6 +13,10 @@
     "autostart": "Iniciar ao fazer login",
     "restart": "Reiniciar",
     "menu_project": "Projeto no GitHub",
+    "refresh": "Atualizar agora",
+    "refresh_deferred_reset": "Atualização disponível após a redefinição da cota ({duration})",
+    "refresh_cooldown": "Atualização disponível em {duration}",
+    "refresh_backoff": "Limite de solicitações: nova tentativa em {duration}",
     "test_commands": "Testar comandos de eventos",
     "test_reset_5h": "Reset (5 horas)",
     "test_reset_7d": "Reset (7 dias)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} gasto",
     "extra_usage_spent_no_limit": "{used} gasto",
     "extra_usage_balance": "{balance} disponível",
+    "forecast_runs_out": "Neste ritmo: esgotado ~{when}",
+    "forecast_at_reset": "Neste ritmo: ~{pct}% no reset",
+    "forecast_now": "Agora",
     "claude_code": "CLAUDE CODE",
     "changelog": "Changelog",
     "pin_popup": "Fixar popup",
@@ -71,6 +78,5 @@
     "status_next_update": "Próx. atualiz.: {duration}",
     "status_refreshing": "Atualizando...",
     "already_running": "Usage Monitor for Claude v{running_version} já está em execução.\n\nDeseja substituir a instância em execução?",
-    "replace_failed": "Não foi possível substituir a instância em execução.\n\nFeche-a manualmente e tente novamente.",
-    "refresh": "Atualizar agora"
+    "replace_failed": "Não foi possível substituir a instância em execução.\n\nFeche-a manualmente e tente novamente."
 }

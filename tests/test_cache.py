@@ -10,6 +10,9 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from collections.abc import Callable
+from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import patch
 
 from usage_monitor_for_claude.cache import CacheSnapshot, UpdateResult, UsageCache
@@ -24,6 +27,16 @@ _SERVER_MSG_DATA = {'error': 'HTTP 429', 'server_message': 'Rate limited.'}
 def _make_cache() -> UsageCache:
     """Create a fresh UsageCache instance."""
     return UsageCache()
+
+
+def _sent_usage_response(data: dict[str, Any]) -> Callable[..., dict[str, Any]]:
+    """Simulate a provider send before returning the given response to the cache."""
+    def fetch(*, on_send: Callable[[], None] | None = None) -> dict[str, Any]:
+        if on_send is not None:
+            on_send()
+        return data
+
+    return fetch
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +197,74 @@ class TestCooldownBehavior(unittest.TestCase):
 class TestSuccessState(unittest.TestCase):
     """Tests for state updates after successful API calls."""
 
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    def test_success_logs_readings_in_snapshot(self):
+        """Every successful fetch adds its readings to the snapshot's in-memory history."""
+        cache = _make_cache()
+        weekly = {'seven_day': {'utilization': 10.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        rising = {'seven_day': {'utilization': 12.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=weekly):
+            cache.update()
+        first = cache.snapshot
+        cache._last_success_time = 0  # lift the cooldown for the second fetch
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=rising):
+            cache.update()
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [10.0, 12.0])
+        self.assertEqual([pct for _, pct in first.history['seven_day']['samples']], [10.0])
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', False)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 10.0, 'resets_at': '2026-11-05T19:00:00+00:00'}})
+    def test_no_readings_logged_without_forecast_chart(self, _mock):
+        """With the chart disabled nothing reads the log, so a fetch records nothing."""
+        cache = _make_cache()
+        cache.update()
+        self.assertEqual(cache.snapshot.history, {})
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', False)
+    def test_restart_history_without_forecast_chart(self):
+        """With the chart disabled a restart neither records a reading nor bumps the version."""
+        cache = _make_cache()
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 10.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}):
+            cache.update()
+        version_before = cache.snapshot.version
+
+        cache.restart_history()
+
+        self.assertEqual(cache.snapshot.history, {})
+        self.assertEqual(cache.snapshot.version, version_before)
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    def test_restart_history_keeps_only_the_latest_reading(self):
+        """After an account switch the log holds only the new account's first reading."""
+        cache = _make_cache()
+        resets_at = '2026-11-05T19:00:00+00:00'
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 10.0, 'resets_at': resets_at}}):
+            cache.update()
+        cache._last_success_time = 0  # lift the cooldown for the second fetch
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value={'seven_day': {'utilization': 60.0, 'resets_at': resets_at}}):
+            cache.update()
+        version_before = cache.snapshot.version
+
+        cache.restart_history()
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [60.0])
+        self.assertGreater(cache.snapshot.version, version_before)
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    def test_restart_history_without_data(self):
+        """Restarting before the first successful fetch leaves an empty log."""
+        cache = _make_cache()
+        cache.restart_history()
+        self.assertEqual(cache.snapshot.history, {})
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
+    def test_error_leaves_history_unchanged(self, _mock):
+        cache = _make_cache()
+        cache.update()
+        self.assertEqual(cache.snapshot.history, {})
+
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
     def test_success_stores_usage_data(self, _mock):
         cache = _make_cache()
@@ -218,12 +299,11 @@ class TestSuccessState(unittest.TestCase):
         self.assertFalse(cache.refreshing)
 
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
-    def test_success_increments_version_twice(self, _mock):
-        """Version increments once for refreshing=True, once for success."""
+    def test_success_increments_version_for_fetch_and_feedback(self, _mock):
+        """Version tracks fetch start, successful data and the new manual retry feedback."""
         cache = _make_cache()
         cache.update()
-        # refreshing sets version to 1, _record_success sets version to 2
-        self.assertEqual(cache.version, 2)
+        self.assertEqual(cache.version, 3)
 
     @patch('usage_monitor_for_claude.cache.read_access_token', return_value='tok-a')
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
@@ -308,11 +388,11 @@ class TestErrorState(unittest.TestCase):
         self.assertFalse(cache.refreshing)
 
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
-    def test_error_increments_version_twice(self, _mock):
-        """Version increments for refreshing=True, then for error completion."""
+    def test_error_increments_version_for_fetch_and_feedback(self, _mock):
+        """Version tracks fetch start, failed completion and the new manual retry feedback."""
         cache = _make_cache()
         cache.update()
-        self.assertEqual(cache.version, 2)
+        self.assertEqual(cache.version, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -822,6 +902,13 @@ class TestSnapshot(unittest.TestCase):
         self.assertEqual(snap.usage, _SUCCESS_DATA)
         self.assertEqual(snap.last_error, 'some error')
         self.assertEqual(snap.version, 42)
+
+    def test_manual_refresh_feedback_defaults_to_empty(self) -> None:
+        """A fresh cache has no deferred-manual-action message or retry timestamp."""
+        snapshot = _make_cache().snapshot
+
+        self.assertIsNone(snapshot.manual_refresh_reason)
+        self.assertIsNone(snapshot.manual_refresh_retry_at)
 
     def test_snapshot_is_frozen(self):
         cache = _make_cache()
@@ -1381,35 +1468,483 @@ class TestEnsureProfileTokenChange(unittest.TestCase):
 
 
 class TestManualRefreshBackoff(unittest.TestCase):
-    """Manual refresh bypasses the successful-fetch floor, never backoff."""
+    """Manual refresh observes the completion floor, send budget, and existing guards."""
 
-    def test_cooldown_bypass_and_automatic_floor(self) -> None:
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_cooldown_bypass_and_automatic_floor(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """A first manual request bypasses POLL_FAST after 15 seconds; automatic polling retains it."""
         cache = _make_cache()
-        cache._last_success_time = 10000
-        with patch('usage_monitor_for_claude.cache.time.time', return_value=10001), \
-             patch.object(cache, '_fetch_and_process', return_value=UpdateResult(data={})) as fetch:
-            self.assertIsNone(cache.update().data)
-            fetch.assert_not_called()
-            self.assertEqual(cache.update(manual=True).data, {})
-            fetch.assert_called_once()
+        cache.update()
 
-    def test_manual_respects_backoff_force_keeps_account_switch_semantics(self) -> None:
-        cache = _make_cache()
-        cache._rate_limit_until = 10100
-        with patch('usage_monitor_for_claude.cache.time.time', return_value=10001), \
-             patch.object(cache, '_fetch_and_process', return_value=UpdateResult(data={})) as fetch:
-            self.assertIsNone(cache.update(manual=True).data)
-            fetch.assert_not_called()
-            self.assertEqual(cache.update(force=True).data, {})
-            fetch.assert_called_once()
+        mock_time.return_value = 1015.0
+        mock_monotonic.return_value = 515.0
+        self.assertIsNone(cache.update().data)
+        self.assertEqual(mock_fetch.call_count, 1)
 
-    def test_manual_keeps_operation_lock(self) -> None:
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+        self.assertEqual(mock_fetch.call_count, 2)
+        self.assertEqual(cache.last_success_time, 1015.0)
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_manual_floor_before_and_at_boundary(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """A successful or failed automatic operation blocks manual sends for exactly 15 seconds."""
+        for data in (_SUCCESS_DATA, _ERROR_DATA):
+            with self.subTest(data=data):
+                cache = _make_cache()
+                mock_time.return_value = 1000.0
+                mock_monotonic.return_value = 500.0
+                mock_fetch.reset_mock()
+                mock_fetch.return_value = data
+                cache.update()
+
+                mock_time.return_value = 1014.999
+                mock_monotonic.return_value = 514.999
+                self.assertIsNone(cache.update(manual=True).data)
+                mock_fetch.assert_called_once()
+                self.assertEqual(cache.snapshot.manual_refresh_reason, 'cooldown')
+                self.assertEqual(cache.snapshot.manual_refresh_retry_at, 1015.0)
+
+                mock_time.return_value = 1015.0
+                mock_monotonic.return_value = 515.0
+                self.assertEqual(cache.update(manual=True).data, data)
+                self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', side_effect=_sent_usage_response(_ERROR_DATA))
+    def test_failed_manual_send_consumes_budget_but_blocked_clicks_do_not(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """An actual failed send retains old data and uses the budget; skipped clicks do not extend it."""
         cache = _make_cache()
-        cache._lock.acquire()
+        cache._usage = _SUCCESS_DATA
+        cache._last_success_time = 800.0
+        self.assertEqual(cache.update(manual=True).data, _ERROR_DATA)
+
+        for elapsed in (1.0, 15.0, 119.999):
+            with self.subTest(elapsed=elapsed):
+                mock_time.return_value = 1000.0 + elapsed
+                mock_monotonic.return_value = 500.0 + elapsed
+                self.assertIsNone(cache.update(manual=True).data)
+                mock_fetch.assert_called_once()
+                self.assertEqual(cache.snapshot.manual_refresh_reason, 'cooldown')
+                self.assertEqual(cache.snapshot.manual_refresh_retry_at, 1120.0)
+        self.assertEqual(cache.usage, _SUCCESS_DATA)
+        self.assertEqual(cache.last_success_time, 800.0)
+        self.assertEqual(cache.last_error, 'server down')
+        self.assertEqual(cache.consecutive_errors, 1)
+        self.assertFalse(cache.refreshing)
+
+        mock_time.return_value = 1120.0
+        mock_monotonic.return_value = 620.0
+        self.assertEqual(cache.update(manual=True).data, _ERROR_DATA)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.api.api_headers', side_effect=[None, {'Authorization': 'Bearer test-token'}])
+    @patch('usage_monitor_for_claude.api.requests.get')
+    def test_signed_out_operation_uses_floor_but_not_send_budget(self, mock_get, _mock_headers, mock_time, mock_monotonic) -> None:
+        """Missing credentials are a completed operation without consuming a network send."""
+        cache = _make_cache()
+        mock_get.return_value.json.return_value = _SUCCESS_DATA
+
+        self.assertIsNotNone(cache.update(manual=True).data)
+        self.assertIsNotNone(cache.last_error)
+        mock_get.assert_not_called()
+
+        mock_time.return_value = 1014.999
+        mock_monotonic.return_value = 514.999
+        self.assertIsNone(cache.update(manual=True).data)
+        mock_get.assert_not_called()
+
+        mock_time.return_value = 1015.0
+        mock_monotonic.return_value = 515.0
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+        mock_get.assert_called_once()
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_floor_starts_when_slow_attempt_completes(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """Time spent fetching does not consume the interval before another manual attempt."""
+        cache = _make_cache()
+
+        def complete_slow_fetch():
+            mock_time.return_value = 1020.0
+            mock_monotonic.return_value = 520.0
+            return _SUCCESS_DATA
+
+        mock_fetch.side_effect = complete_slow_fetch
+        cache.update()
+        mock_fetch.side_effect = None
+        mock_fetch.return_value = _SUCCESS_DATA
+
+        mock_time.return_value = 1034.999
+        mock_monotonic.return_value = 534.999
+        self.assertIsNone(cache.update(manual=True).data)
+        self.assertEqual(mock_fetch.call_count, 1)
+
+        mock_time.return_value = 1035.0
+        mock_monotonic.return_value = 535.0
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_slow_manual_send_uses_start_for_budget_and_longer_gate_for_retry(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """The budget counts from send start; a later completion deadline still controls eligibility."""
+        for duration, retry_at in ((20.0, 1122.0), (110.0, 1125.0)):
+            with self.subTest(duration=duration):
+                cache = _make_cache()
+                mock_time.return_value = 1000.0
+                mock_monotonic.return_value = 500.0
+                mock_fetch.reset_mock()
+
+                def complete_slow_fetch(*, on_send: Callable[[], None]):
+                    # Simulate credential/header preparation before the request is sent.
+                    mock_time.return_value = 1002.0
+                    mock_monotonic.return_value = 502.0
+                    on_send()
+                    mock_time.return_value = 1000.0 + duration
+                    mock_monotonic.return_value = 500.0 + duration
+                    return _SUCCESS_DATA
+
+                mock_fetch.side_effect = complete_slow_fetch
+                self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+                mock_fetch.side_effect = None
+                mock_fetch.return_value = _SUCCESS_DATA
+
+                mock_time.return_value = retry_at - 0.001
+                mock_monotonic.return_value = retry_at - 500.001
+                self.assertIsNone(cache.update(manual=True).data)
+                mock_fetch.assert_called_once()
+                self.assertEqual(cache.snapshot.manual_refresh_reason, 'cooldown')
+                self.assertEqual(cache.snapshot.manual_refresh_retry_at, retry_at)
+
+                mock_time.return_value = retry_at
+                mock_monotonic.return_value = retry_at - 500.0
+                self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+                self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', side_effect=_sent_usage_response(_ERROR_DATA))
+    def test_manual_floor_does_not_change_automatic_error_polling(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """The manual-only floor does not impose a new cooldown on automatic error retries."""
+        cache = _make_cache()
+        cache.update(manual=True)
+        mock_time.return_value = 1001.0
+        mock_monotonic.return_value = 501.0
+
+        self.assertEqual(cache.update().data, _ERROR_DATA)
+
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_manual_preserves_rate_limit_backoff(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """Refresh neither bypasses nor extends a server-provided Retry-After window."""
+        cache = _make_cache()
+        cache._usage = _SUCCESS_DATA
+        mock_fetch.return_value = {'error': 'HTTP 429', 'rate_limited': True, 'retry_after': 300}
+        cache.update()
+        backoff_until = cache._rate_limit_until
+        mock_time.return_value = backoff_until - 1.0
+        mock_monotonic.return_value = backoff_until - 501.0
+
+        self.assertIsNone(cache.update(manual=True).data)
+
+        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(cache._rate_limit_until, backoff_until)
+        self.assertEqual(cache.snapshot.manual_refresh_reason, 'backoff')
+        self.assertEqual(cache.snapshot.manual_refresh_retry_at, backoff_until)
+        self.assertEqual(cache.usage, _SUCCESS_DATA)
+        self.assertIsNone(cache.last_success_time)
+
+        mock_time.return_value = backoff_until
+        mock_monotonic.return_value = backoff_until - 500.0
+        mock_fetch.side_effect = _sent_usage_response(_SUCCESS_DATA)
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', side_effect=_sent_usage_response(_SUCCESS_DATA))
+    def test_force_bypasses_manual_floor_backoff_and_reset(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """A confirmed account switch keeps force semantics even with all manual guards active."""
+        cache = _make_cache()
+        cache.update(manual=True)
+        mock_time.return_value = 1001.0
+        mock_monotonic.return_value = 501.0
+        cache._usage = {'five_hour': {'utilization': 100.0, 'resets_at': datetime.fromtimestamp(1060, timezone.utc).isoformat()}}
+        cache._rate_limit_until = 1300.0
+
+        self.assertEqual(cache.update(force=True, manual=True).data, _SUCCESS_DATA)
+
+        self.assertEqual(mock_fetch.call_count, 2)
+        mock_time.return_value = 1120.0
+        mock_monotonic.return_value = 620.0
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+        self.assertEqual(mock_fetch.call_count, 3)
+
+    @patch('usage_monitor_for_claude.cache.read_access_token', return_value='same-token')
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_manual_keeps_unchanged_failed_token_guard(self, mock_fetch, mock_token) -> None:
+        """Refresh never retries credentials already confirmed to fail authentication."""
+        cache = _make_cache()
+        cache._usage = _SUCCESS_DATA
+        cache._last_failed_token = 'same-token'
+
+        self.assertIsNone(cache.update(manual=True).data)
+
+        mock_fetch.assert_not_called()
+        self.assertEqual(cache.usage, _SUCCESS_DATA)
+        self.assertEqual(cache._last_failed_token, 'same-token')
+
+        mock_token.return_value = 'changed-token'
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+        mock_fetch.assert_called_once()
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_wall_clock_change_does_not_bypass_manual_floor(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """Clock correction cannot turn a just-completed request into a permitted manual retry."""
+        cache = _make_cache()
+        cache.update()
+        mock_time.return_value = 10000.0
+        mock_monotonic.return_value = 501.0
+
+        self.assertIsNone(cache.update(manual=True).data)
+
+        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(cache.snapshot.manual_refresh_reason, 'cooldown')
+        self.assertEqual(cache.snapshot.manual_refresh_retry_at, 10014.0)
+
+
+class TestManualRefreshResetProtection(unittest.TestCase):
+    """Refreshing shortly before a quota reset preserves the scheduled confirming poll."""
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_reset_deferral_preserves_post_reset_fetch(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """T-60 refresh preserves the T+5 poll and does not consume the manual budget."""
+        cache = _make_cache()
+        cached = {'five_hour': {'utilization': 100.0, 'resets_at': datetime.fromtimestamp(1060, timezone.utc).isoformat()}}
+        cache._usage = cached
+        cache._last_success_time = 800.0
+
+        self.assertIsNone(cache.update(manual=True).data)
+
+        mock_fetch.assert_not_called()
+        self.assertEqual(cache.usage, cached)
+        self.assertEqual(cache.last_success_time, 800.0)
+        self.assertEqual(cache.snapshot.manual_refresh_reason, 'reset')
+        self.assertEqual(cache.snapshot.manual_refresh_retry_at, 1065.0)
+        self.assertFalse(cache.refreshing)
+
+        mock_time.return_value = 1065.0
+        mock_monotonic.return_value = 565.0
+        self.assertEqual(cache.update().data, _SUCCESS_DATA)
+        mock_fetch.assert_called_once()
+        self.assertEqual(cache.last_success_time, 1065.0)
+
+        mock_time.return_value = 1080.0
+        mock_monotonic.return_value = 580.0
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+        self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_reset_exactly_poll_fast_away_allows_manual_fetch(self, mock_fetch, _mock_time) -> None:
+        """Exactly POLL_FAST before a reset does not enter the protected final window."""
+        cache = _make_cache()
+        cache._usage = {'five_hour': {'utilization': 90.0, 'resets_at': datetime.fromtimestamp(1120, timezone.utc).isoformat()}}
+        cache._last_success_time = 800.0
+
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+
+        mock_fetch.assert_called_once()
+
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_reset_buffer_before_and_at_boundary(self, mock_fetch, _mock_time) -> None:
+        """The confirming request waits through the propagation buffer, then runs at T+5."""
+        for reset, deferred in ((1000.0, True), (995.001, True), (995.0, False), (994.0, False)):
+            with self.subTest(reset=reset):
+                mock_fetch.reset_mock()
+                cache = _make_cache()
+                cache._usage = {'five_hour': {'utilization': 100.0, 'resets_at': datetime.fromtimestamp(reset, timezone.utc).isoformat()}}
+                cache._last_success_time = 800.0
+
+                result = cache.update(manual=True)
+
+                if deferred:
+                    self.assertIsNone(result.data)
+                    mock_fetch.assert_not_called()
+                    self.assertEqual(cache.snapshot.manual_refresh_reason, 'reset')
+                    self.assertEqual(cache.snapshot.manual_refresh_retry_at, reset + 5.0)
+                else:
+                    self.assertEqual(result.data, _SUCCESS_DATA)
+                    mock_fetch.assert_called_once()
+
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_first_fetch_is_not_deferred_by_reset(self, mock_fetch, _mock_time) -> None:
+        """A cache without any completed success must be able to fetch initial data."""
+        cache = _make_cache()
+        cache._usage = {'five_hour': {'utilization': 100.0, 'resets_at': datetime.fromtimestamp(1060, timezone.utc).isoformat()}}
+
+        self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+
+        mock_fetch.assert_called_once()
+
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_unknown_quota_reset_is_protected(self, mock_fetch, _mock_time) -> None:
+        """A quota need not be one of the two usual windows for its reset to be protected."""
+        cache = _make_cache()
+        cache._usage = {'announced_quota': {'utilization': 12.0, 'resets_at': datetime.fromtimestamp(1060, timezone.utc).isoformat()}}
+        cache._last_success_time = 800.0
+
+        self.assertIsNone(cache.update(manual=True).data)
+
+        mock_fetch.assert_not_called()
+        self.assertEqual(cache.snapshot.manual_refresh_reason, 'reset')
+
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
+    def test_malformed_and_null_resets_do_not_block_refresh(self, mock_fetch, _mock_time) -> None:
+        """Absent, malformed and timezone-naive timestamps are skipped without crashing."""
+        invalid = (None, {}, [], 'not-a-quota', {'utilization': 10}, {'utilization': 10, 'resets_at': None},
+                   {'utilization': 10, 'resets_at': ''}, {'utilization': 10, 'resets_at': 'invalid'},
+                   {'utilization': 10, 'resets_at': 1060}, {'utilization': 10, 'resets_at': '1970-01-01T00:17:40'})
+        for entry in invalid:
+            with self.subTest(entry=entry):
+                mock_fetch.reset_mock()
+                cache = _make_cache()
+                cache._usage = {'five_hour': entry}
+                cache._last_success_time = 800.0
+
+                self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+
+                mock_fetch.assert_called_once()
+
+
+class TestManualRefreshCoalescing(unittest.TestCase):
+    """Manual requests wait for existing updates without issuing a second provider request."""
+
+    @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
+    @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_manual_waits_for_automatic_update_success_or_failure(self, mock_fetch, mock_time, mock_monotonic) -> None:
+        """Coalescing uses an in-flight automatic result and does not consume the manual budget."""
+        for data in (_SUCCESS_DATA, _ERROR_DATA):
+            with self.subTest(data=data):
+                cache = _make_cache()
+                mock_time.return_value = 1000.0
+                mock_monotonic.return_value = 500.0
+                fetch_started = threading.Event()
+                release_fetch = threading.Event()
+                manual_started = threading.Event()
+                manual_done = threading.Event()
+                results = []
+                errors = []
+
+                def blocking_fetch():
+                    fetch_started.set()
+                    if not release_fetch.wait(5):
+                        raise TimeoutError('test did not release automatic fetch')
+                    return data
+
+                def automatic_update():
+                    try:
+                        cache.update()
+                    except Exception as error:
+                        errors.append(error)
+
+                def manual_update():
+                    manual_started.set()
+                    try:
+                        results.append(cache.update(manual=True))
+                    except Exception as error:
+                        errors.append(error)
+                    finally:
+                        manual_done.set()
+
+                mock_fetch.reset_mock()
+                mock_fetch.side_effect = blocking_fetch
+                automatic = threading.Thread(target=automatic_update)
+                manual = threading.Thread(target=manual_update)
+                automatic.start()
+                try:
+                    self.assertTrue(fetch_started.wait(5))
+                    manual.start()
+                    self.assertTrue(manual_started.wait(5))
+                    self.assertFalse(manual_done.wait(0.1))
+                    self.assertTrue(cache.refreshing)
+                finally:
+                    release_fetch.set()
+                    automatic.join(5)
+                    if manual.ident is not None:
+                        manual.join(5)
+
+                self.assertFalse(automatic.is_alive())
+                self.assertFalse(manual.is_alive())
+                self.assertEqual(errors, [])
+                self.assertEqual(len(results), 1)
+                self.assertIsNone(results[0].data)
+                mock_fetch.assert_called_once()
+                self.assertFalse(cache.refreshing)
+                self.assertEqual(cache.last_error, data.get('error'))
+
+                mock_fetch.side_effect = _sent_usage_response(_SUCCESS_DATA)
+                mock_time.return_value = 1015.0
+                mock_monotonic.return_value = 515.0
+                self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
+                self.assertEqual(mock_fetch.call_count, 2)
+
+    @patch('usage_monitor_for_claude.cache.fetch_usage')
+    def test_automatic_call_stays_nonblocking_during_manual_update(self, mock_fetch) -> None:
+        """Background polling still skips a busy cache instead of joining the manual request."""
+        cache = _make_cache()
+        fetch_started = threading.Event()
+        release_fetch = threading.Event()
+        errors = []
+
+        def blocking_fetch(*, on_send: Callable[[], None]):
+            on_send()
+            fetch_started.set()
+            if not release_fetch.wait(5):
+                raise TimeoutError('test did not release manual fetch')
+            return _SUCCESS_DATA
+
+        def manual_update():
+            try:
+                cache.update(manual=True)
+            except Exception as error:
+                errors.append(error)
+
+        mock_fetch.side_effect = blocking_fetch
+        manual = threading.Thread(target=manual_update)
+        manual.start()
         try:
-            self.assertIsNone(cache.update(manual=True).data)
+            self.assertTrue(fetch_started.wait(5))
+            self.assertIsNone(cache.update().data)
+            self.assertTrue(cache.refreshing)
         finally:
-            cache._lock.release()
+            release_fetch.set()
+            manual.join(5)
+
+        self.assertFalse(manual.is_alive())
+        self.assertEqual(errors, [])
+        mock_fetch.assert_called_once()
 
 
 if __name__ == '__main__':

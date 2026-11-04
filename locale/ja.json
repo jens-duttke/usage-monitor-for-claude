@@ -13,6 +13,10 @@
     "autostart": "ログイン時に開始",
     "restart": "再起動",
     "menu_project": "GitHubのプロジェクト",
+    "refresh": "今すぐ更新",
+    "refresh_deferred_reset": "利用枠のリセット後に更新できます（{duration}）",
+    "refresh_cooldown": "{duration}後に更新できます",
+    "refresh_backoff": "リクエスト制限：{duration}後に再試行",
     "test_commands": "イベントコマンドをテスト",
     "test_reset_5h": "リセット (5時間)",
     "test_reset_7d": "リセット (7日間)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "{used} / {limit} 使用済み",
     "extra_usage_spent_no_limit": "{used} 使用済み",
     "extra_usage_balance": "{balance} 利用可能",
+    "forecast_runs_out": "このペースだと ~{when} に上限到達",
+    "forecast_at_reset": "このペースだとリセット時に ~{pct}%",
+    "forecast_now": "現在",
     "claude_code": "CLAUDE CODE",
     "changelog": "変更履歴",
     "pin_popup": "ポップアップを固定",
@@ -71,6 +78,5 @@
     "status_next_update": "次の更新まで{duration}",
     "status_refreshing": "更新中...",
     "already_running": "Usage Monitor for Claude v{running_version} は既に実行中です。\n\n実行中のインスタンスを置き換えますか？",
-    "replace_failed": "実行中のインスタンスを置き換えられませんでした。\n\n手動で終了してから、もう一度お試しください。",
-    "refresh": "今すぐ更新"
+    "replace_failed": "実行中のインスタンスを置き換えられませんでした。\n\n手動で終了してから、もう一度お試しください。"
 }

@@ -13,6 +13,10 @@
     "autostart": "登录时自动启动",
     "restart": "重新启动",
     "menu_project": "GitHub 项目",
+    "refresh": "立即刷新",
+    "refresh_deferred_reset": "配额重置后可刷新（{duration}）",
+    "refresh_cooldown": "{duration}后可刷新",
+    "refresh_backoff": "请求受限：{duration}后重试",
     "test_commands": "测试事件命令",
     "test_reset_5h": "重置 (5小时)",
     "test_reset_7d": "重置 (7天)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "已用 {used} / {limit}",
     "extra_usage_spent_no_limit": "已用 {used}",
     "extra_usage_balance": "可用 {balance}",
+    "forecast_runs_out": "按此速度：约{when}用完",
+    "forecast_at_reset": "按此速度：重置时约 {pct}%",
+    "forecast_now": "现在",
     "claude_code": "CLAUDE CODE",
     "changelog": "更新日志",
     "pin_popup": "固定弹出窗口",
@@ -71,6 +78,5 @@
     "status_next_update": "{duration}后更新",
     "status_refreshing": "刷新中...",
     "already_running": "Usage Monitor for Claude v{running_version} 已在运行中。\n\n是否要替换正在运行的实例？",
-    "replace_failed": "无法替换正在运行的实例。\n\n请手动关闭后重试。",
-    "refresh": "立即刷新"
+    "replace_failed": "无法替换正在运行的实例。\n\n请手动关闭后重试。"
 }

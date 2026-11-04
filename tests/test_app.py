@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import threading
 import unittest
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
+from typing import Iterator
 from unittest.mock import MagicMock, patch
 
 from usage_monitor_for_claude.app import (
     POLL_FAST, RESET_BUFFER, UsageMonitorForClaude, _align_to_reset,
 )
-from usage_monitor_for_claude.cache import UpdateResult
+from usage_monitor_for_claude.cache import UpdateResult, UsageCache
 from usage_monitor_for_claude.claude_cli import RefreshResult
 
 
@@ -91,6 +93,34 @@ def _stop_after_one_pass(app: UsageMonitorForClaude):
         return False
 
     return polling_throttled
+
+
+@contextmanager
+def _utc_workweek(fields: list[str] | None, now: datetime) -> Iterator[None]:
+    """Pace long quotas by a Mon-Fri 09:00-17:00 schedule in UTC, with the clock at *now*.
+
+    Parameters
+    ----------
+    fields : list[str] or None
+        Value for ``active_schedule_fields``; ``None`` applies the schedule to
+        every quota of a day or longer.
+    now : datetime
+        Timezone-aware instant ``elapsed_pct()`` treats as the current time.
+    """
+    schedule = {day: [(9.0, 17.0)] for day in ('mon', 'tue', 'wed', 'thu', 'fri')}
+
+    def utc_boundary(day: date, hour: float) -> datetime:
+        return datetime(day.year, day.month, day.day, tzinfo=timezone.utc) + timedelta(hours=hour)
+
+    with (
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE', schedule),
+        patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', fields),
+        patch('usage_monitor_for_claude.formatting._local_date', side_effect=lambda when: when.date()),
+        patch('usage_monitor_for_claude.formatting._local_boundary', side_effect=utc_boundary),
+        patch('usage_monitor_for_claude.formatting.datetime', wraps=datetime) as clock,
+    ):
+        clock.now.return_value = now
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +325,25 @@ class TestTimeAwareAlerts(unittest.TestCase):
         self._time_aware_patch.stop()
         self._cmd_patch.stop()
         _cleanup(self.app)
+
+    def test_active_schedule_and_field_filter_control_alert_suppression(self):
+        """A weekly alert uses active time; an excluded field retains wall-clock suppression."""
+        data = {'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'}}
+        with (
+            _utc_workweek(['seven_day'], datetime(2026, 1, 12, 9, tzinfo=timezone.utc)),
+            patch('usage_monitor_for_claude.app.get_alert_thresholds', return_value=[40]),
+        ):
+            # 45% is ahead of the 37.5% working time that has passed
+            self.app._check_threshold_alerts(data)
+            self.app.icon.notify.assert_called_once()
+            self.app.icon.notify.reset_mock()
+            self.app._notified_thresholds.clear()
+
+            # Without the schedule 56.5% of the week has passed, so 45% is on pace
+            with patch('usage_monitor_for_claude.formatting.ACTIVE_SCHEDULE_FIELDS', []):
+                self.app._check_threshold_alerts(data)
+            self.app.icon.notify.assert_not_called()
+            self.assertEqual(self.app._notified_thresholds['seven_day'], 40)
 
     def test_alert_suppressed_when_usage_behind_time(self):
         """No notification when usage (82%) <= elapsed time (90%)."""
@@ -1015,6 +1064,19 @@ class TestFastPolling(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_fast_polling_follows_weekly_without_session_quota(self, _icon, _tooltip):
+        """With five_hour null, rising weekly usage (now the icon's top field) starts fast polls."""
+        self.app._prev_utilization = {'seven_day': 40.0}
+        data = {'five_hour': None, 'seven_day': {'utilization': 45.0, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        self.app.cache = MagicMock()
+        self.app.cache.update.return_value = UpdateResult(data=data)
+
+        self.app.update()
+
+        self.assertGreater(self.app._fast_polls_remaining, 0)
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
     def test_fast_polling_decrements(self, _icon, _tooltip):
         """Fast poll counter decrements when usage is stable."""
         self.app._prev_utilization = {'five_hour': 40.0, 'seven_day': 10.0}
@@ -1055,6 +1117,24 @@ class TestRenderTray(unittest.TestCase):
     def tearDown(self):
         _cleanup(self.app)
 
+    def test_active_schedule_drives_tray_marker_and_overage(self):
+        """Both tray bars use scheduled elapsed time, including overage display mode."""
+        self.app._last_response = {
+            'seven_day': {'utilization': 45.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
+            'seven_day_sonnet': {'utilization': 30.0, 'resets_at': '2026-01-15T10:00:00+00:00'},
+        }
+        with (
+            _utc_workweek(None, datetime(2026, 1, 12, 9, tzinfo=timezone.utc)),
+            patch('usage_monitor_for_claude.app.ICON_FIELDS', ['seven_day:overage', 'seven_day_sonnet']),
+            patch('usage_monitor_for_claude.app.create_icon_image') as image,
+            patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip'),
+        ):
+            self.app._render_tray()
+
+        self.assertEqual(image.call_args.kwargs['mode_top'], 'overage')
+        self.assertAlmostEqual(image.call_args.kwargs['time_pct_top'], 37.5)
+        self.assertAlmostEqual(image.call_args.kwargs['time_pct_bottom'], 37.5)
+
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='Usage: 42%')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     def test_success_renders_icon(self, mock_icon, _tooltip):
@@ -1064,6 +1144,17 @@ class TestRenderTray(unittest.TestCase):
 
         mock_icon.assert_called_once_with(42.0, 10.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
         self.assertEqual(self.app.icon.title, 'Usage: 42%')
+
+    @patch('usage_monitor_for_claude.app.TOOLTIP_MAX_LENGTH', 30)
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='Claude Usage\n5h: 42%\n7d: 15%')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_tooltip_fitted_to_platform_limit_with_prefix(self, _icon, _tooltip):
+        """The account prefix counts toward the limit, and a line that no longer fits is dropped whole."""
+        self.app._tooltip_prefix = '[work] '
+        self.app._last_response = {'five_hour': {'utilization': 42.0}}
+        self.app._render_tray()
+
+        self.assertEqual(self.app.icon.title, '[work] Claude Usage\n5h: 42%')
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='Error')
     @patch('usage_monitor_for_claude.app.create_status_image')
@@ -1108,22 +1199,22 @@ class TestRenderTray(unittest.TestCase):
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     @patch('usage_monitor_for_claude.app.ICON_FIELDS', ['unknown_field', 'five_hour'])
-    def test_icon_fields_missing_from_response_defaults_to_zero(self, mock_icon, _tooltip):
-        """Icon field not present in API response defaults to 0%."""
+    def test_icon_fields_missing_from_response_gives_up_slot(self, mock_icon, _tooltip):
+        """Icon field not present in API response moves the next field up; the empty slot shows 0%."""
         self.app._last_response = {'five_hour': {'utilization': 42.0}}
         self.app._render_tray()
 
-        mock_icon.assert_called_once_with(0, 42.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+        mock_icon.assert_called_once_with(42.0, 0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     @patch('usage_monitor_for_claude.app.ICON_FIELDS', ['seven_day_sonnet', 'five_hour'])
-    def test_icon_fields_null_in_response_defaults_to_zero(self, mock_icon, _tooltip):
-        """Icon field present but null in API response defaults to 0%."""
+    def test_icon_fields_null_in_response_gives_up_slot(self, mock_icon, _tooltip):
+        """Icon field present but null in API response moves the next field up; the empty slot shows 0%."""
         self.app._last_response = {'five_hour': {'utilization': 42.0}, 'seven_day_sonnet': None}
         self.app._render_tray()
 
-        mock_icon.assert_called_once_with(0, 42.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+        mock_icon.assert_called_once_with(42.0, 0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
@@ -1134,7 +1225,23 @@ class TestRenderTray(unittest.TestCase):
         self.app._last_response = {'five_hour': {'utilization': 42.0}, 'limits': [{'percent': 12}]}
         self.app._render_tray()
 
-        mock_icon.assert_called_once_with(0, 42.0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+        mock_icon.assert_called_once_with(42.0, 0, False, mode_top='utilization', mode_bottom='utilization', time_pct_top=None, time_pct_bottom=None, extra_usage_available=False)
+
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_plan_without_session_quota_shows_weekly_on_top(self, mock_icon, _tooltip):
+        """With five_hour null (plans without a session limit) the icon text shows the weekly quota, not an idle 'C'."""
+        self.app._last_response = {
+            'five_hour': None,
+            'seven_day': {'utilization': 50.0, 'resets_at': '2026-11-05T19:00:00+00:00'},
+            'seven_day_fable': {'utilization': 5.0, 'resets_at': '2026-11-05T19:00:00+00:00', 'from_account_limits': True},
+        }
+        with patch('usage_monitor_for_claude.app.elapsed_pct', return_value=30.0):
+            self.app._render_tray()
+
+        args = mock_icon.call_args
+        self.assertEqual(args.args[:2], (50.0, 5.0))
+        self.assertEqual(args.kwargs['time_pct_top'], 30.0)
 
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
@@ -2889,6 +2996,37 @@ class TestAccountSwitchDetection(unittest.TestCase):
         # prev_utilization must be cleared so reset detection cannot fire on next cycle
         self.assertEqual(self.app._prev_utilization, {})
 
+    def _update_with_account(self, cache, uuid, utilization):
+        """Run one update of the real cache for the given account."""
+        cache._last_success_time = 0  # lift the cooldown
+        cache._profile = {'account': {'uuid': uuid, 'email': f'{uuid}@example.com'}}
+        data = {'seven_day': {'utilization': utilization, 'resets_at': '2026-11-05T19:00:00+00:00'}}
+        with patch('usage_monitor_for_claude.cache.fetch_usage', return_value=data), patch.object(cache, 'ensure_profile'):
+            self.app.update()
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_account_switch_restarts_reading_log(self, _icon, _tooltip):
+        """Same reset time and higher usage on the new account: the old account's curve does not continue."""
+        cache = self.app.cache = UsageCache()
+        self._update_with_account(cache, 'uuid-old', 10.0)
+        self._update_with_account(cache, 'uuid-old', 20.0)
+        self._update_with_account(cache, 'uuid-new', 60.0)
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [60.0])
+
+    @patch('usage_monitor_for_claude.cache.FORECAST_CHART', True)
+    @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
+    @patch('usage_monitor_for_claude.app.create_icon_image')
+    def test_same_account_keeps_reading_log(self, _icon, _tooltip):
+        """Without a switch every reading stays in the log."""
+        cache = self.app.cache = UsageCache()
+        self._update_with_account(cache, 'uuid-same', 10.0)
+        self._update_with_account(cache, 'uuid-same', 20.0)
+
+        self.assertEqual([pct for _, pct in cache.snapshot.history['seven_day']['samples']], [10.0, 20.0])
+
     @patch('usage_monitor_for_claude.app.format_tooltip', return_value='tooltip')
     @patch('usage_monitor_for_claude.app.create_icon_image')
     def test_account_switch_clears_notified_thresholds(self, _icon, _tooltip):
@@ -3213,17 +3351,22 @@ class TestUpdateForce(unittest.TestCase):
 
     def test_force_forwarded_to_cache_update(self):
         self.app.update(force=True)
-        self.app.cache.update.assert_called_once_with(force=True, with_prepaid=False)
+        self.app.cache.update.assert_called_once_with(force=True, manual=False, with_prepaid=False)
 
     def test_default_not_forced(self):
         self.app.update()
-        self.app.cache.update.assert_called_once_with(force=False, with_prepaid=False)
+        self.app.cache.update.assert_called_once_with(force=False, manual=False, with_prepaid=False)
+
+    def test_manual_forwarded_to_cache_update(self):
+        """A manual application update reaches the cache with its own flag."""
+        self.app.update(manual=True)
+        self.app.cache.update.assert_called_once_with(force=False, manual=True, with_prepaid=False)
 
     def test_open_popup_reads_prepaid_balance(self):
         """The prepaid balance is read along with the usage only while the popup shows it."""
         self.app._popup_open = True
         self.app.update()
-        self.app.cache.update.assert_called_once_with(force=False, with_prepaid=True)
+        self.app.cache.update.assert_called_once_with(force=False, manual=False, with_prepaid=True)
 
 
 # ---------------------------------------------------------------------------
@@ -3819,6 +3962,14 @@ class TestManualRefresh(unittest.TestCase):
         self.assertFalse(app._manual_refresh_active)
         with patch.object(app, 'update'):
             self.assertTrue(app.refresh_now())
+
+    def test_request_reaches_real_update_and_cache(self) -> None:
+        """The manual entry point forwards the flag without mocking app.update."""
+        app = _make_app()
+        self.addCleanup(_cleanup, app)
+        with patch.object(app.cache, 'update', return_value=UpdateResult(data=None)) as update:
+            app.refresh_now()
+        update.assert_called_once_with(force=False, manual=True, with_prepaid=False)
 
     def test_tray_action_is_asynchronous(self) -> None:
         app = _make_app()

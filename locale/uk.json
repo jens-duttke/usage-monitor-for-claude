@@ -13,6 +13,10 @@
     "autostart": "Запускати при вході",
     "restart": "Перезапустити",
     "menu_project": "Проект на GitHub",
+    "refresh": "Оновити зараз",
+    "refresh_deferred_reset": "Оновлення доступне після скидання квоти ({duration})",
+    "refresh_cooldown": "Оновлення доступне через {duration}",
+    "refresh_backoff": "Ліміт запитів: повторна спроба через {duration}",
     "test_commands": "Тестувати команди подій",
     "test_reset_5h": "Скидання (5-годин)",
     "test_reset_7d": "Скидання (7-днів)",
@@ -59,6 +63,9 @@
     "extra_usage_spent": "Витрачено {used} / {limit}",
     "extra_usage_spent_no_limit": "Витрачено {used}",
     "extra_usage_balance": "Доступно {balance}",
+    "forecast_runs_out": "За такого темпу: вичерпається ~{when}",
+    "forecast_at_reset": "За такого темпу: ~{pct}% на момент скидання",
+    "forecast_now": "Зараз",
     "claude_code": "CLAUDE CODE",
     "changelog": "Список змін",
     "pin_popup": "Закріпити спливне вікно",
@@ -71,6 +78,5 @@
     "status_next_update": "Наст. оновл.: {duration}",
     "status_refreshing": "Оновлення...",
     "already_running": "Usage Monitor for Claude v{running_version} вже запущено.\n\nБажаєте замінити запущений екземпляр?",
-    "replace_failed": "Не вдалося замінити запущений екземпляр.\n\nЗакрийте його вручну та спробуйте ще раз.",
-    "refresh": "Оновити зараз"
+    "replace_failed": "Не вдалося замінити запущений екземпляр.\n\nЗакрийте його вручну та спробуйте ще раз."
 }

@@ -191,8 +191,26 @@ class TestFetchUsage(unittest.TestCase):
     @patch('usage_monitor_for_claude.api.api_headers', return_value=None)
     def test_no_token_returns_error(self, _mock_headers):
         """Missing token returns no_token error."""
-        result = fetch_usage()
+        on_send = MagicMock()
+        result = fetch_usage(on_send=on_send)
         self.assertEqual(result, {'error': EN['no_token']})
+        on_send.assert_not_called()
+
+    @patch('usage_monitor_for_claude.api.requests.get')
+    @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
+    def test_on_send_precedes_http_attempt(self, _mock_headers, mock_get):
+        """Count an HTTP attempt before it completes, even on connection failure."""
+        import requests
+
+        on_send = MagicMock()
+
+        def fail_request(*args, **kwargs):
+            on_send.assert_called_once_with()
+            raise requests.ConnectionError()
+
+        mock_get.side_effect = fail_request
+        self.assertEqual(fetch_usage(on_send=on_send), {'error': EN['connection_error']})
+        mock_get.assert_called_once()
 
     @patch('usage_monitor_for_claude.api.requests.get')
     @patch('usage_monitor_for_claude.api.api_headers', return_value={'Authorization': 'Bearer test'})
