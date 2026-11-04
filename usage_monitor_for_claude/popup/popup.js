@@ -224,6 +224,7 @@ function updateData(data) {
         els.emailValue.textContent = data.profile.email;
         els.emailRow.style.display = data.profile.email ? '' : 'none';
         els.planValue.textContent = data.profile.plan;
+        els.planValue.title = data.profile.plan_details || '';
         els.planRow.style.display = data.profile.plan ? '' : 'none';
     }
 

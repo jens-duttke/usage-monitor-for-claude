@@ -28,6 +28,8 @@ MANUAL_REFRESH_INTERVAL = 15
 # Delay the confirming poll long enough for the new quota window to propagate.
 RESET_BUFFER = 5
 
+_PLAN_LOG_KEYS = ('organization_type', 'rate_limit_tier', 'plan_display_name')
+
 
 @dataclass(frozen=True)
 class CacheSnapshot:
@@ -201,7 +203,7 @@ class UsageCache:
                 self._profile = profile
                 self._profile_token = current_token
                 self._version += 1
-            log.info('fetch_profile -> %s', 'OK' if profile else 'failed')
+            log.info('fetch_profile -> %s', _profile_log_summary(profile))
 
     def ensure_prepaid(self) -> None:
         """Read the prepaid credit balance unless it was read within ``POLL_FAST`` (thread-safe).
@@ -587,3 +589,22 @@ class UsageCache:
             self._apply_rate_limit_backoff(data)
 
         return result, data
+
+
+def _profile_log_summary(profile: dict[str, Any] | None) -> str:
+    """Return the outcome of a profile fetch for the log, with the plan identifiers on success.
+
+    The identifiers say which plan the API reports, so a wrong plan name in
+    the popup can be traced from a ``--verbose`` log.  None of them is
+    personal data; ``repr`` keeps a ``null`` apart from an empty string.
+    """
+    if not profile:
+        return 'failed'
+
+    organization = profile.get('organization') if isinstance(profile, dict) else None
+    if not isinstance(organization, dict):
+        return 'OK'
+
+    identifiers = ', '.join(f'{key}={organization.get(key)!r}' for key in _PLAN_LOG_KEYS)
+
+    return f'OK ({identifiers})'

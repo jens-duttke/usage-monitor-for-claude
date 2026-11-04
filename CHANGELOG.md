@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The detail popup shows your plan under the name claude.ai uses - e.g. "Ultra" instead of "Claude Max" since the Max 20x plan was renamed - and hovering the plan shows the plan identifiers Anthropic reports for your account
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.26.0...HEAD)
 
 ## [1.26.0] - 2026-11-03

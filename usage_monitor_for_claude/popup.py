@@ -35,6 +35,7 @@ from .settings import (
 )
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
+_PLAN_DETAIL_KEYS = ('organization_type', 'rate_limit_tier')
 
 __all__ = ['PopupWindowCache', 'UsagePopup', 'new_window_cache']
 
@@ -55,6 +56,46 @@ def _usage_entries(usage: dict[str, Any]) -> list[tuple[str, dict[str, Any] | No
     """
     fields = expand_popup_fields(POPUP_FIELDS, usage)
     return [(popup_label(key), usage.get(key), field_period(key), key) for key in fields]
+
+
+def _plan_name(organization: dict[str, Any]) -> str:
+    """Return the plan name shown in the popup, or '' when the profile names none.
+
+    ``plan_display_name`` is the name claude.ai shows (e.g. "Ultra").  The
+    internal ``organization_type`` stays the same when a plan is renamed, so
+    it is only the fallback for a response without a display name.
+    """
+    display_name = organization.get('plan_display_name')
+    if isinstance(display_name, str) and display_name.strip():
+        return display_name.strip()
+
+    organization_type = organization.get('organization_type')
+    if not isinstance(organization_type, str):
+        return ''
+
+    return _readable_identifier(organization_type)
+
+
+def _plan_details(organization: dict[str, Any]) -> str:
+    """Return the plan identifiers as readable tooltip lines, or '' when there are none."""
+    lines = []
+    for key in _PLAN_DETAIL_KEYS:
+        value = organization.get(key)
+        if isinstance(value, str) and value:
+            lines.append(f'{_readable_identifier(key)}: {_readable_identifier(value)}')
+
+    return '\n'.join(lines)
+
+
+def _readable_identifier(identifier: str) -> str:
+    """Turn a snake_case identifier into capitalized words, e.g. ``default_claude_max_20x`` -> ``Default Claude Max 20x``.
+
+    Only the first letter of each word is raised, so a suffix like ``20x``
+    keeps its case (``str.title()`` would turn it into ``20X``).
+    """
+    words = [word for word in identifier.split('_') if word]
+
+    return ' '.join(word[:1].upper() + word[1:] for word in words)
 
 
 def _prepaid_balance_text(prepaid: dict[str, Any] | None) -> str:
@@ -93,7 +134,8 @@ def _snapshot_to_dict(
         org = snap.profile.get('organization') or {}
         profile = {
             'email': account.get('email', ''),
-            'plan': org.get('organization_type', '').replace('_', ' ').title(),
+            'plan': _plan_name(org),
+            'plan_details': _plan_details(org),
         }
 
     # Usage bars

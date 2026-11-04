@@ -132,10 +132,19 @@ https://api.anthropic.com/api/oauth/profile
     "name": "max@clau.de's Organization",
     "organization_type": "claude_max",
     "billing_type": "stripe_subscription",
-    "rate_limit_tier": "default_claude_max_5x",
+    "rate_limit_tier": "default_claude_max_20x",
+    "seat_tier": null,
     "has_extra_usage_enabled": true,
     "subscription_status": "active",
-    "subscription_created_at": "2026-01-16T18:22:42.826732Z"
+    "subscription_created_at": "2026-01-16T18:22:42.826732Z",
+    "cc_onboarding_flags": {},
+    "claude_code_trial_ends_at": null,
+    "claude_code_trial_duration_days": null,
+    "payment_auth_hosted_invoice_url": null,
+    "claude_ai_completion_feedback_enabled": true,
+    "claude_ai_safety_feedback_enabled": true,
+    "plan_display_name": "Ultra",
+    "plan_display_label": "Ultra plan"
   },
   "application": {
     "uuid": "...",

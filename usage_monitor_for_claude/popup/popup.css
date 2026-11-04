@@ -124,6 +124,9 @@ dl > div {
 
     & > dt { color: var(--fg-dim); }
     & > dd { margin: 0; }
+
+    /* A value with a tooltip (the plan identifiers) shows the help cursor. */
+    & > dd[title]:not([title='']) { cursor: help; }
 }
 
 /* Rows of blocks: one per quota model, and the extra-usage bar next to the
