@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from .api import fetch_prepaid_credits, fetch_profile, fetch_usage, read_access_token
@@ -21,12 +21,17 @@ from .claude_cli import RefreshResult, refresh_token
 from .forecast import record_samples
 from .settings import FORECAST_CHART, MAX_BACKOFF, POLL_FAST, POLL_INTERVAL
 
-__all__ = ['CacheSnapshot', 'MANUAL_REFRESH_INTERVAL', 'RESET_BUFFER', 'UpdateResult', 'UsageCache']
+__all__ = ['CacheSnapshot', 'MANUAL_REFRESH_INTERVAL', 'RESET_BUFFER', 'UpdateResult', 'UsageCache', 'reset_offsets']
 
 log = logging.getLogger(__name__)
-MANUAL_REFRESH_INTERVAL = 15
-# Delay the confirming poll long enough for the new quota window to propagate.
+
+# Seconds after a reset at which to place the confirming poll.  A small buffer
+# absorbs minor timing differences (clocks, caches, server-side propagation).
 RESET_BUFFER = 5
+
+# Seconds a manual refresh waits after the latest usage request finished, so a
+# double click does not send a second request.
+MANUAL_REFRESH_INTERVAL = 15
 
 _PLAN_LOG_KEYS = ('organization_type', 'rate_limit_tier', 'plan_display_name')
 
@@ -271,35 +276,29 @@ class UsageCache:
     def _manual_refresh_state(self, now: float) -> tuple[str | None, float | None]:
         """Return the reason and retry time for a withheld manual request.
 
-        Read while holding ``_state_lock``. Both cooldowns use monotonic
-        time so clock corrections cannot shorten them.
+        The caller holds ``_state_lock``.  Both cooldowns use monotonic
+        time, so a clock correction cannot shorten them.
+
+        Returns
+        -------
+        tuple[str | None, float | None]
+            ``'backoff'``, ``'reset'`` or ``'cooldown'`` with the wall-clock
+            time at which a manual request is allowed again, or
+            ``(None, None)`` when it is allowed now.
         """
         if now < self._rate_limit_until:
             return 'backoff', self._rate_limit_until
 
         if self._last_success_time is not None:
-            resets = []
-            for entry in self._usage.values():
-                if not isinstance(entry, dict) or not entry.get('resets_at'):
-                    continue
-                try:
-                    reset = datetime.fromisoformat(entry['resets_at'])
-                    if reset.utcoffset() is None:
-                        continue
-                    reset_at = reset.timestamp()
-                except (TypeError, ValueError, OverflowError):
-                    continue
-                if -RESET_BUFFER < reset_at - now < POLL_FAST:
-                    resets.append(reset_at + RESET_BUFFER)
-            if resets:
-                return 'reset', max(resets)
+            offsets = reset_offsets(self._usage, datetime.fromtimestamp(now, timezone.utc))
+            protected = [offset for offset in offsets if -RESET_BUFFER < offset < POLL_FAST]
+            if protected:
+                return 'reset', now + max(protected) + RESET_BUFFER
 
         monotonic_now = time.monotonic()
         remaining = 0.0
         if self._last_attempt_monotonic is not None:
             remaining = MANUAL_REFRESH_INTERVAL - (monotonic_now - self._last_attempt_monotonic)
-        elif self._last_success_time is not None:
-            remaining = MANUAL_REFRESH_INTERVAL - max(0.0, now - self._last_success_time)
         if self._last_manual_monotonic is not None:
             remaining = max(remaining, POLL_FAST - (monotonic_now - self._last_manual_monotonic))
         if remaining > 0:
@@ -348,23 +347,20 @@ class UsageCache:
         except Exception:
             with self._state_lock:
                 self._refreshing = False
-                self._version += 1
-            raise
-        finally:
-            with self._state_lock:
                 self._last_attempt_monotonic = time.monotonic()
                 self._version += 1
-
-    def _record_manual_send(self) -> None:
-        """Start the manual-only interval when the request is attempted."""
-        with self._state_lock:
-            self._last_manual_monotonic = time.monotonic()
+            raise
 
     def _fetch_and_process(self, *, manual: bool = False, with_prepaid: bool = False) -> UpdateResult:
         """Fetch usage data and process the response."""
         token_before = read_access_token()
+        if manual and token_before:
+            # Only a request that is actually sent counts against the manual
+            # allowance - without a token fetch_usage() sends nothing.
+            with self._state_lock:
+                self._last_manual_monotonic = time.monotonic()
         log.info('fetch_usage started')
-        data = fetch_usage(on_send=self._record_manual_send) if manual else fetch_usage()
+        data = fetch_usage()
 
         if 'error' in data:
             self._record_error(data)
@@ -392,6 +388,7 @@ class UsageCache:
 
             with self._state_lock:
                 self._refreshing = False
+                self._last_attempt_monotonic = time.monotonic()
                 self._version += 1
             return UpdateResult(data=data, token_refresh=token_refresh)
 
@@ -526,6 +523,7 @@ class UsageCache:
                 self._prepaid = None
                 self._prepaid_read_at = None
             self._refreshing = False
+            self._last_attempt_monotonic = time.monotonic()
             self._version += 1
 
     def _try_token_refresh(self, token_before: str | None, *, with_prepaid: bool = False) -> tuple[RefreshResult | None, dict[str, Any] | None]:
@@ -589,6 +587,37 @@ class UsageCache:
             self._apply_rate_limit_backoff(data)
 
         return result, data
+
+
+def reset_offsets(usage: dict[str, Any], now: datetime) -> list[float]:
+    """Return the seconds until each quota reset in a usage response.
+
+    Parameters
+    ----------
+    usage : dict
+        Usage API response.  Entries without a parsable ``resets_at`` are
+        skipped, so a field of any other shape never raises.
+    now : datetime
+        Timezone-aware current time.
+
+    Returns
+    -------
+    list[float]
+        One offset per quota with a reset time, negative once it has passed.
+    """
+    offsets = []
+    for entry in usage.values():
+        if not isinstance(entry, dict) or not entry.get('resets_at'):
+            continue
+        try:
+            # The subtraction stays inside the guard: a timestamp without a
+            # UTC offset parses fine and only fails when subtracted.
+            reset_time = datetime.fromisoformat(entry['resets_at'])
+            offsets.append((reset_time - now).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            continue
+
+    return offsets
 
 
 def _profile_log_summary(profile: dict[str, Any] | None) -> str:

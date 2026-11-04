@@ -17,7 +17,7 @@ from typing import Any
 import pystray  # type: ignore[import-untyped]  # no type stubs available
 
 from .api import api_headers, read_access_token
-from .cache import RESET_BUFFER, UsageCache
+from .cache import RESET_BUFFER, UsageCache, reset_offsets
 from .claude_cli import PROJECT_URL
 from .command import run_event_command
 from .instance_id import effective_config_dir, is_default_config_dir
@@ -225,28 +225,26 @@ class UsageMonitorForClaude:
         """Request a refresh without blocking the tray message pump."""
         threading.Thread(target=self.refresh_now, daemon=True).start()
 
-    def refresh_now(self) -> bool:
-        """Refresh once, coalescing simultaneous manual requests.
+    def refresh_now(self) -> None:
+        """Refresh once on request, coalescing simultaneous manual requests.
 
-        Returns
-        -------
-        bool
-            True for the caller performing the update; False for a caller
-            whose request was satisfied by the in-progress manual update.
+        A caller arriving while another manual refresh runs waits for that
+        one to finish instead of starting a second, so the popup button and
+        the tray entry share a single request.
         """
         with self._manual_refresh_condition:
             if self._manual_refresh_active:
                 while self._manual_refresh_active:
                     self._manual_refresh_condition.wait()
-                return False
+                return
             self._manual_refresh_active = True
+
         try:
             self.update(manual=True)
         finally:
             with self._manual_refresh_condition:
                 self._manual_refresh_active = False
                 self._manual_refresh_condition.notify_all()
-        return True
 
     def on_open_project(self, icon: Any = None, item: Any = None) -> None:
         webbrowser.open(PROJECT_URL)
@@ -842,20 +840,7 @@ class UsageMonitorForClaude:
 
     def _reset_offsets(self) -> list[float]:
         """Return seconds until each known quota reset, negative once it has passed."""
-        now = datetime.now(timezone.utc)
-        offsets = []
-        for entry in self._last_response.values():
-            if not isinstance(entry, dict) or not entry.get('resets_at'):
-                continue
-            try:
-                # The subtraction stays inside the guard: a timestamp without a
-                # UTC offset parses fine and only fails when subtracted.
-                reset_time = datetime.fromisoformat(entry['resets_at'])
-                offsets.append((reset_time - now).total_seconds())
-            except Exception:
-                continue
-
-        return offsets
+        return reset_offsets(self._last_response, datetime.now(timezone.utc))
 
     def _seconds_until_next_reset(self) -> float | None:
         """Return seconds until the earliest upcoming quota reset, or None."""

@@ -3919,26 +3919,32 @@ class TestDoubleClickWiring(unittest.TestCase):
         self.assertEqual(on_double, app._run_quick_action)
 
 
+# ---------------------------------------------------------------------------
+# Manual refresh
+# ---------------------------------------------------------------------------
+
 class TestManualRefresh(unittest.TestCase):
     """Manual requests coalesce without blocking the tray thread."""
 
     def test_overlapping_requests_share_update(self) -> None:
+        """A second request while one runs waits for it instead of starting another update."""
         app = _make_app()
         self.addCleanup(_cleanup, app)
         entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
-        results = []
         original_wait = app._manual_refresh_condition.wait
+
         def wait_for_update():
             waiting.set()
             return original_wait()
+
         def update(*, manual=False):
             self.assertTrue(manual)
             entered.set()
             self.assertTrue(release.wait(3))
-        with patch.object(app, 'update', side_effect=update) as called, \
-             patch.object(app._manual_refresh_condition, 'wait', side_effect=wait_for_update):
-            first = threading.Thread(target=lambda: results.append(app.refresh_now()))
-            second = threading.Thread(target=lambda: results.append(app.refresh_now()))
+
+        with patch.object(app, 'update', side_effect=update) as called,              patch.object(app._manual_refresh_condition, 'wait', side_effect=wait_for_update):
+            first = threading.Thread(target=app.refresh_now)
+            second = threading.Thread(target=app.refresh_now)
             first.start()
             try:
                 self.assertTrue(entered.wait(3))
@@ -3950,18 +3956,23 @@ class TestManualRefresh(unittest.TestCase):
                 if second.ident is not None:
                     second.join(3)
             called.assert_called_once_with(manual=True)
-        self.assertCountEqual(results, [True, False])
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
         self.assertFalse(app._manual_refresh_active)
 
     def test_failure_releases_manual_guard(self) -> None:
+        """An exception in the update leaves the next manual request free to run."""
         app = _make_app()
         self.addCleanup(_cleanup, app)
         with patch.object(app, 'update', side_effect=RuntimeError('synthetic failure')):
             with self.assertRaises(RuntimeError):
                 app.refresh_now()
         self.assertFalse(app._manual_refresh_active)
-        with patch.object(app, 'update'):
-            self.assertTrue(app.refresh_now())
+
+        with patch.object(app, 'update') as update:
+            app.refresh_now()
+        update.assert_called_once_with(manual=True)
 
     def test_request_reaches_real_update_and_cache(self) -> None:
         """The manual entry point forwards the flag without mocking app.update."""
@@ -3972,6 +3983,7 @@ class TestManualRefresh(unittest.TestCase):
         update.assert_called_once_with(force=False, manual=True, with_prepaid=False)
 
     def test_tray_action_is_asynchronous(self) -> None:
+        """The tray entry hands the refresh to a worker thread."""
         app = _make_app()
         self.addCleanup(_cleanup, app)
         with patch('usage_monitor_for_claude.app.threading.Thread') as worker:

@@ -10,12 +10,10 @@ from __future__ import annotations
 import threading
 import time
 import unittest
-from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any
 from unittest.mock import patch
 
-from usage_monitor_for_claude.cache import CacheSnapshot, UpdateResult, UsageCache, _profile_log_summary
+from usage_monitor_for_claude.cache import CacheSnapshot, UpdateResult, UsageCache, _profile_log_summary, reset_offsets
 from usage_monitor_for_claude.claude_cli import RefreshResult
 
 _SUCCESS_DATA = {'five_hour': {'utilization': 42.0}}
@@ -27,16 +25,6 @@ _SERVER_MSG_DATA = {'error': 'HTTP 429', 'server_message': 'Rate limited.'}
 def _make_cache() -> UsageCache:
     """Create a fresh UsageCache instance."""
     return UsageCache()
-
-
-def _sent_usage_response(data: dict[str, Any]) -> Callable[..., dict[str, Any]]:
-    """Simulate a provider send before returning the given response to the cache."""
-    def fetch(*, on_send: Callable[[], None] | None = None) -> dict[str, Any]:
-        if on_send is not None:
-            on_send()
-        return data
-
-    return fetch
 
 
 # ---------------------------------------------------------------------------
@@ -299,11 +287,12 @@ class TestSuccessState(unittest.TestCase):
         self.assertFalse(cache.refreshing)
 
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
-    def test_success_increments_version_for_fetch_and_feedback(self, _mock):
-        """Version tracks fetch start, successful data and the new manual retry feedback."""
+    def test_success_increments_version_twice(self, _mock):
+        """Version increments once for refreshing=True, once for success."""
         cache = _make_cache()
         cache.update()
-        self.assertEqual(cache.version, 3)
+        # refreshing sets version to 1, _record_success sets version to 2
+        self.assertEqual(cache.version, 2)
 
     @patch('usage_monitor_for_claude.cache.read_access_token', return_value='tok-a')
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
@@ -388,11 +377,11 @@ class TestErrorState(unittest.TestCase):
         self.assertFalse(cache.refreshing)
 
     @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
-    def test_error_increments_version_for_fetch_and_feedback(self, _mock):
-        """Version tracks fetch start, failed completion and the new manual retry feedback."""
+    def test_error_increments_version_twice(self, _mock):
+        """Version increments for refreshing=True, then for error completion."""
         cache = _make_cache()
         cache.update()
-        self.assertEqual(cache.version, 3)
+        self.assertEqual(cache.version, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -1506,7 +1495,60 @@ class TestEnsureProfileTokenChange(unittest.TestCase):
         mock_profile.assert_not_called()
 
 
-class TestManualRefreshBackoff(unittest.TestCase):
+# ---------------------------------------------------------------------------
+# reset_offsets
+# ---------------------------------------------------------------------------
+
+class TestResetOffsets(unittest.TestCase):
+    """Seconds until each quota reset, shared by the poll loop and the manual refresh."""
+
+    _NOW = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_future_and_past_resets(self) -> None:
+        """Every quota with a reset time yields one offset, negative once it has passed."""
+        usage = {
+            'five_hour': {'utilization': 50.0, 'resets_at': '2025-01-15T12:30:00+00:00'},
+            'seven_day': {'utilization': 30.0, 'resets_at': '2025-01-15T11:00:00+00:00'},
+        }
+        self.assertEqual(sorted(reset_offsets(usage, self._NOW)), [-3600.0, 1800.0])
+
+    def test_other_offsets_are_converted(self) -> None:
+        """A reset time in another UTC offset is compared as the same instant."""
+        usage = {'five_hour': {'utilization': 50.0, 'resets_at': '2025-01-15T14:00:00+02:00'}}
+        self.assertEqual(reset_offsets(usage, self._NOW), [0.0])
+
+    def test_unusable_entries_are_skipped(self) -> None:
+        """Entries of other shapes, null, malformed and timezone-naive timestamps never raise."""
+        usage = {
+            'extra_usage': {'is_enabled': True},
+            'limits': [{'resets_at': '2025-01-15T12:30:00+00:00'}],
+            'null_quota': None,
+            'no_window': {'utilization': 0.0, 'resets_at': None},
+            'empty': {'utilization': 0.0, 'resets_at': ''},
+            'malformed': {'utilization': 0.0, 'resets_at': 'not-a-date'},
+            'number': {'utilization': 0.0, 'resets_at': 1060},
+            'naive': {'utilization': 0.0, 'resets_at': '2025-01-15T12:30:00'},
+        }
+        self.assertEqual(reset_offsets(usage, self._NOW), [])
+
+    def test_empty_usage(self) -> None:
+        self.assertEqual(reset_offsets({}, self._NOW), [])
+
+
+# ---------------------------------------------------------------------------
+# Manual refresh
+# ---------------------------------------------------------------------------
+
+class _SignedInTestCase(unittest.TestCase):
+    """Base for manual refresh tests: the credentials hold a token, so every fetch is sent."""
+
+    def setUp(self) -> None:
+        token_patcher = patch('usage_monitor_for_claude.cache.read_access_token', return_value='token-abc')
+        token_patcher.start()
+        self.addCleanup(token_patcher.stop)
+
+
+class TestManualRefreshBackoff(_SignedInTestCase):
     """Manual refresh observes the completion floor, send budget, and existing guards."""
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
@@ -1554,7 +1596,7 @@ class TestManualRefreshBackoff(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
     @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
-    @patch('usage_monitor_for_claude.cache.fetch_usage', side_effect=_sent_usage_response(_ERROR_DATA))
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
     def test_failed_manual_send_consumes_budget_but_blocked_clicks_do_not(self, mock_fetch, mock_time, mock_monotonic) -> None:
         """An actual failed send retains old data and uses the budget; skipped clicks do not extend it."""
         cache = _make_cache()
@@ -1583,26 +1625,24 @@ class TestManualRefreshBackoff(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
     @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
-    @patch('usage_monitor_for_claude.api.api_headers', side_effect=[None, {'Authorization': 'Bearer test-token'}])
-    @patch('usage_monitor_for_claude.api.requests.get')
-    def test_signed_out_operation_uses_floor_but_not_send_budget(self, mock_get, _mock_headers, mock_time, mock_monotonic) -> None:
+    @patch('usage_monitor_for_claude.cache.read_access_token', side_effect=[None, 'token-abc'])
+    @patch('usage_monitor_for_claude.cache.fetch_usage', side_effect=[{'error': 'no token'}, _SUCCESS_DATA])
+    def test_signed_out_operation_uses_floor_but_not_send_budget(self, mock_fetch, _mock_token, mock_time, mock_monotonic) -> None:
         """Missing credentials are a completed operation without consuming a network send."""
         cache = _make_cache()
-        mock_get.return_value.json.return_value = _SUCCESS_DATA
 
         self.assertIsNotNone(cache.update(manual=True).data)
         self.assertIsNotNone(cache.last_error)
-        mock_get.assert_not_called()
 
         mock_time.return_value = 1014.999
         mock_monotonic.return_value = 514.999
         self.assertIsNone(cache.update(manual=True).data)
-        mock_get.assert_not_called()
+        self.assertEqual(mock_fetch.call_count, 1)
 
         mock_time.return_value = 1015.0
         mock_monotonic.return_value = 515.0
         self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
-        mock_get.assert_called_once()
+        self.assertEqual(mock_fetch.call_count, 2)
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
     @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
@@ -1636,18 +1676,14 @@ class TestManualRefreshBackoff(unittest.TestCase):
     @patch('usage_monitor_for_claude.cache.fetch_usage')
     def test_slow_manual_send_uses_start_for_budget_and_longer_gate_for_retry(self, mock_fetch, mock_time, mock_monotonic) -> None:
         """The budget counts from send start; a later completion deadline still controls eligibility."""
-        for duration, retry_at in ((20.0, 1122.0), (110.0, 1125.0)):
+        for duration, retry_at in ((20.0, 1120.0), (110.0, 1125.0)):
             with self.subTest(duration=duration):
                 cache = _make_cache()
                 mock_time.return_value = 1000.0
                 mock_monotonic.return_value = 500.0
                 mock_fetch.reset_mock()
 
-                def complete_slow_fetch(*, on_send: Callable[[], None]):
-                    # Simulate credential/header preparation before the request is sent.
-                    mock_time.return_value = 1002.0
-                    mock_monotonic.return_value = 502.0
-                    on_send()
+                def complete_slow_fetch():
                     mock_time.return_value = 1000.0 + duration
                     mock_monotonic.return_value = 500.0 + duration
                     return _SUCCESS_DATA
@@ -1671,7 +1707,7 @@ class TestManualRefreshBackoff(unittest.TestCase):
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
     @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
-    @patch('usage_monitor_for_claude.cache.fetch_usage', side_effect=_sent_usage_response(_ERROR_DATA))
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_ERROR_DATA)
     def test_manual_floor_does_not_change_automatic_error_polling(self, mock_fetch, mock_time, mock_monotonic) -> None:
         """The manual-only floor does not impose a new cooldown on automatic error retries."""
         cache = _make_cache()
@@ -1707,13 +1743,14 @@ class TestManualRefreshBackoff(unittest.TestCase):
 
         mock_time.return_value = backoff_until
         mock_monotonic.return_value = backoff_until - 500.0
-        mock_fetch.side_effect = _sent_usage_response(_SUCCESS_DATA)
+        mock_fetch.side_effect = None
+        mock_fetch.return_value = _SUCCESS_DATA
         self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
         self.assertEqual(mock_fetch.call_count, 2)
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
     @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
-    @patch('usage_monitor_for_claude.cache.fetch_usage', side_effect=_sent_usage_response(_SUCCESS_DATA))
+    @patch('usage_monitor_for_claude.cache.fetch_usage', return_value=_SUCCESS_DATA)
     def test_force_bypasses_manual_floor_backoff_and_reset(self, mock_fetch, mock_time, mock_monotonic) -> None:
         """A confirmed account switch keeps force semantics even with all manual guards active."""
         cache = _make_cache()
@@ -1766,7 +1803,7 @@ class TestManualRefreshBackoff(unittest.TestCase):
         self.assertEqual(cache.snapshot.manual_refresh_retry_at, 10014.0)
 
 
-class TestManualRefreshResetProtection(unittest.TestCase):
+class TestManualRefreshResetProtection(_SignedInTestCase):
     """Refreshing shortly before a quota reset preserves the scheduled confirming poll."""
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
@@ -1876,8 +1913,8 @@ class TestManualRefreshResetProtection(unittest.TestCase):
                 mock_fetch.assert_called_once()
 
 
-class TestManualRefreshCoalescing(unittest.TestCase):
-    """Manual requests wait for existing updates without issuing a second provider request."""
+class TestManualRefreshCoalescing(_SignedInTestCase):
+    """Manual requests wait for existing updates without issuing a second usage request."""
 
     @patch('usage_monitor_for_claude.cache.time.monotonic', return_value=500.0)
     @patch('usage_monitor_for_claude.cache.time.time', return_value=1000.0)
@@ -1943,7 +1980,8 @@ class TestManualRefreshCoalescing(unittest.TestCase):
                 self.assertFalse(cache.refreshing)
                 self.assertEqual(cache.last_error, data.get('error'))
 
-                mock_fetch.side_effect = _sent_usage_response(_SUCCESS_DATA)
+                mock_fetch.side_effect = None
+                mock_fetch.return_value = _SUCCESS_DATA
                 mock_time.return_value = 1015.0
                 mock_monotonic.return_value = 515.0
                 self.assertEqual(cache.update(manual=True).data, _SUCCESS_DATA)
@@ -1957,8 +1995,7 @@ class TestManualRefreshCoalescing(unittest.TestCase):
         release_fetch = threading.Event()
         errors = []
 
-        def blocking_fetch(*, on_send: Callable[[], None]):
-            on_send()
+        def blocking_fetch():
             fetch_started.set()
             if not release_fetch.wait(5):
                 raise TimeoutError('test did not release manual fetch')
