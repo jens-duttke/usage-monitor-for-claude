@@ -80,6 +80,19 @@ class _InMemoryApp:
         self.closed = True
 
 
+class _ClosedStdout:
+    """Stands in for a stdout whose reader - the MCP client - has gone away."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def write(self, data: bytes) -> int:
+        raise self._error
+
+    def flush(self) -> None:
+        raise self._error
+
+
 class TestBridge(unittest.TestCase):
     """Tests for passing messages between stdio and the tray application."""
 
@@ -131,6 +144,25 @@ class TestBridge(unittest.TestCase):
         _run(_stdin(_request('server/discover')))
 
         self.assertTrue(self.app.closed)
+
+    def test_client_gone_mid_session_ends_the_bridge_quietly(self):
+        """A client that quits closes the pipe under a pending answer; Windows reports that as EINVAL, and the bridge must end, not crash."""
+        for error in (OSError(22, 'Invalid argument'), BrokenPipeError(), ValueError('write to closed file')):
+            with self.subTest(error=type(error).__name__):
+                app = _InMemoryApp()
+                stdin = _stdin(_request('server/discover', request_id=1), _request('ping', request_id=2))
+                with patch('usage_monitor_for_claude.mcp_bridge.open_local_channel', return_value=app):
+                    exit_code = run_stdio_bridge(stdin, _ClosedStdout(error))  # type: ignore[arg-type]  # only write() and flush() are used
+
+                self.assertEqual(exit_code, 0)
+                self.assertEqual(len(app.received), 1)
+                self.assertTrue(app.closed)
+
+    def test_client_gone_without_the_app_ends_the_bridge_quietly(self):
+        with patch.object(mcp_bridge, 'open_local_channel', side_effect=FileNotFoundError):
+            exit_code = run_stdio_bridge(_stdin(_tool_call(1)), _ClosedStdout(OSError(22, 'Invalid argument')))  # type: ignore[arg-type]  # only write() and flush() are used
+
+        self.assertEqual(exit_code, 0)
 
     def test_default_channel_is_this_instances_one(self):
         run_stdio_bridge(_stdin(_request('server/discover')), io.BytesIO())

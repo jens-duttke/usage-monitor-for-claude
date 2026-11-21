@@ -94,9 +94,8 @@ def run_stdio_bridge(stdin: BinaryIO, stdout: BinaryIO, channel_name: str | None
 
             if not delivered:
                 answer = _answer_without_app(line)
-            if answer is not None:
-                stdout.write(answer)
-                stdout.flush()
+            if answer is not None and not _write_answer(stdout, answer):
+                break
     finally:
         if channel is not None:
             channel.close()
@@ -132,6 +131,23 @@ def _connect(name: str) -> _Channel | None:
         return _Channel(open_local_channel(name))
     except OSError:
         return None
+
+
+def _write_answer(stdout: BinaryIO, answer: bytes) -> bool:
+    """Write *answer* to the client; return False when the client has closed its end.
+
+    A client that quits or is killed mid-session closes the pipe while an
+    answer is still on its way.  Windows reports that write as ``EINVAL``
+    (``ERROR_NO_DATA``) rather than ``EPIPE``, so every ``OSError`` counts.
+    Left unhandled it ends the windowless EXE with an error dialog.
+    """
+    try:
+        stdout.write(answer)
+        stdout.flush()
+    except (OSError, ValueError):
+        return False
+
+    return True
 
 
 def _answer_without_app(line: bytes) -> bytes | None:
