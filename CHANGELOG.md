@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The [MCP server](docs/mcp-server.md) process that Claude starts no longer shows an "OSError: [Errno 22] Invalid argument" error dialog when Claude Code or Claude Desktop closes it while an answer is still being sent - it now ends quietly
+- Quitting the app now also ends the [MCP server](docs/mcp-server.md) processes that Claude started, about ten seconds later, so the EXE can be deleted or replaced - before, they kept it in use until the Claude session closed
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.27.0...HEAD)
 
 ## [1.27.0] - 2026-11-04

@@ -12,15 +12,17 @@ import ctypes
 import ctypes.wintypes
 import sys
 import threading
+import time
 import unittest
 import uuid
+from typing import Any, Callable
 from unittest.mock import patch
 
 if sys.platform != 'win32':
     raise unittest.SkipTest('Windows named pipes')
 
 from usage_monitor_for_claude.platforms import channel_win32  # noqa: E402
-from usage_monitor_for_claude.platforms.channel_win32 import LocalChannelListener, open_local_channel  # noqa: E402
+from usage_monitor_for_claude.platforms.channel_win32 import LocalChannelListener, open_local_channel, peer_closed  # noqa: E402
 
 _READ_CONTROL = 0x00020000
 _SE_KERNEL_OBJECT = 6
@@ -152,6 +154,71 @@ class TestPipeChannel(unittest.TestCase):
         thread.join(timeout=5)
 
         self.assertEqual(received, [b''])
+
+
+class TestPeerClosed(unittest.TestCase):
+    """Tests for the liveness check the bridge runs once a second while Claude is silent."""
+
+    def _serve_until(self, release: threading.Event, close: Callable[[Any], None], pending: bytes = b'') -> Any:
+        """Accept one client, send it *pending*, then close the connection with *close* once *release* is set."""
+        name = _unique_name()
+        listener = LocalChannelListener(name)
+        sent = threading.Event()
+
+        def serve() -> None:
+            connection = listener.accept()
+            if pending:
+                connection.sendall(pending)
+            sent.set()
+            release.wait(5)
+            close(connection)
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(release.set)
+
+        client = open_local_channel(name)
+        self.addCleanup(client.close)
+        sent.wait(5)
+
+        return client
+
+    def test_open_pipe_reads_as_open_without_consuming_what_is_pending(self):
+        client = self._serve_until(threading.Event(), lambda connection: connection.close(), pending=b'pending\n')
+
+        self.assertFalse(peer_closed(client))
+        self.assertEqual(client.recv(100), b'pending\n')
+        self.assertFalse(peer_closed(client))
+
+    def test_server_closing_the_connection_reads_as_closed(self):
+        release = threading.Event()
+        client = self._serve_until(release, lambda connection: connection.close())
+
+        release.set()
+
+        _wait_for(lambda: peer_closed(client))
+
+    def test_server_process_that_ends_reads_as_closed(self):
+        """An exiting process closes its handles without disconnecting the pipe first."""
+        release = threading.Event()
+        client = self._serve_until(release, lambda connection: channel_win32._kernel32.CloseHandle(connection._handle))
+
+        release.set()
+
+        _wait_for(lambda: peer_closed(client))
+
+    def test_closed_client_connection_reads_as_closed(self):
+        client = self._serve_until(threading.Event(), lambda connection: connection.close())
+        client.close()
+
+        self.assertTrue(peer_closed(client))
+
+
+def _wait_for(condition: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 5
+    while not condition():
+        assert time.monotonic() < deadline, 'condition not reached in time'
+        time.sleep(0.005)
 
 
 class TestPipeAccess(unittest.TestCase):

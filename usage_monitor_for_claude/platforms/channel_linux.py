@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .linux import runtime_directory
 
-__all__ = ['LocalChannelListener', 'open_local_channel']
+__all__ = ['LocalChannelListener', 'open_local_channel', 'peer_closed']
 
 _BACKLOG = 8
 
@@ -67,6 +67,16 @@ def open_local_channel(name: str) -> socket.socket:
         raise
 
     return connection
+
+
+def peer_closed(connection: socket.socket) -> bool:
+    """Return True once the other end has closed the socket, without consuming data or waiting."""
+    try:
+        return connection.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT) == b''
+    except BlockingIOError:
+        return False
+    except OSError:
+        return True
 
 
 def _socket_path(name: str) -> Path:
