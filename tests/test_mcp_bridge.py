@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import uuid
 from pathlib import Path
@@ -25,7 +26,7 @@ from unittest.mock import patch
 from usage_monitor_for_claude import mcp_bridge
 from usage_monitor_for_claude.cache import CacheSnapshot
 from usage_monitor_for_claude.mcp_bridge import run_stdio_bridge
-from usage_monitor_for_claude.mcp_channel import mcp_channel_name
+from usage_monitor_for_claude.mcp_channel import expects_answer, mcp_channel_name
 from usage_monitor_for_claude.mcp_server import _serve_connection, handle_line
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -55,12 +56,16 @@ def _run(stdin: Iterable[bytes], channel_name: str = 'test-channel') -> list[dic
 
 
 class _InMemoryApp:
-    """Stands in for the tray application: a connection that answers through the real handle_line()."""
+    """Stands in for the tray application: a connection that answers through the real handle_line().
+
+    ``quit`` is what ``peer_closed()`` reports for it, see ``_patch_peer_closed()``.
+    """
 
     def __init__(self, breaks_after: int | None = None) -> None:
         self._pending = b''
         self.received: list[bytes] = []
         self.closed = False
+        self.quit = False
         self._breaks_after = breaks_after
 
     def sendall(self, data: bytes) -> None:
@@ -93,10 +98,18 @@ class _ClosedStdout:
         raise self._error
 
 
+def _patch_peer_closed(test: unittest.TestCase) -> None:
+    """Answer the bridge's liveness check from ``_InMemoryApp.quit`` instead of a real pipe or socket."""
+    patcher = patch.object(mcp_bridge, 'peer_closed', side_effect=lambda connection: connection.quit)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+
 class TestBridge(unittest.TestCase):
     """Tests for passing messages between stdio and the tray application."""
 
     def setUp(self):
+        _patch_peer_closed(self)
         self.app = _InMemoryApp()
         patcher = patch('usage_monitor_for_claude.mcp_bridge.open_local_channel', return_value=self.app)
         self.mock_open = patcher.start()
@@ -169,6 +182,13 @@ class TestBridge(unittest.TestCase):
 
         self.mock_open.assert_called_once_with(mcp_channel_name())
 
+    def test_connects_before_the_first_message(self):
+        """A bridge that has not been asked anything yet must still end with the application, so it connects at once."""
+        run_stdio_bridge(io.BytesIO(b''), io.BytesIO())
+
+        self.mock_open.assert_called_once_with(mcp_channel_name())
+        self.assertTrue(self.app.closed)
+
 
 class _AppAvailability:
     """Stands in for ``open_local_channel``: no application until ``start()``, then the given connections in turn."""
@@ -176,6 +196,7 @@ class _AppAvailability:
     def __init__(self, *connections: _InMemoryApp) -> None:
         self._connections = list(connections)
         self.running = False
+        self.handed_out: list[_InMemoryApp] = []
 
     def start(self) -> None:
         self.running = True
@@ -187,16 +208,71 @@ class _AppAvailability:
         if not self.running or not self._connections:
             raise FileNotFoundError(name)
 
-        return self._connections.pop(0)
+        connection = self._connections.pop(0)
+        self.handed_out.append(connection)
+
+        return connection
 
 
-def _lines(*steps: dict[str, Any] | bytes | Callable[[], None]) -> Iterator[bytes]:
-    """Yield the messages as stdin lines, running each callable in between as the bridge reaches it."""
-    for step in steps:
-        if callable(step):
-            step()
-        else:
-            yield (step if isinstance(step, bytes) else json.dumps(step).encode()) + b'\n'
+class _Client:
+    """Stands in for the MCP client on both streams: writes *steps* to the bridge's stdin and records its stdout.
+
+    The bridge reads stdin on a thread of its own and ahead of its answers,
+    so a callable step waits until every earlier request has been answered
+    and then acts exactly between the two messages around it.  With
+    *keep_open*, stdin stays open after the last step until ``release()`` -
+    a client that is still running but silent.
+    """
+
+    def __init__(self, *steps: dict[str, Any] | bytes | Callable[[], None], keep_open: bool = False) -> None:
+        self._steps = steps
+        self._keep_open = keep_open
+        self._output = b''
+        self._written = threading.Condition()
+        self._released = threading.Event()
+
+    def __iter__(self) -> Iterator[bytes]:
+        requests = 0
+        for step in self._steps:
+            if callable(step):
+                self._wait_for_answers(requests)
+                step()
+                continue
+            line = step if isinstance(step, bytes) else json.dumps(step).encode()
+            if expects_answer(line):
+                requests += 1
+            yield line + b'\n'
+        if self._keep_open:
+            self._released.wait()
+
+    def write(self, data: bytes) -> int:
+        with self._written:
+            self._output += data
+            self._written.notify_all()
+
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def release(self) -> None:
+        self._released.set()
+
+    def answers(self) -> list[dict[str, Any]]:
+        return [json.loads(line) for line in self._output.splitlines()]
+
+    def _wait_for_answers(self, count: int) -> None:
+        with self._written:
+            answered = self._written.wait_for(lambda: self._output.count(b'\n') >= count, timeout=5)
+        assert answered, f'the bridge did not answer {count} requests'
+
+
+def _run_client(client: _Client) -> list[dict[str, Any]]:
+    """Run the bridge until *client* closes stdin and return the answers."""
+    exit_code = run_stdio_bridge(client, client, channel_name='test-channel')  # type: ignore[arg-type]  # iteration, write() and flush() are all it uses
+    assert exit_code == 0
+
+    return client.answers()
 
 
 def _tool_call(request_id: int) -> dict[str, Any]:
@@ -211,6 +287,9 @@ def _tool_error_text(answer: dict[str, Any]) -> str | None:
 
 class TestAppNotReachable(unittest.TestCase):
     """Tests for an application that is not running, is quit, or restarts; the bridge never starts it."""
+
+    def setUp(self):
+        _patch_peer_closed(self)
 
     def _channel(self, availability: Any) -> Any:
         return patch.object(mcp_bridge, 'open_local_channel', side_effect=availability)
@@ -251,13 +330,14 @@ class TestAppNotReachable(unittest.TestCase):
             answers = _run(_stdin(*(_tool_call(request_id) for request_id in range(1, 5))))
 
         self.assertTrue(all(_tool_error_text(answer) for answer in answers))
-        self.assertEqual(mock_open.call_count, 4)
+        # One attempt when the bridge starts, then one per request
+        self.assertEqual(mock_open.call_count, 5)
 
     def test_app_started_after_the_client_is_reached_without_reconnecting(self):
-        """The case the bridge's own answers exist for: Claude opened first, the app started later, the next call gets the data."""
+        """Claude opened first, the app started later: the next call gets the data."""
         availability = _AppAvailability(_InMemoryApp())
         with self._channel(availability):
-            answers = _run(_lines(_tool_call(1), availability.start, _tool_call(2)))
+            answers = _run_client(_Client(_tool_call(1), availability.start, _tool_call(2)))
 
         self.assertIsNotNone(_tool_error_text(answers[0]))
         self.assertIsNone(_tool_error_text(answers[1]))
@@ -268,7 +348,7 @@ class TestAppNotReachable(unittest.TestCase):
         availability = _AppAvailability(_InMemoryApp(breaks_after=1), _InMemoryApp())
         availability.start()
         with self._channel(availability):
-            answers = _run(_lines(_tool_call(1), availability.stop, _tool_call(2), availability.start, _tool_call(3)))
+            answers = _run_client(_Client(_tool_call(1), availability.stop, _tool_call(2), availability.start, _tool_call(3)))
 
         self.assertEqual([answer['id'] for answer in answers], [1, 2, 3])
         self.assertEqual([_tool_error_text(answer) is None for answer in answers], [True, False, True])
@@ -301,6 +381,149 @@ class TestAppNotReachable(unittest.TestCase):
 
         self.assertIsNone(answers[0]['id'])
         self.assertEqual(answers[0]['error']['code'], -32700)
+
+
+def _wait_until(condition: Callable[[], object], timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, 'condition not reached in time'
+        time.sleep(0.005)
+
+
+class _BridgeThread:
+    """Runs the bridge for *client* on a daemon thread, so a test can see whether it ends by itself."""
+
+    def __init__(self, client: _Client) -> None:
+        self._client = client
+        self.exit_codes: list[int] = []
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        self.exit_codes.append(run_stdio_bridge(self._client, self._client, channel_name='test-channel'))  # type: ignore[arg-type]  # iteration, write() and flush() are all it uses
+
+    def ended_by_itself(self, within: float) -> bool:
+        self._thread.join(within)
+        return not self._thread.is_alive()
+
+    def stop(self) -> None:
+        """Close the client's stdin, which ends any bridge still running."""
+        self._client.release()
+        self._thread.join(5)
+
+
+class TestLifetime(unittest.TestCase):
+    """Tests for how long the bridge lives: as long as the application plus a grace period, while the client holds stdin open.
+
+    A bridge left running keeps the EXE in use, so Windows refuses to delete
+    or replace it after the user quit the application.
+    """
+
+    _LINGER = 0.3
+
+    def setUp(self):
+        _patch_peer_closed(self)
+        for name, value in (('_APP_CHECK_SECONDS', 0.01), ('_LINGER_WITHOUT_APP_SECONDS', self._LINGER)):
+            patcher = patch.object(mcp_bridge, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _start(self, client: _Client, availability: Any) -> _BridgeThread:
+        patcher = patch.object(mcp_bridge, 'open_local_channel', side_effect=availability)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        bridge = _BridgeThread(client)
+        self.addCleanup(bridge.stop)
+
+        return bridge
+
+    def test_quitting_the_app_ends_a_silent_bridge(self):
+        app = _InMemoryApp()
+        availability = _AppAvailability(app)
+        availability.start()
+
+        def quit_app() -> None:
+            availability.stop()
+            app.quit = True
+
+        client = _Client(_tool_call(1), quit_app, keep_open=True)
+        bridge = self._start(client, availability)
+
+        self.assertTrue(bridge.ended_by_itself(within=5))
+        self.assertEqual(bridge.exit_codes, [0])
+        self.assertIsNone(_tool_error_text(client.answers()[0]))
+        self.assertTrue(app.closed)
+
+    def test_bridge_that_was_never_asked_anything_ends_with_the_app(self):
+        app = _InMemoryApp()
+        availability = _AppAvailability(app)
+        availability.start()
+        bridge = self._start(_Client(keep_open=True), availability)
+
+        _wait_until(lambda: availability.handed_out)
+        availability.stop()
+        app.quit = True
+
+        self.assertTrue(bridge.ended_by_itself(within=5))
+
+    def test_without_the_app_the_bridge_answers_and_then_ends(self):
+        """A tool call made after the user quit the application starts a bridge; it answers and does not keep the EXE in use."""
+        handshake = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-06-18', 'capabilities': {}}}
+        client = _Client(handshake, _tool_call(2), keep_open=True)
+        bridge = self._start(client, FileNotFoundError)
+
+        self.assertTrue(bridge.ended_by_itself(within=5))
+        answers = client.answers()
+        self.assertEqual(answers[0]['result']['serverInfo']['name'], 'usage-monitor-for-claude')
+        self.assertIn('"mcp_server": true', _tool_error_text(answers[1]))
+
+    def test_without_the_app_the_bridge_waits_the_grace_period_first(self):
+        """The handshake takes several messages; a bridge that ended at once would fail it, and the client would mark the server broken."""
+        started = time.monotonic()
+        bridge = self._start(_Client(keep_open=True), FileNotFoundError)
+
+        self.assertTrue(bridge.ended_by_itself(within=5))
+        self.assertGreaterEqual(time.monotonic() - started, self._LINGER)
+
+    def test_each_message_restarts_the_grace_period(self):
+        def pause() -> None:
+            time.sleep(self._LINGER * 0.6)
+
+        with patch.object(mcp_bridge, 'open_local_channel', side_effect=FileNotFoundError):
+            answers = _run_client(_Client(_tool_call(1), pause, _tool_call(2), pause, _tool_call(3)))
+
+        self.assertEqual([answer['id'] for answer in answers], [1, 2, 3])
+
+    def test_restart_within_the_grace_period_keeps_the_bridge(self):
+        """A Restart is over within seconds; the bridge reconnects to the new process instead of ending."""
+        before_restart, after_restart = _InMemoryApp(), _InMemoryApp()
+        availability = _AppAvailability(before_restart, after_restart)
+        availability.start()
+
+        def restart() -> None:
+            before_restart.quit = True
+            _wait_until(lambda: after_restart in availability.handed_out)
+
+        client = _Client(_tool_call(1), restart, _tool_call(2), keep_open=True)
+        bridge = self._start(client, availability)
+
+        self.assertFalse(bridge.ended_by_itself(within=self._LINGER * 2))
+        self.assertEqual([_tool_error_text(answer) is None for answer in client.answers()], [True, True])
+        self.assertEqual(len(after_restart.received), 1)
+        self.assertTrue(before_restart.closed)
+
+    def test_app_started_within_the_grace_period_keeps_the_bridge_until_it_quits(self):
+        app = _InMemoryApp()
+        availability = _AppAvailability(app)
+        bridge = self._start(_Client(_tool_call(1), availability.start, keep_open=True), availability)
+
+        _wait_until(lambda: availability.handed_out)
+        self.assertFalse(bridge.ended_by_itself(within=self._LINGER * 2))
+
+        availability.stop()
+        app.quit = True
+        self.assertTrue(bridge.ended_by_itself(within=5))
+
 
 @unittest.skipUnless(_REAL_CHANNEL_AVAILABLE, 'this system offers neither named pipes nor Unix domain sockets')
 class TestRealChannel(unittest.TestCase):
@@ -399,6 +622,37 @@ class TestBridgeProcess(unittest.TestCase):
         self.assertEqual(initialized['result']['serverInfo']['name'], 'usage-monitor-for-claude')
         self.assertEqual(tool_answer['id'], 5)
         self.assertIn('"mcp_server": true', _tool_error_text(tool_answer))
+
+    def test_entry_point_ends_cleanly_while_the_client_still_holds_stdin_open(self):
+        """Once no app is there the bridge ends with its stdin thread still in a read, and normal interpreter shutdown dies on the lock that read holds."""
+        config_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(config_dir.cleanup)
+        handshake = {'jsonrpc': '2.0', 'id': 4, 'method': 'initialize', 'params': {'protocolVersion': '2025-06-18', 'capabilities': {}}}
+        # The real entry point, with a short grace period so the test does not wait ten seconds
+        script = (
+            'import runpy, sys; import usage_monitor_for_claude.mcp_bridge as bridge; '
+            'bridge._LINGER_WITHOUT_APP_SECONDS = 0.5; bridge._APP_CHECK_SECONDS = 0.05; '
+            f'sys.argv = ["usage_monitor_for_claude", "--mcp", {"--config-dir=" + config_dir.name!r}]; '
+            'runpy.run_module("usage_monitor_for_claude", run_name="__main__")'
+        )
+
+        process = subprocess.Popen(
+            [sys.executable, '-c', script], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=_REPO_ROOT,
+            env={**os.environ, 'PYTHONPATH': str(_REPO_ROOT)},
+        )
+        self.addCleanup(process.kill)
+        self.addCleanup(process.stdin.close)  # type: ignore[union-attr]  # opened with PIPE
+        process.stdin.write(json.dumps(handshake).encode() + b'\n')  # type: ignore[union-attr]  # opened with PIPE
+        process.stdin.flush()  # type: ignore[union-attr]  # opened with PIPE
+
+        returncode = process.wait(timeout=30)
+        stdout, stderr = process.stdout.read(), process.stderr.read()  # type: ignore[union-attr]  # opened with PIPE
+        process.stdout.close()  # type: ignore[union-attr]  # opened with PIPE
+        process.stderr.close()  # type: ignore[union-attr]  # opened with PIPE
+
+        self.assertEqual(returncode, 0, stderr.decode(errors='replace'))
+        self.assertEqual(stderr, b'')
+        self.assertEqual(json.loads(stdout.splitlines()[0])['id'], 4)
 
     def test_bridge_never_loads_a_network_client(self):
         """Nothing in the bridge needs HTTP; a requests or http.client import would mean a new way out of the machine."""

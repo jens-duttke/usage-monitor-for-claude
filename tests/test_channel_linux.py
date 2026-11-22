@@ -21,7 +21,7 @@ if sys.platform == 'win32':
     raise unittest.SkipTest('Unix domain sockets')
 
 from usage_monitor_for_claude.platforms import channel_linux  # noqa: E402
-from usage_monitor_for_claude.platforms.channel_linux import LocalChannelListener, open_local_channel  # noqa: E402
+from usage_monitor_for_claude.platforms.channel_linux import LocalChannelListener, open_local_channel, peer_closed  # noqa: E402
 
 
 class _RuntimeDirTestCase(unittest.TestCase):
@@ -106,6 +106,40 @@ class TestSocketChannel(_RuntimeDirTestCase):
                 open_local_channel('channel')
 
         self.assertFalse(missing.exists())
+
+
+class TestPeerClosed(_RuntimeDirTestCase):
+    """Tests for the liveness check the bridge runs once a second while Claude is silent."""
+
+    def _connected_pair(self) -> tuple[socket.socket, socket.socket]:
+        listener = self._listen('channel')
+        client = open_local_channel('channel')
+        self.addCleanup(client.close)
+        server_side = listener.accept()
+        self.addCleanup(server_side.close)
+
+        return client, server_side
+
+    def test_open_socket_reads_as_open_without_consuming_what_is_pending(self):
+        client, server_side = self._connected_pair()
+        server_side.sendall(b'pending\n')
+
+        self.assertFalse(peer_closed(client))
+        self.assertEqual(client.recv(100), b'pending\n')
+        self.assertFalse(peer_closed(client))
+
+    def test_server_closing_the_connection_reads_as_closed(self):
+        client, server_side = self._connected_pair()
+
+        server_side.close()
+
+        self.assertTrue(peer_closed(client))
+
+    def test_closed_client_socket_reads_as_closed(self):
+        client, _ = self._connected_pair()
+        client.close()
+
+        self.assertTrue(peer_closed(client))
 
 
 class TestLeftoverSocket(_RuntimeDirTestCase):

@@ -44,7 +44,10 @@ if '--mcp' in sys.argv:
     from usage_monitor_for_claude.mcp_bridge import run_stdio_bridge
     if sys.stdin is None or sys.stdout is None:
         sys.exit(1)
-    sys.exit(run_stdio_bridge(sys.stdin.buffer, sys.stdout.buffer))
+    # os._exit, not sys.exit: when the bridge ends because the application is gone, its stdin
+    # thread is still blocked in a read, and interpreter shutdown dies on the lock that read holds
+    # (a fatal error and an access violation). The bridge has flushed every answer it could deliver.
+    os._exit(run_stdio_bridge(sys.stdin.buffer, sys.stdout.buffer))
 
 # In frozen builds (console=False), stdout/stderr go nowhere.
 # --verbose attaches a console so diagnostics are visible.

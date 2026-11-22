@@ -12,7 +12,7 @@ Turn the server on in your [settings file](configuration.md#mcp-server), then ch
 }
 ```
 
-Claude starts the app's EXE a second time with `--mcp`. That process opens no window, passes Claude's requests on to the running app and ends when Claude closes it.
+Claude starts the app's EXE a second time with `--mcp`. That process opens no window and passes Claude's requests on to the running app. It ends when Claude closes it, or about ten seconds after you quit the app. Claude starts it again for its next request. To delete or replace the EXE, quit the app and wait those ten seconds.
 
 If the app is not running or `mcp_server` is off, the tool reports an error. Turn on **Start at login** in the tray menu so the app is always running when Claude asks.
 

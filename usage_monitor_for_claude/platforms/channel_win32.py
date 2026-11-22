@@ -17,7 +17,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes
 
-__all__ = ['LocalChannelListener', 'open_local_channel']
+__all__ = ['LocalChannelListener', 'open_local_channel', 'peer_closed']
 
 _PIPE_PREFIX = '\\\\.\\pipe\\'
 _BUFFER_SIZE = 64 * 1024
@@ -82,6 +82,8 @@ _kernel32.ReadFile.argtypes = [_HANDLE, ctypes.c_void_p, _DWORD, ctypes.POINTER(
 _kernel32.ReadFile.restype = _BOOL
 _kernel32.WriteFile.argtypes = [_HANDLE, ctypes.c_void_p, _DWORD, ctypes.POINTER(_DWORD), ctypes.c_void_p]
 _kernel32.WriteFile.restype = _BOOL
+_kernel32.PeekNamedPipe.argtypes = [_HANDLE, ctypes.c_void_p, _DWORD, ctypes.POINTER(_DWORD), ctypes.POINTER(_DWORD), ctypes.POINTER(_DWORD)]
+_kernel32.PeekNamedPipe.restype = _BOOL
 _kernel32.CloseHandle.argtypes = [_HANDLE]
 _kernel32.CloseHandle.restype = _BOOL
 _kernel32.GetCurrentProcess.argtypes = []
@@ -202,6 +204,20 @@ def open_local_channel(name: str) -> _PipeConnection:
         raise PermissionError(f'{path} is served by a process of another user')
 
     return connection
+
+
+def peer_closed(connection: _PipeConnection) -> bool:
+    """Return True once the other end has closed the pipe, without reading from it or waiting.
+
+    ``PeekNamedPipe`` fails once the server has disconnected or exited; any
+    failure counts, because a pipe it fails on cannot carry a message either.
+    """
+    if connection._handle is None:
+        return True
+
+    available = _DWORD(0)
+
+    return not _kernel32.PeekNamedPipe(connection._handle, None, 0, None, ctypes.byref(available), None)
 
 
 def _pipe_path(name: str) -> str:
