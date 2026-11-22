@@ -215,9 +215,7 @@ def peer_closed(connection: _PipeConnection) -> bool:
     if connection._handle is None:
         return True
 
-    available = _DWORD(0)
-
-    return not _kernel32.PeekNamedPipe(connection._handle, None, 0, None, ctypes.byref(available), None)
+    return not _kernel32.PeekNamedPipe(connection._handle, None, 0, None, None, None)
 
 
 def _pipe_path(name: str) -> str:
