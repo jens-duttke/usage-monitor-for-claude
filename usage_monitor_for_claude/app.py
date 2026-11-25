@@ -32,7 +32,8 @@ from .settings import (
     POLL_FAST_EXTRA, POLL_INTERVAL, POPUP_FIELDS, QUICK_ACTION_COMMAND, get_alert_thresholds,
 )
 from .formatting import (
-    elapsed_pct, field_period, fit_tooltip, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label, resolve_icon_fields,
+    blocks_all_usage, elapsed_pct, field_period, fit_tooltip, format_credits, format_tooltip, is_active_quota, parse_field_name, popup_label,
+    resolve_icon_fields,
 )
 from .i18n import T
 from .mcp_server import start_mcp_server
@@ -420,6 +421,7 @@ class UsageMonitorForClaude:
                 mode_top=top_mode, mode_bottom=bottom_mode,
                 time_pct_top=time_pct_top, time_pct_bottom=time_pct_bottom,
                 extra_usage_available=extra_usage_available,
+                top_blocks_all=blocks_all_usage(top_field, top_entry), bottom_blocks_all=blocks_all_usage(bottom_field, bottom_entry),
             )
         self.icon.title = fit_tooltip(self._tooltip_prefix + format_tooltip(data), TOOLTIP_MAX_LENGTH)
 
@@ -511,6 +513,7 @@ class UsageMonitorForClaude:
                 quota_fields[key] = value.get('utilization', 0) or 0
 
         # Notify when quota resets after being nearly exhausted, but only if no other quota is blocking usage.
+        # An exhausted quota scoped to one model or surface blocks nothing else, so it does not hold the notification back.
         # While idle/locked, defer notifications until the user returns (avoids lock screen privacy concerns).
         # The message carries no field information, so several quotas resetting
         # within one polling gap still produce a single notification.
@@ -526,7 +529,10 @@ class UsageMonitorForClaude:
 
             _, unit, _ = parsed
             reset_threshold = 95 if unit == 'hour' else 98
-            any_blocking = any(other_pct >= 99 for other_key, other_pct in quota_fields.items() if other_key != key)
+            any_blocking = False
+            for other_key, other_pct in quota_fields.items():
+                if other_key != key and other_pct >= 99 and blocks_all_usage(other_key, result.data.get(other_key)):
+                    any_blocking = True
 
             if prev > reset_threshold and pct < prev and not any_blocking:
                 reset_detected = True

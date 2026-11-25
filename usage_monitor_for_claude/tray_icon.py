@@ -26,12 +26,16 @@ MARKER_WIDTH = 4
 # Row height for the 'numbers' icon style - two rows split the canvas evenly.
 NUMBER_ROW_HEIGHT = 32
 
+# Font size for the three-digit '100' of an exhausted scoped quota - the
+# two-digit size 40 would overflow the 64 px canvas.
+SCOPED_EXHAUSTED_FONT_SIZE = 30
+
 
 def create_icon_image(
     pct_top: float, pct_bottom: float, light_taskbar: bool = False,
     *, mode_top: str = 'utilization', mode_bottom: str = 'utilization',
     time_pct_top: float | None = None, time_pct_bottom: float | None = None,
-    extra_usage_available: bool = False,
+    extra_usage_available: bool = False, top_blocks_all: bool = True, bottom_blocks_all: bool = True,
 ) -> Image.Image:
     """Create tray icon: 'C' letter + two usage bars.
 
@@ -62,6 +66,12 @@ def create_icon_image(
         True if the account has paid extra-usage credits still available.
         When a quota is fully exhausted, this decides whether to show ``$``
         (continuing costs money) or ``✕`` (fully blocked).
+    top_blocks_all : bool
+        True if exhausting the upper quota stops all Claude usage.  A quota
+        scoped to one model or surface (False) shows ``100`` when it runs
+        out instead of ``✕``/``$``, since everything else stays usable.
+    bottom_blocks_all : bool
+        Same for the lower quota.
     """
     colors = ICON_DARK if light_taskbar else ICON_LIGHT
     fg, fg_half, fg_warn = colors['fg'], colors['fg_half'], colors['fg_warn']
@@ -74,29 +84,35 @@ def create_icon_image(
         # Two states collapse both rows into one full-size glyph: idle shows
         # the single 'C', and both quotas exhausted shows one large '✕'/'$' -
         # extra_usage_available applies account-wide, so the two rows would
-        # only repeat the same symbol twice at half size.
-        if pct_top >= 100 and pct_bottom >= 100 and not extra_usage_available:
+        # only repeat the same symbol twice at half size.  Two exhausted
+        # scoped quotas block nothing else and keep their rows.
+        both_exhausted = pct_top >= 100 and pct_bottom >= 100 and (top_blocks_all or bottom_blocks_all)
+        if both_exhausted and not extra_usage_available:
             _draw_centered_text(draw, '\u2715', load_font(36, symbol=True), 2, fg)
-        elif pct_top >= 100 and pct_bottom >= 100:
+        elif both_exhausted:
             _draw_centered_text(draw, '$', load_font(42), 2, fg)
         elif pct_top <= 0 and pct_bottom <= 0:
             _draw_centered_text(draw, 'C', load_font(42), 0, fg)
         else:
-            _draw_number_row(draw, 0, pct_top, extra_usage_available, fg)
-            _draw_number_row(draw, NUMBER_ROW_HEIGHT, pct_bottom, extra_usage_available, fg)
+            _draw_number_row(draw, 0, pct_top, top_blocks_all, extra_usage_available, fg)
+            _draw_number_row(draw, NUMBER_ROW_HEIGHT, pct_bottom, bottom_blocks_all, extra_usage_available, fg)
         return img
 
-    # Top glyph: "✕" when any quota exhausted and no extra credits left,
-    # "$" when exhausted but paid extra-usage still available,
-    # "C" while usage is still zero, otherwise the percentage.
+    # Top glyph: "✕" when a quota that blocks all usage is exhausted and no
+    # extra credits are left, "$" when such a quota is exhausted but paid
+    # extra usage is still available, "100" for an exhausted quota scoped to
+    # one model or surface, "C" while usage is still zero, otherwise the
+    # percentage.
     stroke_width = 0
-    any_exhausted = pct_top >= 100 or pct_bottom >= 100
-    if any_exhausted and not extra_usage_available:
+    blocked = (pct_top >= 100 and top_blocks_all) or (pct_bottom >= 100 and bottom_blocks_all)
+    if blocked and not extra_usage_available:
         text, font = '\u2715', load_font(36, symbol=True)
         stroke_width = 2
-    elif any_exhausted:
+    elif blocked:
         text, font = '$', load_font(42)
         stroke_width = 2
+    elif pct_top >= 100:
+        text, font = '100', load_font(SCOPED_EXHAUSTED_FONT_SIZE)
     elif pct_top > 0:
         # Clamp to 99: values in [99.5, 100) would round to a three-digit
         # '100' that overflows the canvas and reads as exhausted.
@@ -128,15 +144,19 @@ def _draw_centered_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.Fr
     draw.text((x, y), text, fill=fg, font=font, stroke_width=stroke_width, stroke_fill=fg)
 
 
-def _draw_number_row(draw: ImageDraw.ImageDraw, row_top: int, pct: float, extra_usage_available: bool, fg: tuple) -> None:
+def _draw_number_row(draw: ImageDraw.ImageDraw, row_top: int, pct: float, blocks_all: bool, extra_usage_available: bool, fg: tuple) -> None:
     """Draw one row of the ``'numbers'`` icon style at vertical offset *row_top*.
 
-    The row shows the percentage clamped to 99, or ``✕``/``$`` when the
-    quota is exhausted (following the same extra-usage rule as the classic
-    top glyph).  Everything is drawn in *fg*, matching the classic glyph.
+    The row shows the percentage clamped to 99, or ``✕``/``$`` when a quota
+    that blocks all usage is exhausted (following the same extra-usage rule
+    as the classic top glyph), or ``100`` when an exhausted quota is scoped
+    to one model or surface.  Everything is drawn in *fg*, matching the
+    classic glyph.
     """
     stroke_width = 0
-    if pct >= 100 and not extra_usage_available:
+    if pct >= 100 and not blocks_all:
+        text, font = '100', load_font(SCOPED_EXHAUSTED_FONT_SIZE)
+    elif pct >= 100 and not extra_usage_available:
         text, font = '\u2715', load_font(34, symbol=True)
         stroke_width = 2
     elif pct >= 100:

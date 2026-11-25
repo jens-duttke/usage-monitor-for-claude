@@ -224,7 +224,9 @@ Each entry can optionally include a display mode suffix using colon syntax: `"fi
 
 In `utilization` mode, each bar also shows a thin vertical marker at the elapsed-time position of the quota period - the same information as the time marker in the detail popup. When usage is ahead of the elapsed time (or fully exhausted), the bar fill switches to the warning color (`fg_warn` in [Tray icon colors](#tray-icon-colors)), matching the popup's red warning fill.
 
-**The `"numbers"` style** replaces the bars with a second percentage: the first `icon_fields` entry becomes the top row, the second the bottom row. Each row follows the same rules as the classic icon text - an exhausted quota shows `✕` (or `$` when paid extra usage is still available), and when both are exhausted the icon collapses to a single full-size `✕`/`$`. The time marker, the warning color, and the `:overage` suffix have no effect in this style; while both quotas are at 0% the icon shows the usual idle "C".
+The icon text turns into `✕` when a quota shown in the icon is used up, or `$` when paid extra usage is still available. A used-up quota that covers only one model or surface, such as a weekly Fable or Sonnet limit, does not do this: the text keeps the top quota's percentage, or shows `100` when the top quota is that limit.
+
+**The `"numbers"` style** replaces the bars with a second percentage: the first `icon_fields` entry becomes the top row, the second the bottom row. Each row follows the same rules as the classic icon text - an exhausted quota shows `✕` (or `$` when paid extra usage is still available), and when both are exhausted the icon collapses to a single full-size `✕`/`$`. A used-up model or surface limit shows `100` in its row, and two of them do not collapse. The time marker, the warning color, and the `:overage` suffix have no effect in this style; while both quotas are at 0% the icon shows the usual idle "C".
 
 **Example** - show session and weekly usage as two stacked percentages:
 
