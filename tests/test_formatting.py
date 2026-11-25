@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from usage_monitor_for_claude.formatting import (
     PERIOD_5H, PERIOD_7D,
-    divider_positions, elapsed_fraction, elapsed_pct, expand_popup_fields, field_period, fit_tooltip, format_credits,
+    blocks_all_usage, divider_positions, elapsed_fraction, elapsed_pct, expand_popup_fields, field_period, fit_tooltip, format_credits,
     format_tooltip, parse_field_name, popup_label, resolve_icon_fields, time_until, tooltip_label,
     _local_boundary, _local_date, _schedule_period,
 )
@@ -506,6 +506,38 @@ class TestElapsedFraction(unittest.TestCase):
         self.assertAlmostEqual(monday_evening, 0.2)
         self.assertAlmostEqual(tuesday_morning, 0.2)
         self.assertAlmostEqual(tuesday_noon, 0.3)
+
+
+# ---------------------------------------------------------------------------
+# blocks_all_usage
+# ---------------------------------------------------------------------------
+
+class TestBlocksAllUsage(unittest.TestCase):
+    """Tests for blocks_all_usage()."""
+
+    def test_base_periods_block_everything(self):
+        for field in ('five_hour', 'seven_day'):
+            with self.subTest(field=field):
+                self.assertTrue(blocks_all_usage(field, {'utilization': 100.0}))
+
+    def test_named_variants_are_scoped(self):
+        """A model or surface variant leaves the rest of the subscription usable."""
+        for field in ('seven_day_sonnet', 'seven_day_opus', 'seven_day_oauth_apps', 'seven_day_cowork'):
+            with self.subTest(field=field):
+                self.assertFalse(blocks_all_usage(field, {'utilization': 100.0}))
+
+    def test_limit_from_limits_array_is_scoped(self):
+        """The marker _merge_scoped_limits() sets wins, whatever period name the field inherited."""
+        self.assertFalse(blocks_all_usage('seven_day_fable', {'utilization': 100.0, 'from_account_limits': True}))
+        self.assertFalse(blocks_all_usage('monthly_fable', {'utilization': 100.0, 'from_account_limits': True}))
+
+    def test_code_name_counts_as_account_wide(self):
+        """Nothing marks a code-named quota as scoped, so it keeps blocking like before."""
+        self.assertTrue(blocks_all_usage('iguana_necktie', {'utilization': 100.0}))
+
+    def test_missing_or_non_dict_entry(self):
+        self.assertTrue(blocks_all_usage('seven_day', None))
+        self.assertFalse(blocks_all_usage('seven_day_sonnet', []))
 
 
 # ---------------------------------------------------------------------------

@@ -18,8 +18,8 @@ from .settings import (
 )
 
 __all__ = [
-    'divider_positions', 'elapsed_fraction', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'fit_tooltip', 'format_clock', 'format_credits',
-    'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'resolve_icon_fields', 'time_until', 'tooltip_label',
+    'blocks_all_usage', 'divider_positions', 'elapsed_fraction', 'elapsed_pct', 'expand_popup_fields', 'field_period', 'fit_tooltip', 'format_clock',
+    'format_credits', 'format_tooltip', 'is_active_quota', 'parse_field_name', 'popup_label', 'resolve_icon_fields', 'time_until', 'tooltip_label',
 ]
 
 PERIOD_5H = 5 * 3600
@@ -165,6 +165,30 @@ def is_active_quota(field: str, entry: Any) -> bool:
         return False
 
     return bool(entry.get('resets_at')) or parse_field_name(field) is not None or bool(entry.get('from_account_limits'))
+
+
+def blocks_all_usage(field: str, entry: Any) -> bool:
+    """Return True if running out of a quota stops all Claude usage, not just part of it.
+
+    A quota scoped to one model or surface - a named variant such as
+    ``seven_day_sonnet``, or a model limit ``_merge_scoped_limits()`` took
+    from the ``limits`` array - leaves everything else usable when it runs
+    out.  A field whose name does not parse counts as account-wide, since
+    nothing marks it as scoped.
+
+    Parameters
+    ----------
+    field : str
+        API field name.
+    entry : Any
+        Value of that field in the usage response.
+    """
+    if isinstance(entry, dict) and entry.get('from_account_limits'):
+        return False
+
+    parsed = parse_field_name(field)
+
+    return parsed is None or parsed[2] is None
 
 
 def _field_sort_key(field: str) -> tuple[int, int, int, str]:

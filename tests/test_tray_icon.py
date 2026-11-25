@@ -206,6 +206,54 @@ class TestCreateIconImage(unittest.TestCase):
         # Still shows the percentage, not '$'
         mock_font.assert_any_call(40)
 
+    @patch.object(tray_icon_mod, 'load_font')
+    def test_exhausted_scoped_bottom_keeps_top_number(self, mock_font):
+        """A used-up model limit below does not turn the icon into '✕' - the top number stays."""
+        mock_font.return_value = _real_font()
+
+        tray_icon_mod.create_icon_image(91, 100, bottom_blocks_all=False)
+
+        mock_font.assert_any_call(40)
+        self.assertNotIn(call(36, symbol=True), mock_font.call_args_list)
+
+    @patch.object(tray_icon_mod, 'load_font')
+    def test_exhausted_scoped_bottom_ignores_extra_usage(self, mock_font):
+        """No '$' either: extra usage only matters once all usage is blocked."""
+        mock_font.return_value = _real_font()
+
+        tray_icon_mod.create_icon_image(91, 100, extra_usage_available=True, bottom_blocks_all=False)
+
+        mock_font.assert_any_call(40)
+        self.assertNotIn(call(42), mock_font.call_args_list)
+
+    @patch.object(tray_icon_mod, 'load_font')
+    def test_blocking_quota_wins_over_scoped_one(self, mock_font):
+        """An exhausted account-wide quota still shows '✕' next to a scoped one."""
+        mock_font.return_value = _real_font()
+
+        tray_icon_mod.create_icon_image(100, 100, bottom_blocks_all=False)
+
+        mock_font.assert_any_call(36, symbol=True)
+
+    @patch.object(tray_icon_mod, 'load_font')
+    def test_exhausted_scoped_top_shows_100(self, mock_font):
+        """A used-up scoped quota on top shows '100' in the smaller three-digit font."""
+        mock_font.return_value = _real_font()
+
+        tray_icon_mod.create_icon_image(100, 20, top_blocks_all=False)
+
+        mock_font.assert_any_call(tray_icon_mod.SCOPED_EXHAUSTED_FONT_SIZE)
+        self.assertNotIn(call(36, symbol=True), mock_font.call_args_list)
+
+    def test_scoped_100_fits_the_canvas(self):
+        """The three-digit '100' leaves a margin on both sides with the real font."""
+        img = tray_icon_mod.create_icon_image(100, 20, top_blocks_all=False)
+        glyph = img.crop((0, 0, tray_icon_mod.ICON_SIZE, 40)).getbbox()
+
+        self.assertIsNotNone(glyph)
+        self.assertGreater(glyph[0], 0)
+        self.assertLess(glyph[2], tray_icon_mod.ICON_SIZE)
+
     def test_dollar_and_cross_states_produce_different_images(self):
         """'$' (extra usage available) and '✕' (fully blocked) render differently."""
         img_cross = tray_icon_mod.create_icon_image(100, 20, extra_usage_available=False)
@@ -587,6 +635,47 @@ class TestCreateIconImageNumbersStyle(unittest.TestCase):
 
         mock_font.assert_any_call(36, symbol=True)
         self.assertNotIn(call(34, symbol=True), mock_font.call_args_list)
+
+    @patch.object(tray_icon_mod, 'load_font')
+    def test_exhausted_scoped_row_shows_100(self, mock_font):
+        """A used-up model limit shows '100' in its row instead of '✕'."""
+        mock_font.return_value = _real_font()
+
+        tray_icon_mod.create_icon_image(91, 100, bottom_blocks_all=False)
+
+        mock_font.assert_any_call(tray_icon_mod.SCOPED_EXHAUSTED_FONT_SIZE)
+        self.assertNotIn(call(34, symbol=True), mock_font.call_args_list)
+
+    @patch.object(tray_icon_mod, 'load_font')
+    def test_two_exhausted_scoped_rows_do_not_collapse(self, mock_font):
+        """Two used-up model limits block nothing else, so both rows stay."""
+        mock_font.return_value = _real_font()
+
+        tray_icon_mod.create_icon_image(100, 100, top_blocks_all=False, bottom_blocks_all=False)
+
+        self.assertNotIn(call(36, symbol=True), mock_font.call_args_list)
+        self.assertEqual(mock_font.call_args_list.count(call(tray_icon_mod.SCOPED_EXHAUSTED_FONT_SIZE)), 2)
+
+    @patch.object(tray_icon_mod, 'load_font')
+    def test_blocking_and_scoped_exhausted_collapse_to_cross(self, mock_font):
+        """With the account-wide quota used up everything is blocked, so the icon collapses to one '✕'."""
+        mock_font.return_value = _real_font()
+
+        tray_icon_mod.create_icon_image(100, 100, bottom_blocks_all=False)
+
+        mock_font.assert_any_call(36, symbol=True)
+
+    def test_scoped_100_row_fits_its_row(self):
+        """The three-digit '100' stays inside the canvas width and its own row."""
+        img = tray_icon_mod.create_icon_image(91, 100, bottom_blocks_all=False)
+        row_h = tray_icon_mod.NUMBER_ROW_HEIGHT
+        glyph = img.crop((0, row_h, tray_icon_mod.ICON_SIZE, 2 * row_h)).getbbox()
+
+        self.assertIsNotNone(glyph)
+        self.assertGreater(glyph[0], 0)
+        self.assertLess(glyph[2], tray_icon_mod.ICON_SIZE)
+        self.assertGreater(glyph[1], 0)
+        self.assertLess(glyph[3], row_h)
 
     @patch.object(tray_icon_mod, 'load_font')
     def test_both_rows_exhausted_with_extra_usage_shows_single_large_dollar(self, mock_font):

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A used-up weekly limit for a single model, such as Fable or Sonnet, no longer turns the tray icon into "✕" or "$" as if your whole plan were blocked - the icon keeps showing your usage, with the full red bar marking the used-up limit. The "quota reset" notification of your other quotas is no longer held back while such a limit is used up
+
 [Show all code changes](https://github.com/jens-duttke/usage-monitor-for-claude/compare/v1.27.0...HEAD)
 
 ## [1.27.0] - 2026-11-04
