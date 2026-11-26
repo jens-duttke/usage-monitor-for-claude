@@ -26,7 +26,7 @@ import threading
 import time
 from typing import Any, Callable
 
-__all__ = ['REUSE_WINDOW', 'WINDOW_KWARGS', 'PopupHost', 'popup_url']
+__all__ = ['PREWARM_WINDOW', 'REUSE_WINDOW', 'WINDOW_KWARGS', 'PopupHost', 'popup_url']
 
 # Extra ``webview.create_window`` options for this platform.  GTK ignores
 # ``resize()`` on a non-resizable window, so the content-driven height would
@@ -38,6 +38,7 @@ WINDOW_KWARGS = {'resizable': True}
 # ``destroy()`` does not stop them, so each destroyed window would hold about
 # 200 MB until the app quits.  See :class:`~usage_monitor_for_claude.popup.PopupWindowCache`.
 REUSE_WINDOW = True
+PREWARM_WINDOW = False
 
 _MARGIN = 8
 

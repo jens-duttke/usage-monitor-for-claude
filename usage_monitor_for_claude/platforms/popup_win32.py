@@ -17,15 +17,14 @@ import ctypes.wintypes
 import threading
 from typing import Any, Callable
 
-__all__ = ['REUSE_WINDOW', 'WINDOW_KWARGS', 'PopupHost', 'popup_url']
+__all__ = ['PREWARM_WINDOW', 'REUSE_WINDOW', 'WINDOW_KWARGS', 'PopupHost', 'popup_url']
 
 # Extra ``webview.create_window`` options for this platform.  A non-resizable
 # window is what keeps the frameless popup from being dragged by its edges.
 WINDOW_KWARGS = {'resizable': False, 'shadow': False}
 
-# Every opening creates and destroys its own window here; only the GTK host
-# can keep one alive between openings.
-REUSE_WINDOW = False
+REUSE_WINDOW = True
+PREWARM_WINDOW = True
 
 _BASELINE_DPI = 96
 _GWL_EXSTYLE = -20
@@ -116,6 +115,10 @@ class PopupHost:
         """Make the prepared window visible by dropping the layered style."""
         ex_style = ctypes.windll.user32.GetWindowLongW(self._hwnd, _GWL_EXSTYLE)
         ctypes.windll.user32.SetWindowLongW(self._hwnd, _GWL_EXSTYLE, ex_style & ~_WS_EX_LAYERED)
+
+    def hide(self) -> None:
+        """Hide the popup while keeping its WebView2 controller alive."""
+        self._window.hide()
 
     def apply_geometry(self, height: int, *, keep_position: bool) -> None:
         """Resize to *height* and, unless *keep_position*, move to the tray anchor.

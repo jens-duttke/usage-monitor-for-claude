@@ -13,6 +13,7 @@ anchoring, dismissal and the pinned drag - belongs to the platform host in
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import webbrowser
@@ -29,13 +30,15 @@ from .formatting import (
     divider_positions, elapsed_pct, expand_popup_fields, field_period, format_credits, popup_label, resolve_icon_fields, time_until,
 )
 from .i18n import T
-from .platforms.popup import REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
+from .platforms.popup import PREWARM_WINDOW, REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
 from .settings import (
     BAR_BG, BAR_DIVIDER, BAR_FG, BAR_FG_WARN, BAR_MARKER, BG, COMPACT_HIDE, FG, FG_DIM, FG_HEADING, FG_LINK, FORECAST_CHART, ICON_FIELDS, POPUP_FIELDS,
 )
 
 _POPUP_DIR = Path(__file__).parent / 'popup'
 _PLAN_DETAIL_KEYS = ('organization_type', 'rate_limit_tier')
+_LOGGER = logging.getLogger(__name__)
+_OPEN_TIMEOUT = 15.0
 
 __all__ = ['PopupWindowCache', 'UsagePopup', 'new_window_cache']
 
@@ -264,37 +267,42 @@ def _init_config(snap: CacheSnapshot, next_poll_time: float | None = None) -> di
 class _PopupApi:
     """Methods exposed to JavaScript via pywebview's JS bridge."""
 
-    def __init__(self, popup: UsagePopup) -> None:
+    def __init__(self, popup: UsagePopup | None) -> None:
         self._popup = popup
 
     def close(self) -> None:
-        self._popup._close()
+        if (popup := self._popup) is not None:
+            popup._close()
 
     def open_url(self) -> None:
         webbrowser.open(CHANGELOG_URL)
 
     def refresh(self) -> None:
         """Request a refresh; the update loop supplies the resulting snapshot."""
-        self._popup.app.refresh_now()
+        if (popup := self._popup) is not None:
+            popup.app.refresh_now()
 
     def set_pinned(self, pinned: bool) -> bool:
-        return self._popup._set_pinned(pinned)
+        popup = self._popup
+        return popup is not None and popup._set_pinned(pinned)
 
     def begin_drag(self) -> bool:
-        return self._popup._begin_drag()
+        popup = self._popup
+        return popup is not None and popup._begin_drag()
 
     def drag(self) -> bool:
-        return self._popup._drag()
+        popup = self._popup
+        return popup is not None and popup._drag()
 
     def end_drag(self) -> None:
-        self._popup._end_drag()
+        if (popup := self._popup) is not None:
+            popup._end_drag()
 
     def report_height(self, height: int) -> None:
         """Called by JS ResizeObserver when content height changes."""
-        if not height:
-            return
-
-        self._popup._apply_height(height)
+        popup = self._popup
+        if height and popup is not None and popup._prepared:
+            popup._apply_height(height)
 
 
 def _create_window(api: _PopupApi) -> Any:
@@ -315,8 +323,10 @@ class PopupWindowCache:
 
     Every pywebview window brings up its own WebKit web and network process on
     GTK, and ``destroy()`` does not stop them, so each destroyed window would
-    hold roughly 200 MB until the app quits.  The window is therefore created
-    on the first opening, hidden on close and reloaded on the next opening.
+    hold roughly 200 MB until the app quits. Windows creates its controller
+    at startup, before long idle periods can prevent new controllers from
+    initializing. Both platforms hide the window on close and reload it on
+    reopen.
 
     The reload hands popup.js a fresh document.  That is deliberate: ``init()``
     registers its listeners without removing any, so calling it a second time
@@ -329,6 +339,14 @@ class PopupWindowCache:
         self._host: Any = None
         self._api: _PopupApi | None = None
         self._popup: UsagePopup | None = None
+        self._prewarmed = False
+        self._loaded = False
+
+    def prewarm(self) -> None:
+        """Register a hidden popup before starting the Windows GUI loop."""
+        with self._lock:
+            self._create(None)
+            self._prewarmed = True
 
     def attach(self, popup: UsagePopup) -> None:
         """Give *popup* the shared window, creating it on first use.
@@ -344,7 +362,21 @@ class PopupWindowCache:
                 return
 
             self._api._popup = popup  # type: ignore[union-attr]  # set together with the window
+            if PREWARM_WINDOW:
+                # A prior Win32 dismiss pump may still be tearing down its hooks.
+                self._host = PopupHost(window, UsagePopup.WIDTH)
             popup._window, popup._host = window, self._host
+            prewarmed, self._prewarmed = self._prewarmed, False
+            loaded = self._loaded
+
+        if prewarmed:
+            if loaded:
+                popup._on_loaded()
+            return
+
+        if PREWARM_WINDOW:
+            threading.Thread(target=self._reload_windows, args=(window,), daemon=True).start()
+            return
 
         try:
             window.load_url(popup_url(_POPUP_DIR / 'popup.html'))
@@ -355,6 +387,16 @@ class PopupWindowCache:
                 self._popup = popup
                 self._create(popup)
 
+    @staticmethod
+    def _reload_windows(window: Any) -> None:
+        """Navigate to a fresh document without blocking the popup's load deadline."""
+        try:
+            # Assigning the same Source to WebView2 can leave the existing document in place.
+            url = window.get_current_url().partition('?')[0]
+            window.load_url(f'{url}?open={time.monotonic_ns()}')
+        except Exception as exc:
+            _LOGGER.warning('Windows usage popup navigation failed: %s', type(exc).__name__)
+
     def release(self, popup: UsagePopup) -> None:
         """Hide the window after *popup* closed, keeping it for the next opening."""
         with self._lock:
@@ -362,34 +404,51 @@ class PopupWindowCache:
                 return
 
             self._popup = None
+            self._api._popup = None  # type: ignore[union-attr]  # set together with the active popup
             host = self._host
 
         if host is not None:
             host.hide()
 
-    def _create(self, popup: UsagePopup) -> None:
+    def _create(self, popup: UsagePopup | None) -> None:
         """Create the shared window for *popup*.  The caller holds the lock."""
         self._api = _PopupApi(popup)
         window = self._window = _create_window(self._api)
-        self._host = PopupHost(window, popup.WIDTH)
-        popup._window, popup._host = window, self._host
+        self._loaded = False
+        self._host = PopupHost(window, UsagePopup.WIDTH)
+        if popup is not None:
+            popup._window, popup._host = window, self._host
         window.events.loaded += lambda: self._on_loaded(window)
         window.events.closed += lambda: self._on_closed(window)
 
-    def _discard(self, window: Any) -> None:
+    def _discard(self, window: Any, *, defer_destroy: bool = False) -> None:
         """Forget *window* and destroy it as far as that works."""
         with self._lock:
             if self._window is window:
+                self._popup = None
+                self._api._popup = None  # type: ignore[union-attr]  # set together with the window
                 self._window = self._host = self._api = None
+                self._prewarmed = False
 
+        if defer_destroy:
+            threading.Thread(target=self._destroy, args=(window,), daemon=True).start()
+        else:
+            self._destroy(window)
+
+    @staticmethod
+    def _destroy(window: Any) -> None:
         try:
             window.destroy()
         except Exception:
             pass
 
     def _on_loaded(self, window: Any) -> None:
-        popup = self._popup
-        if popup is not None and window is self._window:
+        with self._lock:
+            if window is not self._window:
+                return
+            self._loaded = True
+            popup = self._popup
+        if popup is not None:
             popup._on_loaded()
 
     def _on_closed(self, window: Any) -> None:
@@ -400,6 +459,7 @@ class PopupWindowCache:
 
             popup, self._popup = self._popup, None
             self._window = self._host = self._api = None
+            self._prewarmed = False
 
         if popup is not None:
             popup._on_window_closed()
@@ -442,7 +502,9 @@ class UsagePopup:
         self._pinned = False
         self._moved_while_pinned = False
         self._shown = False
+        self._prepared = False
         self._closed = threading.Event()
+        self._startup_lock = threading.Lock()
         # Serializes the resize/show geometry path across pywebview's
         # per-call bridge threads.
         self._geometry_lock = threading.Lock()
@@ -460,7 +522,22 @@ class UsagePopup:
         else:
             window_cache.attach(self)
         threading.Thread(target=self._dismiss_watch, daemon=True).start()
+        if PREWARM_WINDOW and window_cache is not None and not self._closed.wait(_OPEN_TIMEOUT):
+            self._expire_open(window_cache)
         self._closed.wait()
+
+    def _expire_open(self, window_cache: PopupWindowCache) -> None:
+        """Release a Windows popup that never reached its visible state."""
+        with self._startup_lock:
+            if self._shown or not self._running:
+                return
+            self._close_started = True
+            self._running = False
+
+        _LOGGER.warning('Windows usage popup did not become visible within %.0f seconds; discarding its WebView2 window', _OPEN_TIMEOUT)
+        self._host.stop_watch()
+        window_cache._discard(self._window, defer_destroy=True)
+        self._closed.set()
 
     def _on_loaded(self) -> None:
         """Hand initialisation to a worker thread.
@@ -473,10 +550,15 @@ class UsagePopup:
 
     def _initialise(self) -> None:
         """Inject the config, then size and show the window."""
+        if not self._running:
+            return
         config = _init_config(self.app.cache.snapshot, next_poll_time=self.app._next_poll_time)
         self._window.evaluate_js(f'init({json.dumps(config)})')
+        if not self._running:
+            return
 
         self._host.prepare()
+        self._prepared = True
 
         # The height is read here rather than waited for: popup.js reports it
         # through a ResizeObserver guarded by the pywebview bridge, and that
@@ -502,11 +584,14 @@ class UsagePopup:
             self._last_height = height
             self._host.apply_geometry(height, keep_position=self._pinned and self._moved_while_pinned)
 
-            if self._shown:
-                return
+            with self._startup_lock:
+                if self._shown or not self._running:
+                    return
+                self._shown = True
 
-            self._shown = True
             self._host.reveal()
+            if PREWARM_WINDOW:
+                _LOGGER.info('Windows usage popup revealed')
             threading.Thread(target=self._update_loop, daemon=True).start()
 
     def _dismiss_watch(self) -> None:

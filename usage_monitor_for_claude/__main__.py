@@ -67,6 +67,8 @@ import webview  # type: ignore[import-untyped]  # no type stubs available
 from usage_monitor_for_claude.app import UsageMonitorForClaude, crash_log
 from usage_monitor_for_claude.platforms import register_notification_identity
 from usage_monitor_for_claude.platforms.instance import ensure_single_instance, release_instance_lock
+from usage_monitor_for_claude.platforms.popup import PREWARM_WINDOW
+from usage_monitor_for_claude.popup import PopupWindowCache
 
 if _verbose:
     logging.basicConfig(
@@ -85,7 +87,7 @@ def _verbose_step(label: str) -> None:
         print(f'  [startup] {label}', flush=True)
 
 
-def _run_app() -> None:
+def _run_app(popup_windows: PopupWindowCache | None) -> None:
     """Run the tray application in a background thread (called by webview)."""
     try:
         if _verbose:
@@ -93,7 +95,7 @@ def _run_app() -> None:
             print_runtime_diagnostics()
 
         _verbose_step('UsageMonitorForClaude()...')
-        app = UsageMonitorForClaude(notification_identity_registered=_notification_identity_registered)
+        app = UsageMonitorForClaude(notification_identity_registered=_notification_identity_registered, popup_windows=popup_windows)
         _verbose_step('UsageMonitorForClaude()... OK')
 
         _verbose_step('app.run...')
@@ -103,7 +105,7 @@ def _run_app() -> None:
         _verbose_step(f'CRASH: {traceback.format_exc()}')
         crash_log(traceback.format_exc())
     finally:
-        # Destroy all webview windows (keeper + any open popups) so
+        # Destroy the keeper and popup window so
         # webview.start() on the main thread returns.
         for win in list(webview.windows):
             try:
@@ -130,10 +132,14 @@ try:
     # tray app and popup windows are managed in background threads.
     _verbose_step('webview.create_window...')
     webview.create_window('', html='', hidden=True)
+    popup_windows = None
+    if PREWARM_WINDOW:
+        popup_windows = PopupWindowCache()
+        popup_windows.prewarm()
     _verbose_step('webview.create_window... OK')
 
     _verbose_step('webview.start...')
-    webview.start(func=_run_app)
+    webview.start(func=_run_app, args=(popup_windows,))
     _verbose_step('webview.start returned')
 
     app = _result.get('app')

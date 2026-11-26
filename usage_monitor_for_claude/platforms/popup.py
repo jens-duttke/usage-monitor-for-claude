@@ -13,8 +13,8 @@ from __future__ import annotations
 import sys
 
 if sys.platform == 'win32':
-    from .popup_win32 import REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
+    from .popup_win32 import PREWARM_WINDOW, REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
 else:
-    from .popup_linux import REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
+    from .popup_linux import PREWARM_WINDOW, REUSE_WINDOW, WINDOW_KWARGS, PopupHost, popup_url
 
-__all__ = ['REUSE_WINDOW', 'WINDOW_KWARGS', 'PopupHost', 'popup_url']
+__all__ = ['PREWARM_WINDOW', 'REUSE_WINDOW', 'WINDOW_KWARGS', 'PopupHost', 'popup_url']
