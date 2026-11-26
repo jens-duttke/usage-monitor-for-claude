@@ -36,7 +36,7 @@ from .formatting import (
 )
 from .i18n import T
 from .mcp_server import start_mcp_server
-from .popup import UsagePopup, new_window_cache
+from .popup import PopupWindowCache, UsagePopup, new_window_cache
 from .tray_icon import create_icon_image, create_status_image
 
 __all__ = ['UsageMonitorForClaude', 'crash_log']
@@ -100,7 +100,7 @@ def _align_to_reset(interval: int, next_reset: float | None) -> tuple[int, bool]
 class UsageMonitorForClaude:
     """System tray application displaying Claude usage."""
 
-    def __init__(self, notification_identity_registered: bool = False) -> None:
+    def __init__(self, notification_identity_registered: bool = False, *, popup_windows: PopupWindowCache | None = None) -> None:
         """Set up the tray icon with context menu and polling state.
 
         Parameters
@@ -108,6 +108,8 @@ class UsageMonitorForClaude:
         notification_identity_registered : bool
             Result of ``register_notification_identity()``, which decides
             whether notifications may be posted under the app's own identity.
+        popup_windows : PopupWindowCache, optional
+            Popup window registered before the GUI loop starts.
         """
         self.running = True
         self.cache = UsageCache()
@@ -135,8 +137,7 @@ class UsageMonitorForClaude:
         self._popup_lock = threading.Lock()
         self._popup_open = False
         self._popup_closed_at = 0.0
-        # Keeps the popup window between openings (None where windows are not reused).
-        self._popup_windows = new_window_cache()
+        self._popup_windows = popup_windows if popup_windows is not None else new_window_cache()
         self._next_poll_time: float | None = None
 
         # Theme state

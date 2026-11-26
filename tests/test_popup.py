@@ -854,6 +854,7 @@ class TestReportHeight(unittest.TestCase):
 
         api = mock_webview.create_window.call_args.kwargs['js_api']
         popup = api._popup
+        popup._prepared = True
         self.addCleanup(popup._closed.set)
 
         return popup, api
@@ -903,6 +904,14 @@ class TestReportHeight(unittest.TestCase):
         api.report_height(0)
 
         popup._host.apply_geometry.assert_not_called()
+        popup._host.reveal.assert_not_called()
+
+    def test_height_report_before_preparation_is_ignored(self):
+        popup, api = self._build_popup()
+        popup._prepared = False
+
+        api.report_height(400)
+
         popup._host.reveal.assert_not_called()
 
     def test_moved_pinned_popup_keeps_its_position(self):
@@ -1239,6 +1248,9 @@ class TestPopupWindowCache(unittest.TestCase):
 
     def setUp(self):
         self.windows = []
+        patcher = patch('usage_monitor_for_claude.popup.PREWARM_WINDOW', False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
         def create_window(*_args, **_kwargs):
             window = _fake_window()
@@ -1268,6 +1280,51 @@ class TestPopupWindowCache(unittest.TestCase):
         self.cache.attach(MagicMock())
         self.windows[0].load_url.assert_not_called()
 
+    def test_prewarmed_document_is_initialized_once_on_first_open(self):
+        self.cache.prewarm()
+        self.windows[0].events.loaded.fire()
+        popup = MagicMock()
+
+        self.cache.attach(popup)
+
+        self.webview.create_window.assert_called_once()
+        self.windows[0].load_url.assert_not_called()
+        popup._on_loaded.assert_called_once()
+
+    def test_first_click_during_prewarm_waits_for_the_initial_document(self):
+        self.cache.prewarm()
+        popup = MagicMock()
+        self.cache.attach(popup)
+        popup._on_loaded.assert_not_called()
+
+        self.windows[0].events.loaded.fire()
+
+        popup._on_loaded.assert_called_once()
+        self.windows[0].load_url.assert_not_called()
+
+    def test_missing_loaded_event_discards_prewarmed_window_for_next_click(self):
+        self.cache.prewarm()
+        destroyed = threading.Event()
+        failed_window = self.windows[0]
+        failed_window.destroy.side_effect = destroyed.set
+        with patch('usage_monitor_for_claude.popup.PREWARM_WINDOW', True), \
+             patch('usage_monitor_for_claude.popup._OPEN_TIMEOUT', 0), \
+             patch.object(UsagePopup, '_dismiss_watch', lambda self: None), \
+             self.assertLogs('usage_monitor_for_claude.popup', level='WARNING') as logs:
+            UsagePopup(MagicMock(), self.cache)
+
+        self.assertTrue(destroyed.wait(1))
+        self.assertIn('did not become visible', logs.output[0])
+        self.host.stop_watch.assert_called_once()
+
+        next_popup = MagicMock()
+        self.cache.attach(next_popup)
+        failed_window.events.loaded.fire()
+        next_popup._on_loaded.assert_not_called()
+        self.assertIs(next_popup._window, self.windows[1])
+        self.windows[1].events.loaded.fire()
+        next_popup._on_loaded.assert_called_once()
+
     def test_later_attach_reuses_the_window_and_reloads_it(self):
         """A fresh document resets popup.js, whose init() cannot run twice."""
         first, second = MagicMock(), MagicMock()
@@ -1280,6 +1337,22 @@ class TestPopupWindowCache(unittest.TestCase):
         self.assertIs(second._host, self.host)
         self.windows[0].load_url.assert_called_once()
         self.assertTrue(self.windows[0].load_url.call_args.args[0].endswith('popup.html'))
+
+    def test_windows_reopen_navigates_to_a_new_document(self):
+        first, second = MagicMock(), MagicMock()
+        self.cache.attach(first)
+        self.cache.release(first)
+        window = self.windows[0]
+        window.get_current_url.return_value = 'http://127.0.0.1:1234/popup.html?open=1'
+        navigated = threading.Event()
+        window.load_url.side_effect = lambda _url: navigated.set()
+        with patch('usage_monitor_for_claude.popup.PREWARM_WINDOW', True), \
+             patch('usage_monitor_for_claude.popup.time.monotonic_ns', return_value=2):
+            self.cache.attach(second)
+            self.assertTrue(navigated.wait(1))
+
+        window.load_url.assert_called_once_with('http://127.0.0.1:1234/popup.html?open=2')
+        self.assertIs(second._window, window)
 
     def test_js_api_follows_the_current_popup(self):
         """The JS bridge was bound when the window was created and must now serve the new popup."""
@@ -1425,7 +1498,8 @@ class TestPopupWithWindowCache(unittest.TestCase):
             return windows[-1]
 
         cache = PopupWindowCache()
-        with patch.object(UsagePopup, '_dismiss_watch', lambda self: None), \
+        with patch('usage_monitor_for_claude.popup.PREWARM_WINDOW', False), \
+             patch.object(UsagePopup, '_dismiss_watch', lambda self: None), \
              patch('usage_monitor_for_claude.popup.PopupHost'), \
              patch('usage_monitor_for_claude.popup.webview') as mock_webview:
             mock_webview.create_window.side_effect = create_window
@@ -1467,11 +1541,11 @@ class TestNewWindowCache(unittest.TestCase):
         with patch('usage_monitor_for_claude.popup.REUSE_WINDOW', False):
             self.assertIsNone(new_window_cache())
 
-    def test_only_the_gtk_host_reuses_its_window(self):
-        """The Windows host creates and destroys a window for every opening."""
-        from usage_monitor_for_claude.platforms.popup import REUSE_WINDOW
+    def test_only_windows_prewarms_its_reused_window(self):
+        from usage_monitor_for_claude.platforms.popup import PREWARM_WINDOW, REUSE_WINDOW
 
-        self.assertEqual(REUSE_WINDOW, sys.platform != 'win32')
+        self.assertTrue(REUSE_WINDOW)
+        self.assertEqual(PREWARM_WINDOW, sys.platform == 'win32')
 
 
 # ---------------------------------------------------------------------------
